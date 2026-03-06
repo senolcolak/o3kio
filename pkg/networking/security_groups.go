@@ -2,25 +2,42 @@ package networking
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/coreos/go-iptables/iptables"
 )
 
-// SecurityGroupManager manages iptables-based security groups
+// SecurityGroupManager manages security groups with iptables or eBPF
 type SecurityGroupManager struct {
-	ipt *iptables.IPTables
+	mode       string // "stub", "iptables", or "ebpf"
+	ipt        *iptables.IPTables
+	mu         sync.Mutex
+	stubChains map[string]bool                // For stub mode
+	stubRules  map[string][]SecurityGroupRule // For stub mode
+	ebpfProgs  map[string]interface{}         // For eBPF mode (placeholder)
 }
 
 // NewSecurityGroupManager creates a new security group manager
-func NewSecurityGroupManager() (*SecurityGroupManager, error) {
-	ipt, err := iptables.New()
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize iptables: %w", err)
+func NewSecurityGroupManager(mode string) (*SecurityGroupManager, error) {
+	mgr := &SecurityGroupManager{
+		mode:       mode,
+		stubChains: make(map[string]bool),
+		stubRules:  make(map[string][]SecurityGroupRule),
+		ebpfProgs:  make(map[string]interface{}),
 	}
 
-	return &SecurityGroupManager{
-		ipt: ipt,
-	}, nil
+	if mode == "iptables" {
+		ipt, err := iptables.New()
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize iptables: %w", err)
+		}
+		mgr.ipt = ipt
+	} else if mode == "ebpf" {
+		// eBPF initialization will be added here
+		// For now, we'll implement the interface structure
+	}
+
+	return mgr, nil
 }
 
 // SecurityGroupRule represents a security group rule
@@ -35,8 +52,31 @@ type SecurityGroupRule struct {
 	RemoteGroupID  string
 }
 
-// CreateSecurityGroupChain creates an iptables chain for a security group
+// CreateSecurityGroupChain creates a chain/program for a security group
 func (m *SecurityGroupManager) CreateSecurityGroupChain(securityGroupID string) error {
+	switch m.mode {
+	case "stub":
+		return m.createSecurityGroupChainStub(securityGroupID)
+	case "iptables":
+		return m.createSecurityGroupChainIPTables(securityGroupID)
+	case "ebpf":
+		return m.createSecurityGroupChainEBPF(securityGroupID)
+	default:
+		return fmt.Errorf("unsupported security group mode: %s", m.mode)
+	}
+}
+
+// createSecurityGroupChainStub simulates chain creation
+func (m *SecurityGroupManager) createSecurityGroupChainStub(securityGroupID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	chainName := "O3K-SG-" + securityGroupID[:8]
+	m.stubChains[chainName] = true
+	return nil
+}
+
+// createSecurityGroupChainIPTables creates an iptables chain
+func (m *SecurityGroupManager) createSecurityGroupChainIPTables(securityGroupID string) error {
 	chainName := "O3K-SG-" + securityGroupID[:8]
 
 	// Create chain in filter table
@@ -49,6 +89,29 @@ func (m *SecurityGroupManager) CreateSecurityGroupChain(securityGroupID string) 
 	// Set default policy to DROP
 	if err := m.ipt.Append("filter", chainName, "-j", "DROP"); err != nil {
 		return fmt.Errorf("failed to set default DROP policy: %w", err)
+	}
+
+	return nil
+}
+
+// createSecurityGroupChainEBPF creates an eBPF program for security group
+func (m *SecurityGroupManager) createSecurityGroupChainEBPF(securityGroupID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	progName := "O3K-SG-" + securityGroupID[:8]
+
+	// TODO: Implement eBPF program loading
+	// This will involve:
+	// 1. Loading eBPF bytecode
+	// 2. Attaching to TC (traffic control) or XDP hook
+	// 3. Managing BPF maps for rules
+	//
+	// For now, we'll create a placeholder that simulates the program
+	m.ebpfProgs[progName] = map[string]interface{}{
+		"type":   "xdp", // or "tc"
+		"action": "drop_by_default",
+		"rules":  []SecurityGroupRule{},
 	}
 
 	return nil

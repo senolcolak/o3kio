@@ -19,6 +19,7 @@ neutron:
   port: 9696
   dhcp_lease_time: 24h
   iptables_enabled: true
+  networking_mode: stub  # "stub", "iptables", or "ebpf"
 
 cinder:
   port: 8776

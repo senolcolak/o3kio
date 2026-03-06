@@ -83,7 +83,14 @@ func main() {
 		log.Printf("Hypervisor initialized successfully in %s mode", libvirtMode)
 	}
 
-	neutronService := neutron.NewService()
+	// Set default networking mode if not specified
+	networkingMode := cfg.Neutron.NetworkingMode
+	if networkingMode == "" {
+		networkingMode = "stub"
+	}
+	neutronService := neutron.NewService(networkingMode)
+	log.Printf("Neutron initialized in %s mode", networkingMode)
+
 	cinderService := cinder.NewService(cfg.Cinder.CephPool, cfg.Cinder.CephConf)
 	glanceService := glance.NewService(cfg.Glance.CephPool, cfg.Glance.CephConf)
 

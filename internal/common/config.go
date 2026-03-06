@@ -42,6 +42,7 @@ type NeutronConfig struct {
 	Port             int           `yaml:"port"`
 	DHCPLeaseTime    time.Duration `yaml:"dhcp_lease_time"`
 	IPTablesEnabled  bool          `yaml:"iptables_enabled"`
+	NetworkingMode   string        `yaml:"networking_mode"` // "stub" or "real"
 }
 
 type CinderConfig struct {

@@ -5,31 +5,43 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"text/template"
 )
 
 // DHCPManager manages DHCP servers (dnsmasq)
 type DHCPManager struct {
+	mode        string // "stub", "iptables", or "ebpf"
 	leasePath   string
 	configPath  string
 	pidPath     string
+	mu          sync.Mutex
 	runningPIDs map[string]int // networkID -> PID
+	stubDHCP    map[string]bool // For stub mode
 }
 
 // NewDHCPManager creates a new DHCP manager
-func NewDHCPManager() *DHCPManager {
-	baseDir := "/var/lib/o3k/dhcp"
-	os.MkdirAll(baseDir, 0755)
-	os.MkdirAll(filepath.Join(baseDir, "leases"), 0755)
-	os.MkdirAll(filepath.Join(baseDir, "configs"), 0755)
-	os.MkdirAll(filepath.Join(baseDir, "pids"), 0755)
-
-	return &DHCPManager{
-		leasePath:   filepath.Join(baseDir, "leases"),
-		configPath:  filepath.Join(baseDir, "configs"),
-		pidPath:     filepath.Join(baseDir, "pids"),
+func NewDHCPManager(mode string) *DHCPManager {
+	mgr := &DHCPManager{
+		mode:        mode,
 		runningPIDs: make(map[string]int),
+		stubDHCP:    make(map[string]bool),
 	}
+
+	if mode != "stub" {
+		// Both iptables and eBPF use real DHCP
+		baseDir := "/var/lib/o3k/dhcp"
+		os.MkdirAll(baseDir, 0755)
+		os.MkdirAll(filepath.Join(baseDir, "leases"), 0755)
+		os.MkdirAll(filepath.Join(baseDir, "configs"), 0755)
+		os.MkdirAll(filepath.Join(baseDir, "pids"), 0755)
+
+		mgr.leasePath = filepath.Join(baseDir, "leases")
+		mgr.configPath = filepath.Join(baseDir, "configs")
+		mgr.pidPath = filepath.Join(baseDir, "pids")
+	}
+
+	return mgr
 }
 
 // DHCPConfig represents DHCP configuration
@@ -48,6 +60,13 @@ type DHCPConfig struct {
 
 // StartDHCP starts a DHCP server for a network
 func (m *DHCPManager) StartDHCP(config DHCPConfig, nsName string) error {
+	if m.mode == "stub" {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		m.stubDHCP[config.NetworkID] = true
+		return nil
+	}
+
 	leaseFile := filepath.Join(m.leasePath, config.NetworkID+".leases")
 	pidFile := filepath.Join(m.pidPath, config.NetworkID+".pid")
 	configFile := filepath.Join(m.configPath, config.NetworkID+".conf")

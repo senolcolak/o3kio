@@ -16,21 +16,23 @@ import (
 
 // Service handles Neutron API endpoints
 type Service struct {
-	nsManager *networking.NetworkNamespaceManager
-	brManager *networking.BridgeManager
-	tapManager *networking.TAPDeviceManager
+	mode        string
+	nsManager   *networking.NetworkNamespaceManager
+	brManager   *networking.BridgeManager
+	tapManager  *networking.TAPDeviceManager
 	dhcpManager *networking.DHCPManager
-	sgManager *networking.SecurityGroupManager
+	sgManager   *networking.SecurityGroupManager
 }
 
 // NewService creates a new Neutron service
-func NewService() *Service {
-	sgManager, _ := networking.NewSecurityGroupManager() // Ignore error for now
+func NewService(mode string) *Service {
+	sgManager, _ := networking.NewSecurityGroupManager(mode) // Ignore error for now
 	return &Service{
-		nsManager:   networking.NewNetworkNamespaceManager(),
-		brManager:   networking.NewBridgeManager(),
-		tapManager:  networking.NewTAPDeviceManager(),
-		dhcpManager: networking.NewDHCPManager(),
+		mode:        mode,
+		nsManager:   networking.NewNetworkNamespaceManager(mode),
+		brManager:   networking.NewBridgeManager(mode),
+		tapManager:  networking.NewTAPDeviceManager(mode),
+		dhcpManager: networking.NewDHCPManager(mode),
 		sgManager:   sgManager,
 	}
 }
