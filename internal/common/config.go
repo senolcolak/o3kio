@@ -35,6 +35,7 @@ type NovaConfig struct {
 	Port           int    `yaml:"port"`
 	LibvirtURI     string `yaml:"libvirt_uri"`
 	DefaultFlavor  string `yaml:"default_flavor"`
+	LibvirtMode    string `yaml:"libvirt_mode"` // "stub" or "real"
 }
 
 type NeutronConfig struct {

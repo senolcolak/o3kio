@@ -67,14 +67,20 @@ func main() {
 	// Initialize services
 	authService := keystone.NewAuthService(cfg.Keystone.JWTSecret, cfg.Keystone.TokenTTL)
 	keystoneService := keystone.NewService(authService)
-	novaService := nova.NewService(cfg.Nova.LibvirtURI)
 
-	// Initialize hypervisor (non-fatal if libvirt not available)
+	// Set default libvirt mode if not specified
+	libvirtMode := cfg.Nova.LibvirtMode
+	if libvirtMode == "" {
+		libvirtMode = "stub"
+	}
+	novaService := nova.NewService(cfg.Nova.LibvirtURI, libvirtMode)
+
+	// Initialize hypervisor
 	if err := novaService.InitHypervisor(); err != nil {
 		log.Printf("WARNING: Failed to initialize hypervisor: %v", err)
-		log.Println("Nova will run in stub mode (no actual VM creation)")
+		log.Printf("Nova will run in %s mode", libvirtMode)
 	} else {
-		log.Println("Hypervisor initialized successfully")
+		log.Printf("Hypervisor initialized successfully in %s mode", libvirtMode)
 	}
 
 	neutronService := neutron.NewService()

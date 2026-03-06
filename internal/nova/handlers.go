@@ -15,20 +15,22 @@ import (
 
 // Service handles Nova API endpoints
 type Service struct {
-	libvirtURI string
-	vmManager  *hypervisor.VMManager
+	libvirtURI  string
+	libvirtMode string
+	vmManager   *hypervisor.VMManager
 }
 
 // NewService creates a new Nova service
-func NewService(libvirtURI string) *Service {
+func NewService(libvirtURI, libvirtMode string) *Service {
 	return &Service{
-		libvirtURI: libvirtURI,
+		libvirtURI:  libvirtURI,
+		libvirtMode: libvirtMode,
 	}
 }
 
 // InitHypervisor initializes the hypervisor connection
 func (svc *Service) InitHypervisor() error {
-	vmManager, err := hypervisor.NewVMManager(svc.libvirtURI)
+	vmManager, err := hypervisor.NewVMManager(svc.libvirtURI, svc.libvirtMode)
 	if err != nil {
 		return fmt.Errorf("failed to initialize hypervisor: %w", err)
 	}

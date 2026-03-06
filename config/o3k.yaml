@@ -13,6 +13,7 @@ nova:
   port: 8774
   libvirt_uri: "qemu:///system"
   default_flavor: m1.small
+  libvirt_mode: stub  # "stub" or "real"
 
 neutron:
   port: 9696
