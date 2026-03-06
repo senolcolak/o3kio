@@ -1,24 +1,24 @@
 .PHONY: build run test clean install-deps migrate db-up db-down
 
 # Build variables
-BINARY_NAME=lightstack
+BINARY_NAME=o3k
 BUILD_DIR=bin
 VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS=-ldflags "-X main.Version=$(VERSION)"
 
 # Database variables
-DB_URL?=postgres://lightstack:secret@localhost:5432/lightstack?sslmode=disable
+DB_URL?=postgres://o3k:secret@localhost:5432/o3k?sslmode=disable
 
 # Build the binary
 build:
 	@echo "Building $(BINARY_NAME)..."
 	@mkdir -p $(BUILD_DIR)
-	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/lightstack
+	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/o3k
 
 # Run the application
 run: build
-	@echo "Starting LightStack..."
-	./$(BUILD_DIR)/$(BINARY_NAME) --config config/lightstack.yaml --migrations migrations
+	@echo "Starting O3K..."
+	./$(BUILD_DIR)/$(BINARY_NAME) --config config/o3k.yaml --migrations migrations
 
 # Install dependencies
 install-deps:
@@ -44,9 +44,9 @@ migrate:
 # Start PostgreSQL in Docker (for development)
 db-up:
 	@echo "Starting PostgreSQL..."
-	docker run -d --name lightstack-postgres \
-		-e POSTGRES_DB=lightstack \
-		-e POSTGRES_USER=lightstack \
+	docker run -d --name o3k-postgres \
+		-e POSTGRES_DB=o3k \
+		-e POSTGRES_USER=o3k \
 		-e POSTGRES_PASSWORD=secret \
 		-p 5432:5432 \
 		postgres:16
@@ -56,8 +56,8 @@ db-up:
 # Stop PostgreSQL
 db-down:
 	@echo "Stopping PostgreSQL..."
-	docker stop lightstack-postgres || true
-	docker rm lightstack-postgres || true
+	docker stop o3k-postgres || true
+	docker rm o3k-postgres || true
 
 # Run with hot reload (requires air: go install github.com/cosmtrek/air@latest)
 dev:
@@ -83,7 +83,7 @@ install-tools:
 
 # Show help
 help:
-	@echo "LightStack Makefile targets:"
+	@echo "O3K Makefile targets:"
 	@echo "  build          - Build the binary"
 	@echo "  run            - Build and run the application"
 	@echo "  test           - Run tests"

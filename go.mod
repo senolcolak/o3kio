@@ -1,4 +1,4 @@
-module github.com/sapcc/lightstack
+module github.com/cobaltcore-dev/o3k
 
 go 1.25.7
 

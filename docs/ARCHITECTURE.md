@@ -1,8 +1,8 @@
-# LightStack Architecture
+# O3K Architecture
 
 ## Design Philosophy
 
-LightStack is built on three core principles:
+O3K is built on three core principles:
 
 1. **API Compatibility First**: 100% OpenStack API compatibility to work seamlessly with Horizon and OpenStack CLI/SDK
 2. **Synchronous Operations**: No async state machines - operations complete before API returns
@@ -14,7 +14,7 @@ LightStack is built on three core principles:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    LightStack Process                        │
+│                    O3K Process                        │
 ├─────────────────────────────────────────────────────────────┤
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
 │  │  Keystone    │  │     Nova     │  │   Neutron    │      │
@@ -243,10 +243,10 @@ Key indexes for performance:
 
 ```
 ┌────────────────────────────────┐
-│       LightStack Host          │
+│       O3K Host          │
 │                                │
 │  ┌──────────────────────────┐ │
-│  │  LightStack Binary       │ │
+│  │  O3K Binary       │ │
 │  │  (All services)          │ │
 │  └──────────────────────────┘ │
 │                                │

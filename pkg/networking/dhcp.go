@@ -18,7 +18,7 @@ type DHCPManager struct {
 
 // NewDHCPManager creates a new DHCP manager
 func NewDHCPManager() *DHCPManager {
-	baseDir := "/var/lib/lightstack/dhcp"
+	baseDir := "/var/lib/o3k/dhcp"
 	os.MkdirAll(baseDir, 0755)
 	os.MkdirAll(filepath.Join(baseDir, "leases"), 0755)
 	os.MkdirAll(filepath.Join(baseDir, "configs"), 0755)

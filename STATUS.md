@@ -1,11 +1,11 @@
-# LightStack Implementation Status
+# O3K Implementation Status
 
 ## Phase 0: Foundation ✅ COMPLETE
 
 ### Completed Tasks
 
 1. **Project Structure**
-   - ✅ Go module initialized (`github.com/sapcc/lightstack`)
+   - ✅ Go module initialized (`github.com/sapcc/o3k`)
    - ✅ Directory structure created (cmd, internal, pkg, migrations, config, deployments, docs)
    - ✅ All dependencies installed and working
 
@@ -16,7 +16,7 @@
    - ✅ Database connection and migration runner implemented
 
 3. **Configuration Management**
-   - ✅ YAML configuration file (`config/lightstack.yaml`)
+   - ✅ YAML configuration file (`config/o3k.yaml`)
    - ✅ Environment variable overrides
    - ✅ Configuration loader with validation
 
@@ -233,7 +233,7 @@ openstack token issue  # ✅ Works!
 
 - ✅ `Dockerfile` (multi-stage build)
 - ✅ `docker-compose.yaml` (full stack with PostgreSQL)
-- ✅ `lightstack.service` (systemd unit file)
+- ✅ `o3k.service` (systemd unit file)
 - ✅ `Makefile` (build, run, test, dev targets)
 
 ### Usage
@@ -242,7 +242,7 @@ openstack token issue  # ✅ Works!
 ```bash
 make db-up          # Start PostgreSQL in Docker
 make build          # Build binary
-make run            # Run LightStack
+make run            # Run O3K
 ./test-keystone.sh  # Test Keystone
 ```
 
@@ -254,10 +254,10 @@ docker-compose up -d
 
 **Systemd:**
 ```bash
-sudo cp bin/lightstack /usr/local/bin/
-sudo cp config/lightstack.yaml /etc/lightstack/
-sudo cp deployments/systemd/lightstack.service /etc/systemd/system/
-sudo systemctl enable --now lightstack
+sudo cp bin/o3k /usr/local/bin/
+sudo cp config/o3k.yaml /etc/o3k/
+sudo cp deployments/systemd/o3k.service /etc/systemd/system/
+sudo systemctl enable --now o3k
 ```
 
 ---
@@ -306,11 +306,11 @@ golang.org/x/crypto (latest)
 ## File Tree
 
 ```
-lightstack/
+o3k/
 ├── bin/
-│   └── lightstack                      # ✅ Built binary (35MB)
+│   └── o3k                      # ✅ Built binary (35MB)
 ├── cmd/
-│   └── lightstack/
+│   └── o3k/
 │       └── main.go                     # ✅ Entry point
 ├── internal/
 │   ├── keystone/
@@ -339,13 +339,13 @@ lightstack/
 │   ├── 002_seed_data.up.sql            # ✅ Seed data
 │   └── 002_seed_data.down.sql          # ✅ Cleanup
 ├── config/
-│   └── lightstack.yaml                 # ✅ Config file
+│   └── o3k.yaml                 # ✅ Config file
 ├── deployments/
 │   ├── docker/
 │   │   ├── Dockerfile                  # ✅ Multi-stage build
 │   │   └── docker-compose.yaml         # ✅ Full stack
 │   └── systemd/
-│       └── lightstack.service          # ✅ Service file
+│       └── o3k.service          # ✅ Service file
 ├── docs/
 │   ├── API.md                          # ✅ API docs
 │   └── ARCHITECTURE.md                 # ✅ Architecture

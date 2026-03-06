@@ -1,8 +1,8 @@
-# 🎉 LightStack Implementation - Complete Summary
+# 🎉 O3K Implementation - Complete Summary
 
 ## Executive Summary
 
-**LightStack** is now a **fully functional OpenStack-compatible cloud platform** through **Phase 2 (Nova Compute)**.
+**O3K** is now a **fully functional OpenStack-compatible cloud platform** through **Phase 2 (Nova Compute)**.
 
 - **Status:** Phases 0-2 COMPLETE ✅
 - **Build:** Successful (36MB binary)
@@ -20,7 +20,7 @@
 # Start PostgreSQL
 make db-up
 
-# Build and run LightStack
+# Build and run O3K
 make run
 ```
 
@@ -120,7 +120,7 @@ openstack server show test-vm
 
 ```
 ╔════════════════════════════════════════════════════════════════╗
-║       LightStack Comprehensive Test Suite (Phases 0-2)         ║
+║       O3K Comprehensive Test Suite (Phases 0-2)         ║
 ╚════════════════════════════════════════════════════════════════╝
 
 === Phase 0: Foundation Tests ===
@@ -144,7 +144,7 @@ openstack server show test-vm
 ║  Total:  35                                                     ║
 ╚════════════════════════════════════════════════════════════════╝
 
-🎉 All tests passed! LightStack Phases 0-2 are fully functional.
+🎉 All tests passed! O3K Phases 0-2 are fully functional.
 ```
 
 ---
@@ -191,7 +191,7 @@ openstack server show test-vm
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                 LightStack Binary (36MB)                     │
+│                 O3K Binary (36MB)                     │
 ├─────────────────────────────────────────────────────────────┤
 │  Keystone :5000  │  Nova :8774  │  Neutron :9696            │
 │  (Complete)      │  (Complete)  │  (Stubs)                  │
@@ -214,10 +214,10 @@ openstack server show test-vm
 ## File Structure
 
 ```
-lightstack/
+o3k/
 ├── bin/
-│   └── lightstack                      # 36MB binary ✅
-├── cmd/lightstack/
+│   └── o3k                      # 36MB binary ✅
+├── cmd/o3k/
 │   └── main.go                         # Entry point ✅
 ├── internal/
 │   ├── keystone/                       # Identity ✅
@@ -239,7 +239,7 @@ lightstack/
 │   ├── 001_initial_schema.up.sql      # Tables
 │   └── 002_seed_data.up.sql           # Defaults
 ├── config/
-│   └── lightstack.yaml                 # Config ✅
+│   └── o3k.yaml                 # Config ✅
 ├── deployments/
 │   ├── docker/                         # Docker ✅
 │   └── systemd/                        # Systemd ✅
@@ -329,7 +329,7 @@ docker-compose up -d
 ### 3. Systemd Service
 
 ```bash
-sudo systemctl start lightstack
+sudo systemctl start o3k
 ```
 
 ---
@@ -509,7 +509,7 @@ curl http://localhost:9696/v2.0
 
 ## Credits
 
-**Project:** LightStack (OpenStack-compatible cloud in Go)
+**Project:** O3K (OpenStack-compatible cloud in Go)
 **Implementation:** Phases 0-2 complete
 **Time:** ~6 hours total
 **LOC:** ~5,500 lines (Go + SQL + docs)
@@ -526,8 +526,8 @@ curl http://localhost:9696/v2.0
 
 ```bash
 # Clone and build
-git clone https://github.com/sapcc/lightstack.git
-cd lightstack
+git clone https://github.com/sapcc/o3k.git
+cd o3k
 make install-deps
 make build
 make db-up
@@ -560,6 +560,6 @@ We have:
 ---
 
 **Questions? Issues? Contributions?**
-- GitHub: https://github.com/sapcc/lightstack
+- GitHub: https://github.com/sapcc/o3k
 - Documentation: See `docs/` folder
 - Tests: Run `./test-all.sh`

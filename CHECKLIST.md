@@ -1,4 +1,4 @@
-# ✅ LightStack Implementation Checklist
+# ✅ O3K Implementation Checklist
 
 ## Phase 0: Foundation ✅ COMPLETE
 
@@ -237,7 +237,7 @@
 
 - [x] Dockerfile (multi-stage build)
 - [x] docker-compose.yaml (full stack)
-- [x] lightstack.service (systemd)
+- [x] o3k.service (systemd)
 - [x] Makefile (build, run, test targets)
 - [x] Build succeeds (35MB binary)
 - [x] Docker deployment tested

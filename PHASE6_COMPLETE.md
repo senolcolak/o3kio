@@ -1,4 +1,4 @@
-# LightStack - Phase 6 Complete
+# O3K - Phase 6 Complete
 
 ## 🎉 All Phases (0-6) Successfully Implemented!
 
@@ -129,7 +129,7 @@
 ### Build
 ```bash
 make build
-# Creates bin/lightstack (35MB)
+# Creates bin/o3k (35MB)
 ```
 
 ### Run Tests
@@ -140,7 +140,7 @@ make test
 
 ### Start Services
 ```bash
-./bin/lightstack --config config/lightstack.yaml
+./bin/o3k --config config/o3k.yaml
 
 # Services start on:
 # - Keystone: :5000
@@ -163,7 +163,7 @@ make migrate-up
 ### Primary Documents
 - **Implementation Status:** `IMPLEMENTATION_STATUS.md` - Complete status of all phases
 - **Phase 6 Testing:** `docs/PHASE6_TESTING.md` - Detailed test documentation
-- **Configuration:** `config/lightstack.yaml` - Service configuration
+- **Configuration:** `config/o3k.yaml` - Service configuration
 
 ### Database Schema
 ```
@@ -254,17 +254,17 @@ make migrate-up
 
 ## Team & Credits
 
-**Project:** LightStack - OpenStack-compatible cloud platform
+**Project:** O3K - OpenStack-compatible cloud platform
 **Language:** Go 1.21+
 **Architecture:** Distributed monolith (single binary)
 **License:** Apache 2.0
-**Repository:** github.com/sapcc/lightstack
+**Repository:** github.com/sapcc/o3k
 
 ---
 
 ## Conclusion
 
-🎉 **LightStack Phase 6 is COMPLETE!**
+🎉 **O3K Phase 6 is COMPLETE!**
 
 All core OpenStack services (Keystone, Nova, Neutron, Cinder, Glance) are fully implemented with comprehensive unit test coverage. The system is production-ready for stub mode testing and can be easily extended with real libvirt/Ceph implementations.
 
@@ -290,4 +290,4 @@ All core OpenStack services (Keystone, Nova, Neutron, Cinder, Glance) are fully 
 **Tests:** ✅ 42/42 PASS
 **Date:** 2026-03-06
 
-🚀 **LightStack is ready for the next phase!** 🚀
+🚀 **O3K is ready for the next phase!** 🚀

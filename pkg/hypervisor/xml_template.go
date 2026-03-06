@@ -159,7 +159,7 @@ func GenerateVMXML(spec VMSpec) string {
 		sb.WriteString(fmt.Sprintf(`
     <disk type='file' device='cdrom'>
       <driver name='qemu' type='raw'/>
-      <source file='/var/lib/lightstack/cloud-init/%s.iso'/>
+      <source file='/var/lib/o3k/cloud-init/%s.iso'/>
       <target dev='hdc' bus='ide'/>
       <readonly/>
     </disk>
@@ -178,7 +178,7 @@ func GenerateVMXML(spec VMSpec) string {
 func GenerateCloudInitISO(uuid string, config *CloudInitConfig) (string, error) {
 	// TODO: Generate actual ISO file using genisoimage or similar
 	// For now, return path where ISO should be created
-	return fmt.Sprintf("/var/lib/lightstack/cloud-init/%s.iso", uuid), nil
+	return fmt.Sprintf("/var/lib/o3k/cloud-init/%s.iso", uuid), nil
 }
 
 // DefaultCloudInitConfig returns default cloud-init configuration
@@ -192,7 +192,7 @@ packages:
   - curl
   - vim
 runcmd:
-  - echo "LightStack VM booted successfully" > /var/log/lightstack.log
+  - echo "O3K VM booted successfully" > /var/log/o3k.log
 `
 
 	if sshKey != "" {

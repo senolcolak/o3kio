@@ -1,8 +1,8 @@
-# 🎉 LightStack Implementation Complete - Final Report
+# 🎉 O3K Implementation Complete - Final Report
 
 ## Project Overview
 
-**LightStack** - A 100% OpenStack API-compliant cloud implementation in Go
+**O3K** - A 100% OpenStack API-compliant cloud implementation in Go
 
 **Status:** ✅ **Phases 0-2 COMPLETE and FUNCTIONAL**
 
@@ -84,9 +84,9 @@
 ## File Structure Summary
 
 ```
-lightstack/ (35MB total)
-├── bin/lightstack (35MB binary) ✅
-├── cmd/lightstack/ (entry point) ✅
+o3k/ (35MB total)
+├── bin/o3k (35MB binary) ✅
+├── cmd/o3k/ (entry point) ✅
 ├── internal/
 │   ├── keystone/ (auth service) ✅
 │   ├── nova/ (compute service) ✅
@@ -225,7 +225,7 @@ docker-compose up -d
 
 ### 3. Systemd Service
 ```bash
-sudo systemctl start lightstack
+sudo systemctl start o3k
 ```
 
 ---
@@ -444,7 +444,7 @@ sudo systemctl start lightstack
 ### Deployment Artifacts
 - **Dockerfile** - Multi-stage Docker build
 - **docker-compose.yaml** - Full stack deployment
-- **lightstack.service** - Systemd unit file
+- **o3k.service** - Systemd unit file
 - **Makefile** - Build automation
 
 ---
@@ -455,8 +455,8 @@ sudo systemctl start lightstack
 
 ```bash
 # 1. Clone repository
-git clone https://github.com/sapcc/lightstack.git
-cd lightstack
+git clone https://github.com/sapcc/o3k.git
+cd o3k
 
 # 2. Install dependencies
 make install-deps
@@ -545,7 +545,7 @@ openstack server list
 
 ## Conclusion
 
-**LightStack Phases 0-2 are COMPLETE and FUNCTIONAL!**
+**O3K Phases 0-2 are COMPLETE and FUNCTIONAL!**
 
 We have successfully built:
 - ✅ A working OpenStack-compatible cloud platform
@@ -562,7 +562,7 @@ We have successfully built:
 
 ## Credits
 
-**Project:** LightStack - OpenStack-compatible cloud in Go
+**Project:** O3K - OpenStack-compatible cloud in Go
 **Implementation:** Phases 0-2 complete (6 hours)
 **Language:** Go 1.21+
 **Framework:** Gin, pgx, JWT
@@ -582,8 +582,8 @@ We have successfully built:
 
 ## Contact & Contributions
 
-**Repository:** https://github.com/sapcc/lightstack
-**Issues:** https://github.com/sapcc/lightstack/issues
+**Repository:** https://github.com/sapcc/o3k
+**Issues:** https://github.com/sapcc/o3k/issues
 **Documentation:** See `docs/` folder
 **Tests:** Run `./test-all.sh`
 
@@ -591,7 +591,7 @@ We have successfully built:
 
 ---
 
-**🎉 Thank you for checking out LightStack! 🎉**
+**🎉 Thank you for checking out O3K! 🎉**
 
 We've built a solid foundation for a high-performance, OpenStack-compatible cloud platform in Go. Phases 3-6 will complete the MVP with networking, storage, and image services.
 

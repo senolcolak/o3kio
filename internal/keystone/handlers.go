@@ -4,8 +4,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/sapcc/lightstack/internal/common"
-	"github.com/sapcc/lightstack/internal/database"
+	"github.com/cobaltcore-dev/o3k/internal/common"
+	"github.com/cobaltcore-dev/o3k/internal/database"
 )
 
 // Service handles Keystone API endpoints

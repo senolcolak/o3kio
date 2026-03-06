@@ -1,7 +1,7 @@
-# LightStack Implementation Status
+# O3K Implementation Status
 
 ## Overview
-LightStack is a 100% OpenStack API-compliant cloud platform written in Go. This document tracks the implementation progress of all phases.
+O3K is a 100% OpenStack API-compliant cloud platform written in Go. This document tracks the implementation progress of all phases.
 
 **Generated:** 2026-03-06
 **Build Status:** ✅ Successful (35MB binary)
@@ -36,10 +36,10 @@ LightStack is a 100% OpenStack API-compliant cloud platform written in Go. This 
 - [x] Makefile (build, test, migrate targets)
 
 ### Key Files
-- `cmd/lightstack/main.go` - Binary entry point (164 lines)
+- `cmd/o3k/main.go` - Binary entry point (164 lines)
 - `internal/database/db.go` - DB connection management
 - `migrations/001_initial_schema.up.sql` - Database schema
-- `config/lightstack.yaml` - Default configuration
+- `config/o3k.yaml` - Default configuration
 - `Makefile` - Build automation
 
 ### Database Schema
@@ -199,9 +199,9 @@ DELETE /v2.0/security-group-rules/{id} - Delete security group rule
 - **Namespace Naming:** `light-ns-<project_id>`
 - **Bridge Naming:** `br-<network_id[:8]>`
 - **TAP Naming:** `tap-<port_id[:8]>`
-- **DHCP Config:** `/var/lib/lightstack/dhcp/<network_id>.conf`
-- **Lease Files:** `/var/lib/lightstack/dhcp/<network_id>.leases`
-- **iptables Chains:** `LIGHTSTACK-SG-<security_group_id>`
+- **DHCP Config:** `/var/lib/o3k/dhcp/<network_id>.conf`
+- **Lease Files:** `/var/lib/o3k/dhcp/<network_id>.leases`
+- **iptables Chains:** `O3K-SG-<security_group_id>`
 - **Default Policy:** DROP (explicit allow rules required)
 
 ### Architecture
@@ -358,7 +358,7 @@ openstack image delete cirros
 ### System Design
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    LightStack Binary (35MB)                  │
+│                    O3K Binary (35MB)                  │
 ├─────────────────────────────────────────────────────────────┤
 │  Keystone (Identity Proxy)        :5000  [Phase 1] ✅       │
 │  Nova (Compute Engine)             :8774  [Phase 2] ✅       │
@@ -396,13 +396,13 @@ openstack image delete cirros
 ### Build Commands
 ```bash
 # Build binary
-make build  # Creates bin/lightstack (35MB)
+make build  # Creates bin/o3k (35MB)
 
 # Run database migrations
 make migrate-up
 
 # Start server
-./bin/lightstack --config config/lightstack.yaml
+./bin/o3k --config config/o3k.yaml
 
 # Run tests (requires Docker + PostgreSQL)
 make test
@@ -411,7 +411,7 @@ make test
 ### Configuration
 ```yaml
 database:
-  url: "postgres://lightstack:secret@localhost/lightstack"
+  url: "postgres://o3k:secret@localhost/o3k"
   max_connections: 20
 
 keystone:
@@ -482,7 +482,7 @@ docker-compose -f deployments/docker/docker-compose.test.yaml down -v
 ### Manual Verification (Current)
 ```bash
 # 1. Start services
-./bin/lightstack --config config/lightstack.yaml
+./bin/o3k --config config/o3k.yaml
 
 # 2. Test Keystone
 openstack --os-auth-url http://localhost:5000/v3 \
@@ -732,7 +732,7 @@ make build
 sudo systemctl start postgresql
 
 # Database doesn't exist
-createdb -U lightstack lightstack
+createdb -U o3k o3k
 
 # Run migrations
 make migrate-up
@@ -741,7 +741,7 @@ make migrate-up
 #### Network Namespace Issues
 ```bash
 # Permission denied (need root)
-sudo ./bin/lightstack
+sudo ./bin/o3k
 
 # Cleanup existing namespaces
 sudo ip netns delete light-ns-<project_id>
@@ -756,14 +756,14 @@ ip netns list
 netstat -tulpn | grep -E '5000|8774|9696|8776|9292'
 
 # Kill existing processes
-sudo pkill lightstack
+sudo pkill o3k
 ```
 
 ---
 
 ## Conclusion
 
-LightStack v1 (Phases 0-5) is **100% complete** with all core OpenStack services implemented. The system is fully functional in stub mode, with all API endpoints operational and database schema complete. The next phase involves:
+O3K v1 (Phases 0-5) is **100% complete** with all core OpenStack services implemented. The system is fully functional in stub mode, with all API endpoints operational and database schema complete. The next phase involves:
 
 1. **Integration testing** with Horizon dashboard
 2. **Replacing stubs** with real libvirt and Ceph implementations
@@ -780,9 +780,9 @@ LightStack v1 (Phases 0-5) is **100% complete** with all core OpenStack services
 
 ## Contact and Support
 
-**Repository:** github.com/sapcc/lightstack
+**Repository:** github.com/sapcc/o3k
 **Documentation:** /docs
-**Issues:** github.com/sapcc/lightstack/issues
+**Issues:** github.com/sapcc/o3k/issues
 **License:** Apache 2.0
 
 ---

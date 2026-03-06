@@ -7,7 +7,7 @@ import (
 
 func TestLoadConfig(t *testing.T) {
 	// Create a temporary config file
-	tmpfile, err := os.CreateTemp("", "lightstack-test-*.yaml")
+	tmpfile, err := os.CreateTemp("", "o3k-test-*.yaml")
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestLoadConfigMissingFile(t *testing.T) {
 }
 
 func TestLoadConfigInvalidYAML(t *testing.T) {
-	tmpfile, err := os.CreateTemp("", "lightstack-invalid-*.yaml")
+	tmpfile, err := os.CreateTemp("", "o3k-invalid-*.yaml")
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}

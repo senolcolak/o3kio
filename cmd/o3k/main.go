@@ -12,18 +12,18 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/sapcc/lightstack/internal/cinder"
-	"github.com/sapcc/lightstack/internal/common"
-	"github.com/sapcc/lightstack/internal/database"
-	"github.com/sapcc/lightstack/internal/glance"
-	"github.com/sapcc/lightstack/internal/keystone"
-	"github.com/sapcc/lightstack/internal/middleware"
-	"github.com/sapcc/lightstack/internal/neutron"
-	"github.com/sapcc/lightstack/internal/nova"
+	"github.com/cobaltcore-dev/o3k/internal/cinder"
+	"github.com/cobaltcore-dev/o3k/internal/common"
+	"github.com/cobaltcore-dev/o3k/internal/database"
+	"github.com/cobaltcore-dev/o3k/internal/glance"
+	"github.com/cobaltcore-dev/o3k/internal/keystone"
+	"github.com/cobaltcore-dev/o3k/internal/middleware"
+	"github.com/cobaltcore-dev/o3k/internal/neutron"
+	"github.com/cobaltcore-dev/o3k/internal/nova"
 )
 
 var (
-	configPath     = flag.String("config", "config/lightstack.yaml", "Path to configuration file")
+	configPath     = flag.String("config", "config/o3k.yaml", "Path to configuration file")
 	migrationsPath = flag.String("migrations", "migrations", "Path to migrations directory")
 )
 
@@ -101,7 +101,7 @@ func main() {
 		}()
 	}
 
-	log.Println("LightStack started successfully")
+	log.Println("O3K started successfully")
 	log.Println("  - Keystone (Identity):    http://localhost:5000/v3")
 	log.Println("  - Nova (Compute):         http://localhost:8774/v2.1")
 	log.Println("  - Neutron (Network):      http://localhost:9696/v2.0")
@@ -125,7 +125,7 @@ func main() {
 		}
 	}
 
-	log.Println("LightStack stopped")
+	log.Println("O3K stopped")
 }
 
 func createKeystoneServer(cfg *common.Config, svc *keystone.Service) *http.Server {

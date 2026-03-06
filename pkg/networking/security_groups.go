@@ -37,7 +37,7 @@ type SecurityGroupRule struct {
 
 // CreateSecurityGroupChain creates an iptables chain for a security group
 func (m *SecurityGroupManager) CreateSecurityGroupChain(securityGroupID string) error {
-	chainName := "LIGHTSTACK-SG-" + securityGroupID[:8]
+	chainName := "O3K-SG-" + securityGroupID[:8]
 
 	// Create chain in filter table
 	if err := m.ipt.NewChain("filter", chainName); err != nil {
@@ -56,7 +56,7 @@ func (m *SecurityGroupManager) CreateSecurityGroupChain(securityGroupID string) 
 
 // DeleteSecurityGroupChain deletes an iptables chain
 func (m *SecurityGroupManager) DeleteSecurityGroupChain(securityGroupID string) error {
-	chainName := "LIGHTSTACK-SG-" + securityGroupID[:8]
+	chainName := "O3K-SG-" + securityGroupID[:8]
 
 	// Flush chain first
 	m.ipt.ClearChain("filter", chainName)
@@ -67,7 +67,7 @@ func (m *SecurityGroupManager) DeleteSecurityGroupChain(securityGroupID string) 
 
 // AddRule adds a security group rule
 func (m *SecurityGroupManager) AddRule(securityGroupID string, rule SecurityGroupRule) error {
-	chainName := "LIGHTSTACK-SG-" + securityGroupID[:8]
+	chainName := "O3K-SG-" + securityGroupID[:8]
 
 	// Build iptables rule
 	ruleSpec := m.buildRuleSpec(rule)
@@ -82,7 +82,7 @@ func (m *SecurityGroupManager) AddRule(securityGroupID string, rule SecurityGrou
 
 // RemoveRule removes a security group rule
 func (m *SecurityGroupManager) RemoveRule(securityGroupID string, rule SecurityGroupRule) error {
-	chainName := "LIGHTSTACK-SG-" + securityGroupID[:8]
+	chainName := "O3K-SG-" + securityGroupID[:8]
 
 	ruleSpec := m.buildRuleSpec(rule)
 
@@ -91,7 +91,7 @@ func (m *SecurityGroupManager) RemoveRule(securityGroupID string, rule SecurityG
 
 // ApplyToInterface applies security group to a network interface
 func (m *SecurityGroupManager) ApplyToInterface(interfaceName, securityGroupID string, direction string) error {
-	chainName := "LIGHTSTACK-SG-" + securityGroupID[:8]
+	chainName := "O3K-SG-" + securityGroupID[:8]
 
 	var baseChain string
 	var ifaceFlag string
@@ -116,7 +116,7 @@ func (m *SecurityGroupManager) ApplyToInterface(interfaceName, securityGroupID s
 
 // RemoveFromInterface removes security group from interface
 func (m *SecurityGroupManager) RemoveFromInterface(interfaceName, securityGroupID string, direction string) error {
-	chainName := "LIGHTSTACK-SG-" + securityGroupID[:8]
+	chainName := "O3K-SG-" + securityGroupID[:8]
 
 	var baseChain string
 	var ifaceFlag string
@@ -176,7 +176,7 @@ func (m *SecurityGroupManager) buildRuleSpec(rule SecurityGroupRule) []string {
 
 // ListRules lists all rules in a security group chain
 func (m *SecurityGroupManager) ListRules(securityGroupID string) ([]string, error) {
-	chainName := "LIGHTSTACK-SG-" + securityGroupID[:8]
+	chainName := "O3K-SG-" + securityGroupID[:8]
 
 	rules, err := m.ipt.List("filter", chainName)
 	if err != nil {
@@ -188,7 +188,7 @@ func (m *SecurityGroupManager) ListRules(securityGroupID string) ([]string, erro
 
 // FlushRules removes all rules from a security group chain
 func (m *SecurityGroupManager) FlushRules(securityGroupID string) error {
-	chainName := "LIGHTSTACK-SG-" + securityGroupID[:8]
+	chainName := "O3K-SG-" + securityGroupID[:8]
 
 	return m.ipt.ClearChain("filter", chainName)
 }

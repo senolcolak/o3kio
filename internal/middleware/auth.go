@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/sapcc/lightstack/internal/keystone"
+	"github.com/cobaltcore-dev/o3k/internal/keystone"
 )
 
 // AuthMiddleware validates OpenStack tokens

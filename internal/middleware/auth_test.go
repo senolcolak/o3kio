@@ -8,7 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/sapcc/lightstack/internal/keystone"
+	"github.com/cobaltcore-dev/o3k/internal/keystone"
 )
 
 func TestAuthMiddlewareNoToken(t *testing.T) {

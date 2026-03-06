@@ -7,8 +7,8 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5"
-	"github.com/sapcc/lightstack/internal/common"
-	"github.com/sapcc/lightstack/internal/database"
+	"github.com/cobaltcore-dev/o3k/internal/common"
+	"github.com/cobaltcore-dev/o3k/internal/database"
 	"golang.org/x/crypto/bcrypt"
 )
 

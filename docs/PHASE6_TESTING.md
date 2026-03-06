@@ -1,4 +1,4 @@
-# LightStack Phase 6: Integration & Testing
+# O3K Phase 6: Integration & Testing
 
 ## Test Implementation Status: ✅ COMPLETE
 
@@ -218,18 +218,18 @@
 $ make test
 Running tests...
 go test -v ./...
-?   	github.com/sapcc/lightstack/cmd/lightstack	[no test files]
-?   	github.com/sapcc/lightstack/internal/cinder	[no test files]
-PASS	github.com/sapcc/lightstack/internal/common	0.440s
-?   	github.com/sapcc/lightstack/internal/database	[no test files]
-?   	github.com/sapcc/lightstack/internal/glance	[no test files]
-PASS	github.com/sapcc/lightstack/internal/keystone	0.378s
-PASS	github.com/sapcc/lightstack/internal/middleware	0.905s
-?   	github.com/sapcc/lightstack/internal/neutron	[no test files]
-?   	github.com/sapcc/lightstack/internal/nova	[no test files]
-PASS	github.com/sapcc/lightstack/pkg/hypervisor	0.625s
-?   	github.com/sapcc/lightstack/pkg/networking	[no test files]
-PASS	github.com/sapcc/lightstack/pkg/storage	0.712s
+?   	github.com/sapcc/o3k/cmd/o3k	[no test files]
+?   	github.com/sapcc/o3k/internal/cinder	[no test files]
+PASS	github.com/sapcc/o3k/internal/common	0.440s
+?   	github.com/sapcc/o3k/internal/database	[no test files]
+?   	github.com/sapcc/o3k/internal/glance	[no test files]
+PASS	github.com/sapcc/o3k/internal/keystone	0.378s
+PASS	github.com/sapcc/o3k/internal/middleware	0.905s
+?   	github.com/sapcc/o3k/internal/neutron	[no test files]
+?   	github.com/sapcc/o3k/internal/nova	[no test files]
+PASS	github.com/sapcc/o3k/pkg/hypervisor	0.625s
+?   	github.com/sapcc/o3k/pkg/networking	[no test files]
+PASS	github.com/sapcc/o3k/pkg/storage	0.712s
 ```
 
 **Summary:**

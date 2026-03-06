@@ -9,8 +9,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/sapcc/lightstack/internal/database"
-	"github.com/sapcc/lightstack/pkg/hypervisor"
+	"github.com/cobaltcore-dev/o3k/internal/database"
+	"github.com/cobaltcore-dev/o3k/pkg/hypervisor"
 )
 
 // Service handles Nova API endpoints
@@ -181,7 +181,7 @@ func (svc *Service) CreateServer(c *gin.Context) {
 				VCPUs:     flavor.VCPUs,
 				MemoryMB:  flavor.RAMMB,
 				DiskGB:    flavor.DiskGB,
-				ImagePath: fmt.Sprintf("/var/lib/lightstack/images/%s.qcow2", req.Server.ImageRef),
+				ImagePath: fmt.Sprintf("/var/lib/o3k/images/%s.qcow2", req.Server.ImageRef),
 				Networks:  []hypervisor.NetworkConfig{}, // TODO: Populate from Neutron
 			}
 
@@ -604,7 +604,7 @@ func (svc *Service) ListHypervisors(c *gin.Context) {
 	c.JSON(200, gin.H{"hypervisors": []gin.H{
 		{
 			"id":                  1,
-			"hypervisor_hostname": "lightstack-node-1",
+			"hypervisor_hostname": "o3k-node-1",
 			"state":               "up",
 			"status":              "enabled",
 		},
@@ -616,7 +616,7 @@ func (svc *Service) ListHypervisorsDetail(c *gin.Context) {
 	c.JSON(200, gin.H{"hypervisors": []gin.H{
 		{
 			"id":                  1,
-			"hypervisor_hostname": "lightstack-node-1",
+			"hypervisor_hostname": "o3k-node-1",
 			"state":               "up",
 			"status":              "enabled",
 			"vcpus":               16,

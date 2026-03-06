@@ -9,8 +9,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/sapcc/lightstack/internal/database"
-	"github.com/sapcc/lightstack/pkg/storage"
+	"github.com/cobaltcore-dev/o3k/internal/database"
+	"github.com/cobaltcore-dev/o3k/pkg/storage"
 )
 
 // Service handles Glance API endpoints

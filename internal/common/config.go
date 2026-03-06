@@ -73,16 +73,16 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	// Environment variable overrides
-	if dbURL := os.Getenv("LIGHTSTACK_DB_URL"); dbURL != "" {
+	if dbURL := os.Getenv("O3K_DB_URL"); dbURL != "" {
 		cfg.Database.URL = dbURL
 	}
-	if jwtSecret := os.Getenv("LIGHTSTACK_JWT_SECRET"); jwtSecret != "" {
+	if jwtSecret := os.Getenv("O3K_JWT_SECRET"); jwtSecret != "" {
 		cfg.Keystone.JWTSecret = jwtSecret
 	}
 
 	// Warn if using default JWT secret
 	if cfg.Keystone.JWTSecret == "change-me-in-production" {
-		fmt.Fprintln(os.Stderr, "WARNING: Using default JWT secret! Set LIGHTSTACK_JWT_SECRET environment variable in production.")
+		fmt.Fprintln(os.Stderr, "WARNING: Using default JWT secret! Set O3K_JWT_SECRET environment variable in production.")
 	}
 
 	return &cfg, nil
