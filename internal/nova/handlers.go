@@ -404,10 +404,13 @@ func (svc *Service) GetServer(c *gin.Context) {
 	var createdAt, updatedAt time.Time
 
 	// Try to find by ID first, then by name
+	// Use separate conditions to avoid type mismatch when id is UUID and param might be a name
 	err := database.DB.QueryRow(c.Request.Context(), `
 		SELECT id, name, status, power_state, project_id, user_id, flavor_id, image_id, created_at, updated_at
 		FROM instances
-		WHERE (id = $1 OR name = $1) AND project_id = $2
+		WHERE project_id = $2 AND (
+			(id::text = $1) OR (name = $1)
+		)
 	`, instanceID, projectID).Scan(&id, &name, &status, &powerState, &projID, &userID, &flavorID, &imageID, &createdAt, &updatedAt)
 
 	if err == pgx.ErrNoRows {
@@ -419,8 +422,6 @@ func (svc *Service) GetServer(c *gin.Context) {
 		return
 	}
 	if err != nil {
-		// Log the actual error for debugging
-		fmt.Printf("ERROR in GetServer: %v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -457,7 +458,7 @@ func (svc *Service) DeleteServer(c *gin.Context) {
 	// Get libvirt domain ID (support lookup by ID or name)
 	var libvirtDomainID string
 	err := database.DB.QueryRow(c.Request.Context(),
-		"SELECT libvirt_domain_id FROM instances WHERE (id = $1 OR name = $1) AND project_id = $2",
+		"SELECT libvirt_domain_id FROM instances WHERE project_id = $2 AND ((id::text = $1) OR (name = $1))",
 		instanceID, projectID,
 	).Scan(&libvirtDomainID)
 
@@ -483,7 +484,7 @@ func (svc *Service) DeleteServer(c *gin.Context) {
 
 	// Delete from database (support lookup by ID or name)
 	_, err = database.DB.Exec(c.Request.Context(),
-		"DELETE FROM instances WHERE (id = $1 OR name = $1) AND project_id = $2",
+		"DELETE FROM instances WHERE project_id = $2 AND ((id::text = $1) OR (name = $1))",
 		instanceID, projectID,
 	)
 	if err != nil {
