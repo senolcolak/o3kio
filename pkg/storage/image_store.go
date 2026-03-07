@@ -39,9 +39,13 @@ type stubImage struct {
 
 // NewImageStore creates a new image store
 func NewImageStore(mode, cephPool, cephConf, s3Bucket, s3Region, s3Endpoint string) *ImageStore {
-	// Use ~/.o3k/images for local storage
-	homeDir, _ := os.UserHomeDir()
-	localPath := filepath.Join(homeDir, ".o3k", "images")
+	// Use /var/lib/o3k/images for local storage (Docker-friendly)
+	// Falls back to ~/.o3k/images for non-containerized deployments
+	localPath := "/var/lib/o3k/images"
+	if _, err := os.Stat(localPath); os.IsNotExist(err) {
+		homeDir, _ := os.UserHomeDir()
+		localPath = filepath.Join(homeDir, ".o3k", "images")
+	}
 
 	store := &ImageStore{
 		mode:       mode,
