@@ -554,11 +554,11 @@ func (svc *Service) ServerAction(c *gin.Context) {
 		return
 	}
 
-	log.Printf("ServerAction: libvirtDomainID.Valid=%v, libvirtDomainID.String=%s, vmManager=%v",
-		libvirtDomainID.Valid, libvirtDomainID.String, svc.vmManager != nil)
+	log.Printf("ServerAction: libvirtDomainID.Valid=%v, libvirtDomainID.String=%s, vmManager=%v, mode=%s",
+		libvirtDomainID.Valid, libvirtDomainID.String, svc.vmManager != nil, svc.libvirtMode)
 
-	// In stub mode, just update database status
-	if svc.vmManager == nil || !libvirtDomainID.Valid || libvirtDomainID.String == "" {
+	// In stub mode, just update database status (don't call vmManager even if it exists)
+	if svc.libvirtMode == "stub" || !libvirtDomainID.Valid || libvirtDomainID.String == "" {
 		// Handle actions in stub mode by updating database only
 		if _, ok := req["reboot"]; ok {
 			// Just mark as rebooting then active
