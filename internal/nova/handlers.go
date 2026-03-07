@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -495,9 +496,12 @@ func (svc *Service) ServerAction(c *gin.Context) {
 
 	var req map[string]interface{}
 	if err := c.ShouldBindJSON(&req); err != nil {
+		log.Printf("ERROR in ServerAction: failed to bind JSON: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
 	}
+
+	log.Printf("ServerAction: instanceID=%s, projectID=%s, action=%v", instanceID, projectID, req)
 
 	// Handle console actions first (don't require libvirt)
 	if vncConsole, ok := req["os-getVNCConsole"]; ok {
@@ -540,9 +544,18 @@ func (svc *Service) ServerAction(c *gin.Context) {
 	).Scan(&libvirtDomainID)
 
 	if err == pgx.ErrNoRows {
+		log.Printf("ERROR in ServerAction: instance not found: %s", instanceID)
 		c.JSON(http.StatusNotFound, gin.H{"error": "instance not found"})
 		return
 	}
+	if err != nil {
+		log.Printf("ERROR in ServerAction: database error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("database error: %v", err)})
+		return
+	}
+
+	log.Printf("ServerAction: libvirtDomainID.Valid=%v, libvirtDomainID.String=%s, vmManager=%v",
+		libvirtDomainID.Valid, libvirtDomainID.String, svc.vmManager != nil)
 
 	// In stub mode, just update database status
 	if svc.vmManager == nil || !libvirtDomainID.Valid || libvirtDomainID.String == "" {
