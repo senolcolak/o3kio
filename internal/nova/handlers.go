@@ -293,6 +293,7 @@ func (svc *Service) CreateServer(c *gin.Context) {
 			"updated":    now.Format(time.RFC3339),
 			"flavor":     gin.H{"id": flavor.ID},
 			"image":      gin.H{"id": req.Server.ImageRef},
+			"metadata":   gin.H{},
 			"adminPass":  "generated-password",
 		},
 	})
