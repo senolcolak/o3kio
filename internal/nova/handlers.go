@@ -415,11 +415,7 @@ func (svc *Service) GetServer(c *gin.Context) {
 	`, instanceID, projectID).Scan(&id, &name, &status, &powerState, &projID, &userID, &flavorID, &imageID, &createdAt, &updatedAt)
 
 	if err == pgx.ErrNoRows {
-		c.JSON(http.StatusNotFound, gin.H{"error": gin.H{
-			"message": "instance not found",
-			"code":    404,
-			"title":   "Not Found",
-		}})
+		c.JSON(http.StatusNotFound, gin.H{"error": "instance not found"})
 		return
 	}
 	if err != nil {
@@ -464,11 +460,7 @@ func (svc *Service) DeleteServer(c *gin.Context) {
 	).Scan(&libvirtDomainID)
 
 	if err == pgx.ErrNoRows {
-		c.JSON(http.StatusNotFound, gin.H{"error": gin.H{
-			"message": "instance not found",
-			"code":    404,
-			"title":   "Not Found",
-		}})
+		c.JSON(http.StatusNotFound, gin.H{"error": "instance not found"})
 		return
 	}
 
