@@ -419,6 +419,8 @@ func (svc *Service) GetServer(c *gin.Context) {
 		return
 	}
 	if err != nil {
+		// Log the actual error for debugging
+		fmt.Printf("ERROR in GetServer: %v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
