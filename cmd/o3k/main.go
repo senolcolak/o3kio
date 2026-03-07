@@ -14,12 +14,15 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/cobaltcore-dev/o3k/internal/cinder"
 	"github.com/cobaltcore-dev/o3k/internal/common"
+	"github.com/cobaltcore-dev/o3k/internal/compute"
 	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/cobaltcore-dev/o3k/internal/glance"
 	"github.com/cobaltcore-dev/o3k/internal/keystone"
+	"github.com/cobaltcore-dev/o3k/internal/metadata"
 	"github.com/cobaltcore-dev/o3k/internal/middleware"
 	"github.com/cobaltcore-dev/o3k/internal/neutron"
 	"github.com/cobaltcore-dev/o3k/internal/nova"
+	"github.com/cobaltcore-dev/o3k/pkg/networking"
 )
 
 var (
@@ -36,7 +39,10 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	// Set up logging
+	// Initialize structured logging
+	middleware.InitLogger(&cfg.Logging)
+
+	// Set up Gin mode based on log level
 	if cfg.Logging.Level == "debug" {
 		gin.SetMode(gin.DebugMode)
 	} else {
@@ -53,16 +59,10 @@ func main() {
 	log.Println("Database connection established")
 
 	// Run migrations
-	// NOTE: Skipping migrations since tables are already created
-	// absPath, err := filepath.Abs(*migrationsPath)
-	// if err != nil {
-	// 	log.Fatalf("Failed to get absolute migrations path: %v", err)
-	// }
-	// if err := database.RunMigrations(cfg.Database.URL, absPath); err != nil {
-	// 	log.Fatalf("Failed to run migrations: %v", err)
-	// }
-
-	log.Println("Database migrations skipped (tables already exist)")
+	log.Println("Running database migrations...")
+	if err := database.MigrateUp(cfg.Database.URL, *migrationsPath); err != nil {
+		log.Fatalf("Failed to run migrations: %v", err)
+	}
 
 	// Initialize services
 	authService := keystone.NewAuthService(cfg.Keystone.JWTSecret, cfg.Keystone.TokenTTL)
@@ -91,6 +91,52 @@ func main() {
 	neutronService := neutron.NewService(networkingMode)
 	log.Printf("Neutron initialized in %s mode", networkingMode)
 
+	// Initialize VXLAN if enabled
+	var vxlanCoordinator *neutron.VXLANCoordinator
+	var nodeRegistry *compute.NodeRegistry
+
+	if cfg.Neutron.VXLANEnabled {
+		// Create node registry
+		nodeRegistry, err = compute.NewNodeRegistry(
+			cfg.Compute.NodeID,
+			cfg.Compute.TunnelIP,
+			cfg.Compute.HeartbeatInterval,
+		)
+		if err != nil {
+			log.Fatalf("Failed to create node registry: %v", err)
+		}
+
+		// Register node
+		if err := nodeRegistry.RegisterNode(ctx); err != nil {
+			log.Fatalf("Failed to register node: %v", err)
+		}
+		log.Printf("Node registered: %s (tunnel IP: %s)", nodeRegistry.GetHostname(), nodeRegistry.GetTunnelIP())
+
+		// Start heartbeat
+		go nodeRegistry.StartHeartbeat(ctx)
+
+		// Create VXLAN manager
+		vxlanManager := networking.NewVXLANManager(networkingMode, cfg.Compute.VXLANPort)
+
+		// Create VXLAN coordinator
+		vxlanCoordinator = neutron.NewVXLANCoordinator(
+			vxlanManager,
+			nodeRegistry,
+			neutronService.GetNamespaceManager(),
+			cfg.Neutron.CoordinationPollInterval,
+			cfg.Neutron.VNIRangeStart,
+			cfg.Neutron.VNIRangeEnd,
+		)
+
+		// Set coordinator in neutron service
+		neutronService.SetVXLANCoordinator(vxlanCoordinator)
+
+		// Start coordinator
+		go vxlanCoordinator.Start(ctx)
+
+		log.Printf("VXLAN overlay networking enabled (VNI range: %d-%d)", cfg.Neutron.VNIRangeStart, cfg.Neutron.VNIRangeEnd)
+	}
+
 	// Set default storage mode if not specified
 	cinderStorageMode := cfg.Cinder.StorageMode
 	if cinderStorageMode == "" {
@@ -103,8 +149,19 @@ func main() {
 	if glanceStorageMode == "" {
 		glanceStorageMode = "stub"
 	}
-	glanceService := glance.NewService(glanceStorageMode, cfg.Glance.CephPool, cfg.Glance.CephConf)
+	glanceService := glance.NewService(
+		glanceStorageMode,
+		cfg.Glance.CephPool,
+		cfg.Glance.CephConf,
+		cfg.Glance.S3Bucket,
+		cfg.Glance.S3Region,
+		cfg.Glance.S3Endpoint,
+	)
 	log.Printf("Glance initialized in %s mode", glanceStorageMode)
+
+	// Initialize metadata service
+	metadataService := metadata.NewService("localhost:8775")
+	log.Println("Metadata service initialized")
 
 	// Create HTTP servers for each service
 	servers := []*http.Server{
@@ -113,6 +170,7 @@ func main() {
 		createNeutronServer(cfg, neutronService, authService),
 		createCinderServer(cfg, cinderService, authService),
 		createGlanceServer(cfg, glanceService, authService),
+		createMetadataServer(metadataService),
 	}
 
 	// Start all servers
@@ -132,6 +190,7 @@ func main() {
 	log.Println("  - Neutron (Network):      http://localhost:9696/v2.0")
 	log.Println("  - Cinder (Block Storage): http://localhost:8776/v3")
 	log.Println("  - Glance (Image):         http://localhost:9292/v2")
+	log.Println("  - Metadata Service:       http://localhost:8775")
 
 	// Wait for interrupt signal
 	quit := make(chan os.Signal, 1)
@@ -139,6 +198,16 @@ func main() {
 	<-quit
 
 	log.Println("Shutting down servers...")
+
+	// Stop VXLAN services
+	if vxlanCoordinator != nil {
+		vxlanCoordinator.Stop()
+		log.Println("VXLAN coordinator stopped")
+	}
+	if nodeRegistry != nil {
+		nodeRegistry.StopHeartbeat()
+		log.Println("Node heartbeat stopped")
+	}
 
 	// Graceful shutdown
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -240,6 +309,20 @@ func createGlanceServer(cfg *common.Config, svc *glance.Service, authService *ke
 
 	return &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.Glance.Port),
+		Handler: r,
+	}
+}
+
+func createMetadataServer(svc *metadata.Service) *http.Server {
+	r := gin.New()
+	r.Use(middleware.LoggingMiddleware())
+	r.Use(middleware.RecoveryMiddleware())
+	// No auth middleware - metadata service uses instance IP identification
+
+	svc.RegisterRoutes(r.Group(""))
+
+	return &http.Server{
+		Addr:    ":8775",
 		Handler: r,
 	}
 }

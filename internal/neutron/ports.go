@@ -104,6 +104,14 @@ func (svc *Service) CreatePort(c *gin.Context) {
 		return
 	}
 
+	// Distribute FDB entry if VXLAN is enabled
+	if svc.vxlanCoordinator != nil {
+		if err := svc.vxlanCoordinator.DistributeFDBEntry(c.Request.Context(), req.Port.NetworkID, portID, macAddress); err != nil {
+			// Log but don't fail - FDB will be synced on next poll
+			fmt.Printf("Warning: Failed to distribute FDB entry: %v\n", err)
+		}
+	}
+
 	c.JSON(http.StatusCreated, gin.H{
 		"port": gin.H{
 			"id":             portID,
@@ -238,6 +246,14 @@ func (svc *Service) DeletePort(c *gin.Context) {
 
 	// Delete TAP device
 	svc.tapManager.DeleteTAPDevice(tapName, true, nsName)
+
+	// Remove FDB entry if VXLAN is enabled
+	if svc.vxlanCoordinator != nil {
+		if err := svc.vxlanCoordinator.RemoveFDBEntry(c.Request.Context(), portID); err != nil {
+			// Log but don't fail
+			fmt.Printf("Warning: Failed to remove FDB entry: %v\n", err)
+		}
+	}
 
 	// Delete from database
 	_, err := database.DB.Exec(c.Request.Context(),
@@ -454,14 +470,72 @@ func (svc *Service) GetSecurityGroup(c *gin.Context) {
 		return
 	}
 
+	// Fetch associated rules
+	rows, err := database.DB.Query(c.Request.Context(), `
+		SELECT id, direction, ethertype, protocol, port_range_min, port_range_max,
+		       remote_ip_prefix, remote_group_id, created_at
+		FROM security_group_rules
+		WHERE security_group_id = $1
+	`, sgID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	rules := []gin.H{}
+	for rows.Next() {
+		var ruleID, direction, ethertype string
+		var protocol, remoteIPPrefix, remoteGroupID *string
+		var portRangeMin, portRangeMax *int
+		var ruleCreatedAt time.Time
+
+		err := rows.Scan(&ruleID, &direction, &ethertype, &protocol, &portRangeMin, &portRangeMax,
+			&remoteIPPrefix, &remoteGroupID, &ruleCreatedAt)
+		if err != nil {
+			continue
+		}
+
+		rule := gin.H{
+			"id":                ruleID,
+			"security_group_id": sgID,
+			"direction":         direction,
+			"ethertype":         ethertype,
+			"created_at":        ruleCreatedAt.Format(time.RFC3339),
+		}
+
+		if protocol != nil {
+			rule["protocol"] = *protocol
+		}
+		if portRangeMin != nil {
+			rule["port_range_min"] = *portRangeMin
+		}
+		if portRangeMax != nil {
+			rule["port_range_max"] = *portRangeMax
+		}
+		if remoteIPPrefix != nil {
+			rule["remote_ip_prefix"] = *remoteIPPrefix
+		} else {
+			rule["remote_ip_prefix"] = ""
+		}
+		if remoteGroupID != nil {
+			rule["remote_group_id"] = *remoteGroupID
+		} else {
+			rule["remote_group_id"] = ""
+		}
+
+		rules = append(rules, rule)
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"security_group": gin.H{
-			"id":          id,
-			"name":        name,
-			"tenant_id":   projectID,
-			"description": description,
-			"created_at":  createdAt.Format(time.RFC3339),
-			"updated_at":  updatedAt.Format(time.RFC3339),
+			"id":                   id,
+			"name":                 name,
+			"tenant_id":            projectID,
+			"description":          description,
+			"created_at":           createdAt.Format(time.RFC3339),
+			"updated_at":           updatedAt.Format(time.RFC3339),
+			"security_group_rules": rules,
 		},
 	})
 }

@@ -207,3 +207,42 @@ ssh_authorized_keys:
 		UserData: userData,
 	}
 }
+
+// DiskSpec defines disk device configuration
+type DiskSpec struct {
+	Device   string // e.g., /dev/vdb, /dev/vdc
+	Type     string // "network" for RBD, "file" for local
+	Source   string // RBD: "pool/image", File: "/path/to/file.qcow2"
+	Protocol string // "rbd" for Ceph RBD
+}
+
+// GenerateDiskXML generates libvirt XML for a disk device
+func GenerateDiskXML(spec DiskSpec) string {
+	var sb strings.Builder
+
+	// Extract device letter from path (e.g., "/dev/vdb" -> "vdb")
+	device := spec.Device
+	if strings.HasPrefix(device, "/dev/") {
+		device = strings.TrimPrefix(device, "/dev/")
+	}
+
+	if spec.Type == "network" && spec.Protocol == "rbd" {
+		// RBD network disk
+		sb.WriteString(fmt.Sprintf(`<disk type='network' device='disk'>
+  <driver name='qemu' type='raw' cache='writeback'/>
+  <source protocol='rbd' name='%s'>
+    <host name='127.0.0.1' port='6789'/>
+  </source>
+  <target dev='%s' bus='virtio'/>
+</disk>`, spec.Source, device))
+	} else {
+		// Local file disk
+		sb.WriteString(fmt.Sprintf(`<disk type='file' device='disk'>
+  <driver name='qemu' type='qcow2' cache='writeback'/>
+  <source file='%s'/>
+  <target dev='%s' bus='virtio'/>
+</disk>`, spec.Source, device))
+	}
+
+	return sb.String()
+}

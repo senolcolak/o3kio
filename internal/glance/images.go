@@ -18,16 +18,22 @@ type Service struct {
 	mode       string
 	cephPool   string
 	cephConf   string
+	s3Bucket   string
+	s3Region   string
+	s3Endpoint string
 	imageStore *storage.ImageStore
 }
 
 // NewService creates a new Glance service
-func NewService(mode, cephPool, cephConf string) *Service {
+func NewService(mode, cephPool, cephConf, s3Bucket, s3Region, s3Endpoint string) *Service {
 	return &Service{
 		mode:       mode,
 		cephPool:   cephPool,
 		cephConf:   cephConf,
-		imageStore: storage.NewImageStore(mode, cephPool, cephConf),
+		s3Bucket:   s3Bucket,
+		s3Region:   s3Region,
+		s3Endpoint: s3Endpoint,
+		imageStore: storage.NewImageStore(mode, cephPool, cephConf, s3Bucket, s3Region, s3Endpoint),
 	}
 }
 

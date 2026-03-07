@@ -379,6 +379,192 @@ func (m *VMManager) getVMStateReal(ctx context.Context, vmUUID string) (string, 
 	return stateStr, int(state), nil
 }
 
+// AttachDevice attaches a device (disk/network) to a VM
+func (m *VMManager) AttachDevice(ctx context.Context, vmUUID, deviceXML string) error {
+	if m.mode == "stub" {
+		return m.attachDeviceStub(vmUUID, deviceXML)
+	}
+	return m.attachDeviceReal(ctx, vmUUID, deviceXML)
+}
+
+// attachDeviceStub simulates device attachment
+func (m *VMManager) attachDeviceStub(vmUUID, deviceXML string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, exists := m.stubVMs[vmUUID]; !exists {
+		return fmt.Errorf("VM not found: %s", vmUUID)
+	}
+
+	// In stub mode, we just verify the VM exists
+	return nil
+}
+
+// attachDeviceReal attaches a device to a real VM via libvirt
+func (m *VMManager) attachDeviceReal(ctx context.Context, vmUUID, deviceXML string) error {
+	if m.conn == nil {
+		return fmt.Errorf("not connected to libvirt")
+	}
+
+	uuidBytes, err := parseUUID(vmUUID)
+	if err != nil {
+		return fmt.Errorf("invalid UUID: %w", err)
+	}
+
+	domain, err := m.conn.DomainLookupByUUID(uuidBytes)
+	if err != nil {
+		return fmt.Errorf("domain not found: %w", err)
+	}
+
+	// Attach device (libvirt flags: 0 for default, 1 for persistent, 2 for live)
+	flags := uint32(3) // Both persistent and live (1 | 2)
+	if err := m.conn.DomainAttachDeviceFlags(domain, deviceXML, flags); err != nil {
+		return fmt.Errorf("failed to attach device: %w", err)
+	}
+
+	return nil
+}
+
+// DetachDevice detaches a device from a VM
+func (m *VMManager) DetachDevice(ctx context.Context, vmUUID, deviceXML string) error {
+	if m.mode == "stub" {
+		return m.detachDeviceStub(vmUUID, deviceXML)
+	}
+	return m.detachDeviceReal(ctx, vmUUID, deviceXML)
+}
+
+// detachDeviceStub simulates device detachment
+func (m *VMManager) detachDeviceStub(vmUUID, deviceXML string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, exists := m.stubVMs[vmUUID]; !exists {
+		return fmt.Errorf("VM not found: %s", vmUUID)
+	}
+
+	// In stub mode, we just verify the VM exists
+	return nil
+}
+
+// detachDeviceReal detaches a device from a real VM via libvirt
+func (m *VMManager) detachDeviceReal(ctx context.Context, vmUUID, deviceXML string) error {
+	if m.conn == nil {
+		return fmt.Errorf("not connected to libvirt")
+	}
+
+	uuidBytes, err := parseUUID(vmUUID)
+	if err != nil {
+		return fmt.Errorf("invalid UUID: %w", err)
+	}
+
+	domain, err := m.conn.DomainLookupByUUID(uuidBytes)
+	if err != nil {
+		return fmt.Errorf("domain not found: %w", err)
+	}
+
+	// Detach device (libvirt flags: 0 for default, 1 for persistent, 2 for live)
+	flags := uint32(3) // Both persistent and live (1 | 2)
+	if err := m.conn.DomainDetachDeviceFlags(domain, deviceXML, flags); err != nil {
+		return fmt.Errorf("failed to detach device: %w", err)
+	}
+
+	return nil
+}
+
+// SuspendVM suspends a virtual machine (saves RAM to disk)
+func (m *VMManager) SuspendVM(ctx context.Context, vmUUID string) error {
+	if m.mode == "stub" {
+		return m.suspendVMStub(vmUUID)
+	}
+	return m.suspendVMReal(ctx, vmUUID)
+}
+
+// suspendVMStub simulates VM suspend
+func (m *VMManager) suspendVMStub(vmUUID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	vm, exists := m.stubVMs[vmUUID]
+	if !exists {
+		return fmt.Errorf("VM not found: %s", vmUUID)
+	}
+
+	vm.state = "SUSPENDED"
+	vm.powerState = 4 // SUSPENDED
+	return nil
+}
+
+// suspendVMReal suspends a real VM via libvirt
+func (m *VMManager) suspendVMReal(ctx context.Context, vmUUID string) error {
+	if m.conn == nil {
+		return fmt.Errorf("not connected to libvirt")
+	}
+
+	uuidBytes, err := parseUUID(vmUUID)
+	if err != nil {
+		return fmt.Errorf("invalid UUID: %w", err)
+	}
+
+	domain, err := m.conn.DomainLookupByUUID(uuidBytes)
+	if err != nil {
+		return fmt.Errorf("domain not found: %w", err)
+	}
+
+	// Suspend domain (saves to disk)
+	if err := m.conn.DomainManagedSave(domain, 0); err != nil {
+		return fmt.Errorf("failed to suspend domain: %w", err)
+	}
+
+	return nil
+}
+
+// ResumeVM resumes a suspended virtual machine
+func (m *VMManager) ResumeVM(ctx context.Context, vmUUID string) error {
+	if m.mode == "stub" {
+		return m.resumeVMStub(vmUUID)
+	}
+	return m.resumeVMReal(ctx, vmUUID)
+}
+
+// resumeVMStub simulates VM resume
+func (m *VMManager) resumeVMStub(vmUUID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	vm, exists := m.stubVMs[vmUUID]
+	if !exists {
+		return fmt.Errorf("VM not found: %s", vmUUID)
+	}
+
+	vm.state = VMStateRunning
+	vm.powerState = 1 // Running
+	return nil
+}
+
+// resumeVMReal resumes a real VM via libvirt
+func (m *VMManager) resumeVMReal(ctx context.Context, vmUUID string) error {
+	if m.conn == nil {
+		return fmt.Errorf("not connected to libvirt")
+	}
+
+	uuidBytes, err := parseUUID(vmUUID)
+	if err != nil {
+		return fmt.Errorf("invalid UUID: %w", err)
+	}
+
+	domain, err := m.conn.DomainLookupByUUID(uuidBytes)
+	if err != nil {
+		return fmt.Errorf("domain not found: %w", err)
+	}
+
+	// Resume domain (starts from managed save)
+	if err := m.conn.DomainCreate(domain); err != nil {
+		return fmt.Errorf("failed to resume domain: %w", err)
+	}
+
+	return nil
+}
+
 // Close closes the VM manager
 func (m *VMManager) Close() {
 	if m.conn != nil {

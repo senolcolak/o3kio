@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  horizon:
+    image: kolla/horizon:2024.1-rocky-9
+    container_name: o3k-horizon
+    ports:
+      - "80:80"
+    environment:
+      # Keystone endpoints
+      - OPENSTACK_KEYSTONE_URL=http://host.docker.internal:35357/v3
+      - OPENSTACK_HOST=host.docker.internal
+
+      # API endpoints (using host.docker.internal for macOS Docker)
+      - OPENSTACK_KEYSTONE_DEFAULT_ROLE=member
+      - OPENSTACK_KEYSTONE_MULTIDOMAIN_SUPPORT=False
+      - OPENSTACK_API_VERSIONS={"identity":3,"compute":2,"volume":3,"network":2,"image":2}
+
+      # Region
+      - OPENSTACK_KEYSTONE_DEFAULT_DOMAIN=Default
+      - OPENSTACK_REGION=RegionOne
+
+      # Disable SSL verification for local testing
+      - OPENSTACK_SSL_NO_VERIFY=True
+      - OPENSTACK_SSL_CACERT=
+
+      # Session settings
+      - SECRET_KEY=o3k-horizon-secret-key-change-in-production
+      - TIME_ZONE=UTC
+
+      # Enable all panels
+      - OPENSTACK_ENABLE_PASSWORD_RETRIEVE=True
+    volumes:
+      - ./horizon_config:/etc/openstack-dashboard
+    networks:
+      - o3k-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+networks:
+  o3k-network:
+    driver: bridge

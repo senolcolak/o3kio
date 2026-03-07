@@ -66,13 +66,34 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		// Keypairs
 		v21.GET("/os-keypairs", svc.ListKeypairs)
 		v21.POST("/os-keypairs", svc.CreateKeypair)
+		v21.GET("/os-keypairs/:id", svc.GetKeypair)
+		v21.DELETE("/os-keypairs/:id", svc.DeleteKeypair)
 
 		// Hypervisors (for Horizon compatibility)
 		v21.GET("/os-hypervisors", svc.ListHypervisors)
 		v21.GET("/os-hypervisors/detail", svc.ListHypervisorsDetail)
+		v21.GET("/os-hypervisors/statistics", svc.GetHypervisorStatistics)
 
 		// Availability zones
 		v21.GET("/os-availability-zone", svc.ListAvailabilityZones)
+
+		// Volume attachments
+		v21.GET("/servers/:id/os-volume_attachments", svc.ListVolumeAttachments)
+		v21.POST("/servers/:id/os-volume_attachments", svc.AttachVolume)
+		v21.DELETE("/servers/:id/os-volume_attachments/:volume_id", svc.DetachVolume)
+
+		// Interface attachments (network hot-plug)
+		v21.GET("/servers/:id/os-interface", svc.ListInterfaceAttachments)
+		v21.POST("/servers/:id/os-interface", svc.AttachInterface)
+		v21.DELETE("/servers/:id/os-interface/:port_id", svc.DetachInterface)
+
+		// Quotas
+		v21.GET("/os-quota-sets/:id", svc.GetQuotaSet)
+		v21.PUT("/os-quota-sets/:id", svc.UpdateQuotaSet)
+		v21.GET("/os-quota-sets/:id/defaults", svc.GetQuotaSetDefaults)
+
+		// Console access
+		v21.POST("/servers/:id/remote-consoles", svc.GetRemoteConsole)
 	}
 }
 
@@ -155,15 +176,66 @@ func (svc *Service) CreateServer(c *gin.Context) {
 		return
 	}
 
+	// Check quotas before creating instance
+	if err := CheckQuota(c, "instances", 1); err != nil {
+		if _, ok := err.(*QuotaExceededError); ok {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": gin.H{
+				"message": "Quota exceeded for resource: instances",
+				"code":    413,
+				"title":   "Request Entity Too Large",
+			}})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Check cores quota
+	if err := CheckQuota(c, "cores", flavor.VCPUs); err != nil {
+		if _, ok := err.(*QuotaExceededError); ok {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": gin.H{
+				"message": "Quota exceeded for resource: cores",
+				"code":    413,
+				"title":   "Request Entity Too Large",
+			}})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Check RAM quota
+	if err := CheckQuota(c, "ram", flavor.RAMMB); err != nil {
+		if _, ok := err.(*QuotaExceededError); ok {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": gin.H{
+				"message": "Quota exceeded for resource: ram",
+				"code":    413,
+				"title":   "Request Entity Too Large",
+			}})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
 	// Generate instance ID
 	instanceID := uuid.New().String()
 
 	// Create instance record in database
 	now := time.Now()
+
+	// Handle NULL image_id (for volume-backed instances)
+	var imageID interface{}
+	if req.Server.ImageRef != "" {
+		imageID = req.Server.ImageRef
+	} else {
+		imageID = nil
+	}
+
 	_, err = database.DB.Exec(c.Request.Context(), `
 		INSERT INTO instances (id, name, project_id, user_id, flavor_id, image_id, status, power_state, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-	`, instanceID, req.Server.Name, projectID, userID, flavor.ID, req.Server.ImageRef, "BUILD", 0, now, now)
+	`, instanceID, req.Server.Name, projectID, userID, flavor.ID, imageID, "BUILD", 0, now, now)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -420,7 +492,40 @@ func (svc *Service) ServerAction(c *gin.Context) {
 		return
 	}
 
-	// Get libvirt domain ID
+	// Handle console actions first (don't require libvirt)
+	if vncConsole, ok := req["os-getVNCConsole"]; ok {
+		svc.GetVNCConsoleAction(c, vncConsole)
+		return
+	}
+
+	// Handle advanced actions that don't require libvirt in all cases
+	if _, ok := req["suspend"]; ok {
+		svc.SuspendInstance(c)
+		return
+	} else if _, ok := req["resume"]; ok {
+		svc.ResumeInstance(c)
+		return
+	} else if _, ok := req["shelve"]; ok {
+		svc.ShelveInstance(c)
+		return
+	} else if _, ok := req["shelveOffload"]; ok {
+		svc.ShelveInstance(c) // Same as shelve for now
+		return
+	} else if _, ok := req["unshelve"]; ok {
+		svc.UnshelveInstance(c)
+		return
+	} else if resizeData, ok := req["resize"]; ok {
+		svc.ResizeInstanceAction(c, resizeData)
+		return
+	} else if _, ok := req["confirmResize"]; ok {
+		svc.ConfirmResizeInstance(c)
+		return
+	} else if _, ok := req["revertResize"]; ok {
+		svc.RevertResizeInstance(c)
+		return
+	}
+
+	// Get libvirt domain ID for remaining actions
 	var libvirtDomainID string
 	err := database.DB.QueryRow(c.Request.Context(),
 		"SELECT libvirt_domain_id FROM instances WHERE id = $1 AND project_id = $2",
@@ -592,16 +697,6 @@ func (svc *Service) ListImagesDetail(c *gin.Context) {
 	c.JSON(200, gin.H{"images": []gin.H{}})
 }
 
-// ListKeypairs - stub
-func (svc *Service) ListKeypairs(c *gin.Context) {
-	c.JSON(200, gin.H{"keypairs": []gin.H{}})
-}
-
-// CreateKeypair - stub
-func (svc *Service) CreateKeypair(c *gin.Context) {
-	c.JSON(201, gin.H{"keypair": gin.H{}})
-}
-
 // ListHypervisors lists hypervisors (mock for Horizon)
 func (svc *Service) ListHypervisors(c *gin.Context) {
 	c.JSON(200, gin.H{"hypervisors": []gin.H{
@@ -633,6 +728,33 @@ func (svc *Service) ListHypervisorsDetail(c *gin.Context) {
 			"running_vms":         0,
 		},
 	}})
+}
+
+// GetHypervisorStatistics returns aggregated hypervisor statistics (for Horizon)
+func (svc *Service) GetHypervisorStatistics(c *gin.Context) {
+	// Count running instances
+	var runningVMs int
+	database.DB.QueryRow(c.Request.Context(),
+		"SELECT COUNT(*) FROM instances WHERE power_state = 1",
+	).Scan(&runningVMs)
+
+	// Return aggregated stats
+	c.JSON(200, gin.H{
+		"hypervisor_statistics": gin.H{
+			"count":              1,
+			"current_workload":   0,
+			"disk_available_least": 800,
+			"free_disk_gb":       900,
+			"free_ram_mb":        28672,
+			"local_gb":           1000,
+			"local_gb_used":      100,
+			"memory_mb":          32768,
+			"memory_mb_used":     4096,
+			"running_vms":        runningVMs,
+			"vcpus":              16,
+			"vcpus_used":         runningVMs * 2, // Assume 2 vCPUs per VM
+		},
+	})
 }
 
 // ListAvailabilityZones lists availability zones

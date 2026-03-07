@@ -1,0 +1,90 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: o3k-postgres
+    environment:
+      POSTGRES_DB: lightstack
+      POSTGRES_USER: lightstack
+      POSTGRES_PASSWORD: secret
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lightstack"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - o3k-network
+
+  # O3K OpenStack-Compatible Cloud
+  o3k:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile
+    container_name: o3k
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "5001:35357"   # Keystone (Identity) - map external 5001 to internal 35357 (5000 is used by AirPlay on macOS)
+      - "8774:8774"    # Nova (Compute)
+      - "9696:9696"    # Neutron (Network)
+      - "8776:8776"    # Cinder (Block Storage)
+      - "9292:9292"    # Glance (Image)
+      - "8775:8775"    # Metadata Service
+    environment:
+      O3K_DB_URL: "postgres://lightstack:secret@postgres:5432/lightstack?sslmode=disable"
+      O3K_JWT_SECRET: "${O3K_JWT_SECRET:-change-me-in-production}"
+      O3K_LOG_LEVEL: "info"
+      O3K_LOG_FORMAT: "json"
+    networks:
+      - o3k-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5000/v3 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Horizon Dashboard (OpenStack Web UI)
+  # DISABLED: Horizon Docker images are not reliably available or are ARM-incompatible
+  #
+  # Alternative: Use the OpenStack CLI (recommended):
+  #   pipx install python-openstackclient
+  #   source /tmp/o3k-env.sh
+  #   openstack server list
+  #
+  # If you want to try Horizon anyway, uncomment below and adjust the image:
+  # horizon:
+  #   image: quay.io/openstack.kolla/ubuntu-source-horizon:2024.1
+  #   container_name: o3k-horizon
+  #   depends_on:
+  #     o3k:
+  #       condition: service_healthy
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   environment:
+  #     KOLLA_SERVICE_NAME: horizon
+  #     OPENSTACK_HOST: o3k
+  #   volumes:
+  #     - ./deployments/horizon/horizon_settings.py:/etc/openstack-dashboard/local_settings.d/_10_custom.py:ro
+  #   networks:
+  #     - o3k-network
+  #   restart: unless-stopped
+  #   platform: linux/amd64
+
+volumes:
+  postgres_data:
+    driver: local
+  horizon_static:
+    driver: local
+
+networks:
+  o3k-network:
+    driver: bridge

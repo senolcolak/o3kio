@@ -16,13 +16,14 @@ import (
 
 // Service handles Neutron API endpoints
 type Service struct {
-	mode          string
-	nsManager     *networking.NetworkNamespaceManager
-	brManager     *networking.BridgeManager
-	tapManager    *networking.TAPDeviceManager
-	dhcpManager   *networking.DHCPManager
-	sgManager     *networking.SecurityGroupManager
-	routerManager *networking.RouterManager
+	mode             string
+	nsManager        *networking.NetworkNamespaceManager
+	brManager        *networking.BridgeManager
+	tapManager       *networking.TAPDeviceManager
+	dhcpManager      *networking.DHCPManager
+	sgManager        *networking.SecurityGroupManager
+	routerManager    *networking.RouterManager
+	vxlanCoordinator *VXLANCoordinator
 }
 
 // NewService creates a new Neutron service
@@ -97,6 +98,16 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 	}
 }
 
+// SetVXLANCoordinator sets the VXLAN coordinator for this service
+func (svc *Service) SetVXLANCoordinator(coordinator *VXLANCoordinator) {
+	svc.vxlanCoordinator = coordinator
+}
+
+// GetNamespaceManager returns the namespace manager (for VXLAN coordinator)
+func (svc *Service) GetNamespaceManager() *networking.NetworkNamespaceManager {
+	return svc.nsManager
+}
+
 // GetVersion returns version details
 func (svc *Service) GetVersion(c *gin.Context) {
 	c.JSON(200, gin.H{
@@ -156,10 +167,19 @@ func (svc *Service) CreateNetwork(c *gin.Context) {
 
 	// Insert into database
 	now := time.Now()
+
+	// Determine network type based on VXLAN coordinator
+	networkType := "flat"
+	mtu := 1500
+	if svc.vxlanCoordinator != nil {
+		networkType = "vxlan"
+		mtu = 1450 // Account for VXLAN overhead
+	}
+
 	_, err := database.DB.Exec(c.Request.Context(), `
-		INSERT INTO networks (id, name, project_id, admin_state_up, status, shared, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	`, networkID, req.Network.Name, projectID, adminStateUp, "ACTIVE", shared, now, now)
+		INSERT INTO networks (id, name, project_id, admin_state_up, status, shared, network_type, mtu, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	`, networkID, req.Network.Name, projectID, adminStateUp, "ACTIVE", shared, networkType, mtu, now, now)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

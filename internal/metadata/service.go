@@ -1,0 +1,329 @@
+package metadata
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"strings"
+
+	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
+	"github.com/cobaltcore-dev/o3k/internal/database"
+)
+
+// Service handles EC2-compatible metadata service endpoints
+type Service struct {
+	// In production, this would run on 169.254.169.254
+	// For testing, it runs on localhost:8775
+	bindAddr string
+}
+
+// NewService creates a new metadata service
+func NewService(bindAddr string) *Service {
+	return &Service{
+		bindAddr: bindAddr,
+	}
+}
+
+// RegisterRoutes registers metadata service routes
+func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
+	// EC2-compatible metadata API (OpenStack follows this format)
+	// Cloud-init tries these paths in order:
+	//   /openstack/latest/meta_data.json
+	//   /2009-04-04/meta-data/
+
+	// OpenStack-style metadata
+	openstack := r.Group("/openstack")
+	{
+		openstack.GET("/latest/meta_data.json", svc.GetMetaDataJSON)
+		openstack.GET("/latest/user_data", svc.GetUserData)
+		openstack.GET("/latest/network_data.json", svc.GetNetworkDataJSON)
+		openstack.GET("/latest/vendor_data.json", svc.GetVendorDataJSON)
+	}
+
+	// EC2-style metadata (for compatibility)
+	ec2 := r.Group("/2009-04-04")
+	{
+		ec2.GET("/meta-data/", svc.GetMetaDataRoot)
+		ec2.GET("/meta-data/:key", svc.GetMetaDataKey)
+		ec2.GET("/user-data", svc.GetUserData)
+	}
+
+	// Version discovery
+	r.GET("/", svc.ListVersions)
+}
+
+// instanceFromIP looks up instance by source IP address
+// In a real deployment, this would check which network namespace the request came from
+// For testing, we'll use a header: X-Instance-ID
+func (svc *Service) instanceFromRequest(c *gin.Context) (string, error) {
+	// Check for test header first
+	if instanceID := c.GetHeader("X-Instance-ID"); instanceID != "" {
+		return instanceID, nil
+	}
+
+	// In production, we would:
+	// 1. Get source IP from c.ClientIP()
+	// 2. Query ports table to find port with that IP
+	// 3. Return instance_id from port
+	// For now, return error for real deployments
+	return "", fmt.Errorf("cannot determine instance ID from request")
+}
+
+// GetMetaDataJSON returns instance metadata in JSON format (OpenStack style)
+func (svc *Service) GetMetaDataJSON(c *gin.Context) {
+	instanceID, err := svc.instanceFromRequest(c)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "instance not found"})
+		return
+	}
+
+	var name, hostname, projectID, userID string
+	var uuid string
+	err = database.DB.QueryRow(c.Request.Context(), `
+		SELECT id, name, name, project_id, user_id
+		FROM instances
+		WHERE id = $1
+	`, instanceID).Scan(&uuid, &name, &hostname, &projectID, &userID)
+
+	if err == pgx.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "instance not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Build metadata structure
+	metadata := gin.H{
+		"uuid":              uuid,
+		"name":              name,
+		"hostname":          hostname,
+		"project_id":        projectID,
+		"availability_zone": "nova", // Default AZ
+		"launch_index":      0,
+		"meta":              gin.H{}, // Custom metadata key-value pairs
+		"public_keys":       gin.H{}, // SSH keys
+	}
+
+	// Fetch custom metadata
+	rows, err := database.DB.Query(c.Request.Context(), `
+		SELECT key, value
+		FROM instance_metadata
+		WHERE instance_id = $1
+	`, instanceID)
+	if err == nil {
+		defer rows.Close()
+		metaMap := make(map[string]string)
+		for rows.Next() {
+			var key, value string
+			if err := rows.Scan(&key, &value); err == nil {
+				metaMap[key] = value
+			}
+		}
+		if len(metaMap) > 0 {
+			metadata["meta"] = metaMap
+		}
+	}
+
+	// Fetch SSH keys
+	keyRows, err := database.DB.Query(c.Request.Context(), `
+		SELECT k.name, k.public_key
+		FROM keypairs k
+		WHERE k.user_id = $1
+	`, userID)
+	if err == nil {
+		defer keyRows.Close()
+		keysMap := make(map[string]string)
+		for keyRows.Next() {
+			var name, pubkey string
+			if err := keyRows.Scan(&name, &pubkey); err == nil {
+				keysMap[name] = pubkey
+			}
+		}
+		if len(keysMap) > 0 {
+			metadata["public_keys"] = keysMap
+		}
+	}
+
+	c.JSON(http.StatusOK, metadata)
+}
+
+// GetUserData returns cloud-init user-data
+func (svc *Service) GetUserData(c *gin.Context) {
+	instanceID, err := svc.instanceFromRequest(c)
+	if err != nil {
+		c.String(http.StatusNotFound, "")
+		return
+	}
+
+	var userData string
+	err = database.DB.QueryRow(c.Request.Context(), `
+		SELECT user_data
+		FROM instance_userdata
+		WHERE instance_id = $1
+	`, instanceID).Scan(&userData)
+
+	if err == pgx.ErrNoRows {
+		// No user-data is not an error, just return empty
+		c.String(http.StatusOK, "")
+		return
+	}
+	if err != nil {
+		c.String(http.StatusInternalServerError, "")
+		return
+	}
+
+	// User-data can be shell script, cloud-config, etc.
+	c.String(http.StatusOK, userData)
+}
+
+// GetNetworkDataJSON returns network configuration in JSON format
+func (svc *Service) GetNetworkDataJSON(c *gin.Context) {
+	instanceID, err := svc.instanceFromRequest(c)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "instance not found"})
+		return
+	}
+
+	// Query all ports for this instance
+	rows, err := database.DB.Query(c.Request.Context(), `
+		SELECT p.id, p.mac_address, p.fixed_ip, p.network_id, n.name, s.cidr, s.gateway_ip, s.dns_nameservers
+		FROM ports p
+		JOIN networks n ON p.network_id = n.id
+		LEFT JOIN subnets s ON p.network_id = s.network_id
+		WHERE p.device_id = $1
+		ORDER BY p.created_at
+	`, instanceID)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	var links []gin.H
+	var networks []gin.H
+
+	linkID := 0
+	for rows.Next() {
+		var portID, mac, ip, networkID, networkName, cidr, gateway string
+		var dnsServers []string
+
+		if err := rows.Scan(&portID, &mac, &ip, &networkID, &networkName, &cidr, &gateway, &dnsServers); err != nil {
+			continue
+		}
+
+		// Create link (interface)
+		links = append(links, gin.H{
+			"id":                  fmt.Sprintf("tap%d", linkID),
+			"type":                "bridge",
+			"ethernet_mac_address": mac,
+			"mtu":                 1500,
+		})
+
+		// Create network config
+		netConfig := gin.H{
+			"id":       fmt.Sprintf("network%d", linkID),
+			"link":     fmt.Sprintf("tap%d", linkID),
+			"type":     "ipv4",
+			"ip_address": ip,
+			"netmask":  strings.Split(cidr, "/")[1], // Extract netmask from CIDR
+		}
+
+		if gateway != "" {
+			netConfig["gateway"] = gateway
+		}
+
+		if len(dnsServers) > 0 {
+			netConfig["dns_nameservers"] = dnsServers
+		}
+
+		networks = append(networks, netConfig)
+		linkID++
+	}
+
+	// Return network_data.json structure
+	c.JSON(http.StatusOK, gin.H{
+		"links":    links,
+		"networks": networks,
+		"services": []gin.H{},
+	})
+}
+
+// GetVendorDataJSON returns vendor-specific data (usually empty)
+func (svc *Service) GetVendorDataJSON(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{})
+}
+
+// GetMetaDataRoot returns list of available metadata keys (EC2 style)
+func (svc *Service) GetMetaDataRoot(c *gin.Context) {
+	keys := []string{
+		"hostname",
+		"instance-id",
+		"instance-type",
+		"local-ipv4",
+		"public-keys/",
+	}
+	c.String(http.StatusOK, strings.Join(keys, "\n"))
+}
+
+// GetMetaDataKey returns a specific metadata key (EC2 style)
+func (svc *Service) GetMetaDataKey(c *gin.Context) {
+	key := c.Param("key")
+	instanceID, err := svc.instanceFromRequest(c)
+	if err != nil {
+		c.String(http.StatusNotFound, "")
+		return
+	}
+
+	switch key {
+	case "instance-id":
+		c.String(http.StatusOK, instanceID)
+	case "hostname":
+		var hostname string
+		err := database.DB.QueryRow(context.Background(), `
+			SELECT name FROM instances WHERE id = $1
+		`, instanceID).Scan(&hostname)
+		if err == nil {
+			c.String(http.StatusOK, hostname)
+		} else {
+			c.String(http.StatusNotFound, "")
+		}
+	case "instance-type":
+		var flavorName string
+		err := database.DB.QueryRow(context.Background(), `
+			SELECT f.name
+			FROM instances i
+			JOIN flavors f ON i.flavor_id = f.id
+			WHERE i.id = $1
+		`, instanceID).Scan(&flavorName)
+		if err == nil {
+			c.String(http.StatusOK, flavorName)
+		} else {
+			c.String(http.StatusNotFound, "")
+		}
+	case "local-ipv4":
+		var ip string
+		err := database.DB.QueryRow(context.Background(), `
+			SELECT fixed_ip FROM ports WHERE device_id = $1 LIMIT 1
+		`, instanceID).Scan(&ip)
+		if err == nil {
+			c.String(http.StatusOK, ip)
+		} else {
+			c.String(http.StatusNotFound, "")
+		}
+	default:
+		c.String(http.StatusNotFound, "")
+	}
+}
+
+// ListVersions returns available metadata API versions
+func (svc *Service) ListVersions(c *gin.Context) {
+	versions := []string{
+		"2009-04-04",
+		"openstack",
+	}
+	c.String(http.StatusOK, strings.Join(versions, "\n"))
+}

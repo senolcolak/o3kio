@@ -119,6 +119,30 @@ func (m *SecurityGroupManager) createSecurityGroupChainEBPF(securityGroupID stri
 
 // DeleteSecurityGroupChain deletes an iptables chain
 func (m *SecurityGroupManager) DeleteSecurityGroupChain(securityGroupID string) error {
+	switch m.mode {
+	case "stub":
+		return m.deleteSecurityGroupChainStub(securityGroupID)
+	case "iptables":
+		return m.deleteSecurityGroupChainIPTables(securityGroupID)
+	case "ebpf":
+		return m.deleteSecurityGroupChainEBPF(securityGroupID)
+	default:
+		return fmt.Errorf("unsupported security group mode: %s", m.mode)
+	}
+}
+
+// deleteSecurityGroupChainStub simulates chain deletion
+func (m *SecurityGroupManager) deleteSecurityGroupChainStub(securityGroupID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	chainName := "O3K-SG-" + securityGroupID[:8]
+	delete(m.stubChains, chainName)
+	delete(m.stubRules, chainName)
+	return nil
+}
+
+// deleteSecurityGroupChainIPTables deletes an iptables chain
+func (m *SecurityGroupManager) deleteSecurityGroupChainIPTables(securityGroupID string) error {
 	chainName := "O3K-SG-" + securityGroupID[:8]
 
 	// Flush chain first
@@ -128,8 +152,40 @@ func (m *SecurityGroupManager) DeleteSecurityGroupChain(securityGroupID string) 
 	return m.ipt.DeleteChain("filter", chainName)
 }
 
+// deleteSecurityGroupChainEBPF deletes an eBPF program
+func (m *SecurityGroupManager) deleteSecurityGroupChainEBPF(securityGroupID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	progName := "o3k_sg_" + securityGroupID[:8]
+	delete(m.ebpfProgs, progName)
+	return nil
+}
+
 // AddRule adds a security group rule
 func (m *SecurityGroupManager) AddRule(securityGroupID string, rule SecurityGroupRule) error {
+	switch m.mode {
+	case "stub":
+		return m.addRuleStub(securityGroupID, rule)
+	case "iptables":
+		return m.addRuleIPTables(securityGroupID, rule)
+	case "ebpf":
+		return m.addRuleEBPF(securityGroupID, rule)
+	default:
+		return fmt.Errorf("unsupported security group mode: %s", m.mode)
+	}
+}
+
+// addRuleStub simulates adding a rule
+func (m *SecurityGroupManager) addRuleStub(securityGroupID string, rule SecurityGroupRule) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	chainName := "O3K-SG-" + securityGroupID[:8]
+	m.stubRules[chainName] = append(m.stubRules[chainName], rule)
+	return nil
+}
+
+// addRuleIPTables adds a rule to iptables
+func (m *SecurityGroupManager) addRuleIPTables(securityGroupID string, rule SecurityGroupRule) error {
 	chainName := "O3K-SG-" + securityGroupID[:8]
 
 	// Build iptables rule
@@ -143,8 +199,51 @@ func (m *SecurityGroupManager) AddRule(securityGroupID string, rule SecurityGrou
 	return nil
 }
 
+// addRuleEBPF adds a rule to eBPF program
+func (m *SecurityGroupManager) addRuleEBPF(securityGroupID string, rule SecurityGroupRule) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	progName := "o3k_sg_" + securityGroupID[:8]
+	if prog, ok := m.ebpfProgs[progName]; ok {
+		if progMap, ok := prog.(map[string]interface{}); ok {
+			rules := progMap["rules"].([]SecurityGroupRule)
+			progMap["rules"] = append(rules, rule)
+		}
+	}
+	return nil
+}
+
 // RemoveRule removes a security group rule
 func (m *SecurityGroupManager) RemoveRule(securityGroupID string, rule SecurityGroupRule) error {
+	switch m.mode {
+	case "stub":
+		return m.removeRuleStub(securityGroupID, rule)
+	case "iptables":
+		return m.removeRuleIPTables(securityGroupID, rule)
+	case "ebpf":
+		return m.removeRuleEBPF(securityGroupID, rule)
+	default:
+		return fmt.Errorf("unsupported security group mode: %s", m.mode)
+	}
+}
+
+// removeRuleStub simulates removing a rule
+func (m *SecurityGroupManager) removeRuleStub(securityGroupID string, rule SecurityGroupRule) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	chainName := "O3K-SG-" + securityGroupID[:8]
+	rules := m.stubRules[chainName]
+	for i, r := range rules {
+		if r.ID == rule.ID {
+			m.stubRules[chainName] = append(rules[:i], rules[i+1:]...)
+			break
+		}
+	}
+	return nil
+}
+
+// removeRuleIPTables removes a rule from iptables
+func (m *SecurityGroupManager) removeRuleIPTables(securityGroupID string, rule SecurityGroupRule) error {
 	chainName := "O3K-SG-" + securityGroupID[:8]
 
 	ruleSpec := m.buildRuleSpec(rule)
@@ -152,8 +251,46 @@ func (m *SecurityGroupManager) RemoveRule(securityGroupID string, rule SecurityG
 	return m.ipt.Delete("filter", chainName, ruleSpec...)
 }
 
+// removeRuleEBPF removes a rule from eBPF program
+func (m *SecurityGroupManager) removeRuleEBPF(securityGroupID string, rule SecurityGroupRule) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	progName := "o3k_sg_" + securityGroupID[:8]
+	if prog, ok := m.ebpfProgs[progName]; ok {
+		if progMap, ok := prog.(map[string]interface{}); ok {
+			rules := progMap["rules"].([]SecurityGroupRule)
+			for i, r := range rules {
+				if r.ID == rule.ID {
+					progMap["rules"] = append(rules[:i], rules[i+1:]...)
+					break
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // ApplyToInterface applies security group to a network interface
 func (m *SecurityGroupManager) ApplyToInterface(interfaceName, securityGroupID string, direction string) error {
+	switch m.mode {
+	case "stub":
+		return m.applyToInterfaceStub(interfaceName, securityGroupID, direction)
+	case "iptables":
+		return m.applyToInterfaceIPTables(interfaceName, securityGroupID, direction)
+	case "ebpf":
+		return m.applyToInterfaceEBPF(interfaceName, securityGroupID, direction)
+	default:
+		return fmt.Errorf("unsupported security group mode: %s", m.mode)
+	}
+}
+
+// applyToInterfaceStub simulates applying security group to interface
+func (m *SecurityGroupManager) applyToInterfaceStub(interfaceName, securityGroupID string, direction string) error {
+	return nil // Stub mode - no-op
+}
+
+// applyToInterfaceIPTables applies security group to interface using iptables
+func (m *SecurityGroupManager) applyToInterfaceIPTables(interfaceName, securityGroupID string, direction string) error {
 	chainName := "O3K-SG-" + securityGroupID[:8]
 
 	var baseChain string
@@ -177,8 +314,32 @@ func (m *SecurityGroupManager) ApplyToInterface(interfaceName, securityGroupID s
 	return nil
 }
 
+// applyToInterfaceEBPF applies security group to interface using eBPF
+func (m *SecurityGroupManager) applyToInterfaceEBPF(interfaceName, securityGroupID string, direction string) error {
+	return nil // Placeholder for eBPF implementation
+}
+
 // RemoveFromInterface removes security group from interface
 func (m *SecurityGroupManager) RemoveFromInterface(interfaceName, securityGroupID string, direction string) error {
+	switch m.mode {
+	case "stub":
+		return m.removeFromInterfaceStub(interfaceName, securityGroupID, direction)
+	case "iptables":
+		return m.removeFromInterfaceIPTables(interfaceName, securityGroupID, direction)
+	case "ebpf":
+		return m.removeFromInterfaceEBPF(interfaceName, securityGroupID, direction)
+	default:
+		return fmt.Errorf("unsupported security group mode: %s", m.mode)
+	}
+}
+
+// removeFromInterfaceStub simulates removing security group from interface
+func (m *SecurityGroupManager) removeFromInterfaceStub(interfaceName, securityGroupID string, direction string) error {
+	return nil // Stub mode - no-op
+}
+
+// removeFromInterfaceIPTables removes security group from interface using iptables
+func (m *SecurityGroupManager) removeFromInterfaceIPTables(interfaceName, securityGroupID string, direction string) error {
 	chainName := "O3K-SG-" + securityGroupID[:8]
 
 	var baseChain string
@@ -195,6 +356,11 @@ func (m *SecurityGroupManager) RemoveFromInterface(interfaceName, securityGroupI
 	ruleSpec := []string{ifaceFlag, interfaceName, "-j", chainName}
 
 	return m.ipt.Delete("filter", baseChain, ruleSpec...)
+}
+
+// removeFromInterfaceEBPF removes security group from interface using eBPF
+func (m *SecurityGroupManager) removeFromInterfaceEBPF(interfaceName, securityGroupID string, direction string) error {
+	return nil // Placeholder for eBPF implementation
 }
 
 // buildRuleSpec builds iptables rule specification

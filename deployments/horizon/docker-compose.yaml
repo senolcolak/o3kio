@@ -1,0 +1,78 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: o3k-postgres
+    environment:
+      POSTGRES_DB: lightstack
+      POSTGRES_USER: lightstack
+      POSTGRES_PASSWORD: secret
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lightstack"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - o3k-network
+
+  # O3K is already running on your host, so we'll connect to it via host.docker.internal
+  # If you want to run O3K in Docker instead, uncomment the section below
+
+  # o3k:
+  #   build:
+  #     context: ../..
+  #     dockerfile: deployments/docker/Dockerfile
+  #   container_name: o3k
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #   ports:
+  #     - "35357:35357"  # Keystone
+  #     - "8774:8774"    # Nova
+  #     - "9696:9696"    # Neutron
+  #     - "8776:8776"    # Cinder
+  #     - "9292:9292"    # Glance
+  #     - "8775:8775"    # Metadata
+  #   environment:
+  #     O3K_DB_URL: "postgres://lightstack:secret@postgres:5432/lightstack?sslmode=disable"
+  #     O3K_JWT_SECRET: "${O3K_JWT_SECRET:-change-me-in-production}"
+  #   networks:
+  #     - o3k-network
+  #   restart: unless-stopped
+
+  horizon:
+    image: tenstartups/openstack-horizon:latest
+    container_name: o3k-horizon
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # Connect to O3K running on host machine
+      KOLLA_SERVICE_NAME: horizon
+    volumes:
+      - ./horizon_settings.py:/etc/openstack-dashboard/local_settings.d/_10_custom.py:ro
+      - horizon_static:/var/lib/kolla/venv/lib/python3.*/site-packages/static
+    networks:
+      - o3k-network
+    extra_hosts:
+      # Allow container to reach host services
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost/dashboard/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  postgres_data:
+    driver: local
+  horizon_static:
+    driver: local
+
+networks:
+  o3k-network:
+    driver: bridge

@@ -10,6 +10,7 @@ import (
 
 type Config struct {
 	Database DatabaseConfig `yaml:"database"`
+	Compute  ComputeConfig  `yaml:"compute"`
 	Keystone KeystoneConfig `yaml:"keystone"`
 	Nova     NovaConfig     `yaml:"nova"`
 	Neutron  NeutronConfig  `yaml:"neutron"`
@@ -21,6 +22,13 @@ type Config struct {
 type DatabaseConfig struct {
 	URL            string `yaml:"url"`
 	MaxConnections int    `yaml:"max_connections"`
+}
+
+type ComputeConfig struct {
+	NodeID            string        `yaml:"node_id"`
+	TunnelIP          string        `yaml:"tunnel_ip"`
+	VXLANPort         int           `yaml:"vxlan_port"`
+	HeartbeatInterval time.Duration `yaml:"heartbeat_interval"`
 }
 
 type KeystoneConfig struct {
@@ -39,10 +47,15 @@ type NovaConfig struct {
 }
 
 type NeutronConfig struct {
-	Port             int           `yaml:"port"`
-	DHCPLeaseTime    time.Duration `yaml:"dhcp_lease_time"`
-	IPTablesEnabled  bool          `yaml:"iptables_enabled"`
-	NetworkingMode   string        `yaml:"networking_mode"` // "stub" or "real"
+	Port                     int           `yaml:"port"`
+	DHCPLeaseTime            time.Duration `yaml:"dhcp_lease_time"`
+	IPTablesEnabled          bool          `yaml:"iptables_enabled"`
+	NetworkingMode           string        `yaml:"networking_mode"` // "stub", "iptables", or "ebpf"
+	VXLANEnabled             bool          `yaml:"vxlan_enabled"`
+	VNIRangeStart            int           `yaml:"vni_range_start"`
+	VNIRangeEnd              int           `yaml:"vni_range_end"`
+	CoordinationPollInterval time.Duration `yaml:"coordination_poll_interval"`
+	VXLANMTU                 int           `yaml:"vxlan_mtu"`
 }
 
 type CinderConfig struct {
@@ -56,7 +69,10 @@ type GlanceConfig struct {
 	Port        int    `yaml:"port"`
 	CephPool    string `yaml:"ceph_pool"`
 	CephConf    string `yaml:"ceph_conf"`
-	StorageMode string `yaml:"storage_mode"` // "stub" or "real"
+	StorageMode string `yaml:"storage_mode"` // "stub", "local", "rbd", "s3", or combinations
+	S3Bucket    string `yaml:"s3_bucket"`    // S3 bucket name
+	S3Region    string `yaml:"s3_region"`    // S3 region
+	S3Endpoint  string `yaml:"s3_endpoint"`  // Custom S3 endpoint (for MinIO, Ceph RGW, etc.)
 }
 
 type LoggingConfig struct {
