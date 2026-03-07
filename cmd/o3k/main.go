@@ -91,8 +91,20 @@ func main() {
 	neutronService := neutron.NewService(networkingMode)
 	log.Printf("Neutron initialized in %s mode", networkingMode)
 
-	cinderService := cinder.NewService(cfg.Cinder.CephPool, cfg.Cinder.CephConf)
-	glanceService := glance.NewService(cfg.Glance.CephPool, cfg.Glance.CephConf)
+	// Set default storage mode if not specified
+	cinderStorageMode := cfg.Cinder.StorageMode
+	if cinderStorageMode == "" {
+		cinderStorageMode = "stub"
+	}
+	cinderService := cinder.NewService(cinderStorageMode, cfg.Cinder.CephPool, cfg.Cinder.CephConf)
+	log.Printf("Cinder initialized in %s mode", cinderStorageMode)
+
+	glanceStorageMode := cfg.Glance.StorageMode
+	if glanceStorageMode == "" {
+		glanceStorageMode = "stub"
+	}
+	glanceService := glance.NewService(glanceStorageMode, cfg.Glance.CephPool, cfg.Glance.CephConf)
+	log.Printf("Glance initialized in %s mode", glanceStorageMode)
 
 	// Create HTTP servers for each service
 	servers := []*http.Server{

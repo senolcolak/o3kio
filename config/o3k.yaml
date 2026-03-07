@@ -25,11 +25,13 @@ cinder:
   port: 8776
   ceph_pool: volumes
   ceph_conf: /etc/ceph/ceph.conf
+  storage_mode: local  # "stub", "local", "rbd", or "local,rbd"
 
 glance:
   port: 9292
   ceph_pool: images
   ceph_conf: /etc/ceph/ceph.conf
+  storage_mode: stub  # "stub", "local", "rbd", or "local,rbd"
 
 logging:
   level: info

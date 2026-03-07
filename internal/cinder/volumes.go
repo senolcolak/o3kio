@@ -15,17 +15,19 @@ import (
 
 // Service handles Cinder API endpoints
 type Service struct {
+	mode       string
 	cephPool   string
 	cephConf   string
 	cephClient *storage.CephClient
 }
 
 // NewService creates a new Cinder service
-func NewService(cephPool, cephConf string) *Service {
+func NewService(mode, cephPool, cephConf string) *Service {
 	return &Service{
+		mode:       mode,
 		cephPool:   cephPool,
 		cephConf:   cephConf,
-		cephClient: storage.NewCephClient(cephPool, cephConf),
+		cephClient: storage.NewCephClient(mode, cephPool, cephConf),
 	}
 }
 

@@ -9,14 +9,16 @@ import (
 
 // ImageStore manages image storage operations
 type ImageStore struct {
+	mode     string // "stub" or "real"
 	cephPool string
 	cephConf string
 	timeout  time.Duration
 }
 
 // NewImageStore creates a new image store
-func NewImageStore(cephPool, cephConf string) *ImageStore {
+func NewImageStore(mode, cephPool, cephConf string) *ImageStore {
 	return &ImageStore{
+		mode:     mode,
 		cephPool: cephPool,
 		cephConf: cephConf,
 		timeout:  5 * time.Second,

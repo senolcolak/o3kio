@@ -46,15 +46,17 @@ type NeutronConfig struct {
 }
 
 type CinderConfig struct {
-	Port     int    `yaml:"port"`
-	CephPool string `yaml:"ceph_pool"`
-	CephConf string `yaml:"ceph_conf"`
+	Port        int    `yaml:"port"`
+	CephPool    string `yaml:"ceph_pool"`
+	CephConf    string `yaml:"ceph_conf"`
+	StorageMode string `yaml:"storage_mode"` // "stub" or "real"
 }
 
 type GlanceConfig struct {
-	Port     int    `yaml:"port"`
-	CephPool string `yaml:"ceph_pool"`
-	CephConf string `yaml:"ceph_conf"`
+	Port        int    `yaml:"port"`
+	CephPool    string `yaml:"ceph_pool"`
+	CephConf    string `yaml:"ceph_conf"`
+	StorageMode string `yaml:"storage_mode"` // "stub" or "real"
 }
 
 type LoggingConfig struct {

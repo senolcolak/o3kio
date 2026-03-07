@@ -15,17 +15,19 @@ import (
 
 // Service handles Glance API endpoints
 type Service struct {
+	mode       string
 	cephPool   string
 	cephConf   string
 	imageStore *storage.ImageStore
 }
 
 // NewService creates a new Glance service
-func NewService(cephPool, cephConf string) *Service {
+func NewService(mode, cephPool, cephConf string) *Service {
 	return &Service{
+		mode:       mode,
 		cephPool:   cephPool,
 		cephConf:   cephConf,
-		imageStore: storage.NewImageStore(cephPool, cephConf),
+		imageStore: storage.NewImageStore(mode, cephPool, cephConf),
 	}
 }
 
