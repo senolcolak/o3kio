@@ -1,0 +1,327 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Ultimate Project System
+
+**IMPORTANT**: This project uses the Ultimate Project System (Beastmode × Spec-Kit synthesis).
+
+- Read `.beastmode/BEASTMODE.md` at the start of every session
+- Follow the workflow: `specify → plan → tasks → implement → validate → release`
+- Respect the Nine Articles (constitution) in `memory/constitution.md`
+- Use the knowledge hierarchy (L0-L3) for context management
+
+Available commands: `/constitution`, `/specify`, `/plan`, `/tasks`, `/implement`, `/validate`, `/release`
+
+## Project Overview
+
+O3K is a lightweight OpenStack implementation in Go, inspired by K3s. It provides a single ~35MB binary that implements all five core OpenStack services (Keystone, Nova, Neutron, Cinder, Glance) with 100% API compatibility.
+
+**Core Philosophy:**
+- **API Compatibility First**: 100% OpenStack API compatible (works with Horizon dashboard and OpenStack CLI)
+- **Synchronous Operations**: No message queues - operations complete before API returns
+- **Fail-Fast Design**: External dependency failures return immediately (< 1 second timeouts)
+- **Multi-mode Support**: Each service supports stub mode (development) and real mode (production)
+
+## Build and Development Commands
+
+### Building and Running
+
+```bash
+# Build the main binary
+make build                    # Outputs to bin/o3k
+
+# Run with configuration
+make run                      # Builds and starts with config/o3k.yaml
+
+# Development with hot reload (requires air)
+make dev                      # Auto-restarts on code changes
+
+# Clean build artifacts
+make clean
+```
+
+### Testing
+
+```bash
+# Unit tests
+make test                     # Runs all Go unit tests
+go test ./internal/nova/...   # Test specific package
+
+# Integration tests
+./test/quick_test.sh          # Fast integration test suite
+./test/integration_test.sh    # Full integration test suite
+./test-all.sh                 # Comprehensive test suite
+
+# Specific feature tests
+./test/horizon_compat_test.sh      # Horizon dashboard compatibility
+./test/volume_attach_test.sh       # Volume attachment workflow
+./test/vxlan_multinode_test.sh     # Multi-node VXLAN networking
+```
+
+### Database Operations
+
+```bash
+# Start PostgreSQL (Docker)
+make db-up                    # Starts postgres:16 container
+
+# Run migrations
+make migrate                  # Applies all pending migrations
+
+# Stop PostgreSQL
+make db-down                  # Stops and removes container
+```
+
+### Code Quality
+
+```bash
+# Format code
+make fmt                      # Runs go fmt
+
+# Lint code
+make lint                     # Runs golangci-lint
+
+# Install development tools
+make install-tools            # Installs air, golangci-lint, migrate
+```
+
+## Architecture Overview
+
+### Service Structure
+
+O3K runs as a single process (`cmd/o3k/main.go`) that starts six HTTP servers on different ports:
+- **Keystone** (35357): Identity service, JWT-based authentication
+- **Nova** (8774): Compute service, VM lifecycle via libvirt
+- **Neutron** (9696): Network service, namespace isolation via netlink
+- **Cinder** (8776): Block storage, multi-backend support (local/RBD/S3)
+- **Glance** (9292): Image service, multi-backend with hybrid failover
+- **Metadata** (8775): EC2-compatible metadata service (no auth)
+
+Each service is initialized in `main.go` with its configuration and shares:
+- **Database connection pool**: Centralized PostgreSQL access
+- **Auth middleware**: Shared JWT token validation via `keystone.AuthService`
+- **Logging middleware**: Structured JSON logging
+
+### Code Organization
+
+```
+internal/                    # Private packages
+├── keystone/               # Identity - JWT auth, service catalog
+├── nova/                   # Compute - VM lifecycle, flavors, keypairs
+├── neutron/                # Network - networks, subnets, ports, security groups
+├── cinder/                 # Block storage - volumes, snapshots
+├── glance/                 # Images - metadata, multi-backend storage
+├── database/               # DB models, migrations (models.go, migrate.go)
+├── middleware/             # Auth, logging, CORS, recovery
+├── common/                 # Config loading, error handling
+├── compute/                # Node registry for multi-node coordination
+└── metadata/               # EC2 metadata service
+
+pkg/                        # Public/reusable packages
+├── hypervisor/             # libvirt abstraction (stub + real modes)
+├── networking/             # netlink, VXLAN, security groups
+└── storage/                # Storage backends (Ceph RBD, S3, local)
+```
+
+### Key Architectural Patterns
+
+**Service Mode Pattern**: Each service (Nova, Neutron, Cinder, Glance) supports multiple modes:
+- `stub`: Returns fake data, no external dependencies (default for development)
+- `real`: Full implementation with external dependencies (libvirt, Ceph, etc.)
+- Mode is configured via YAML (`libvirt_mode`, `networking_mode`, `storage_mode`)
+- Check mode via `libvirtMode` or `networkingMode` fields in service structs
+
+**Multi-backend Storage Pattern** (Cinder/Glance):
+- Storage modes specified as comma-separated strings: `"local"`, `"rbd"`, `"s3"`, `"local,rbd"`, `"local,s3"`, `"rbd,s3"`
+- First backend is primary, subsequent are fallback
+- Implemented in `pkg/storage/` with `ImageStore` and backend-specific implementations
+
+**Synchronous Operations**:
+- All API operations complete before returning (no async state machines)
+- VM creation: `DomainDefineXML()` + `DomainCreate()` in single API call
+- Database updates happen immediately, no queues
+
+**JWT Authentication**:
+- Tokens generated by Keystone (`internal/keystone/auth.go`)
+- All services except metadata use `middleware.AuthMiddleware()`
+- Token contains `user_id`, `project_id`, `roles` for authorization
+- No token database - tokens are stateless (HMAC-SHA256 signed)
+
+**Project Isolation**:
+- All resources scoped by `project_id` from JWT token
+- Network namespaces per project for network isolation
+- Database queries auto-filter by `project_id`
+
+## Operating Modes
+
+### Stub Mode (Development - Default)
+Safe for macOS and non-Linux systems. No external dependencies required.
+
+**Nova stub mode**:
+- Returns fake VM instances, no actual VMs created
+- Check: `svc.libvirtMode == "stub"` or `svc.vmManager == nil`
+- VMs tracked in database only
+
+**Neutron stub mode**:
+- Returns network objects without creating namespaces/bridges
+- No iptables rules or actual networking
+
+**Cinder/Glance stub mode**:
+- Tracks volumes/images in database only
+- No actual storage operations
+
+### Real Mode (Production)
+Requires Linux with appropriate dependencies.
+
+**Nova real mode** (`libvirt_mode: real`):
+- Requires libvirt + KVM on Linux
+- Creates actual VMs via `github.com/digitalocean/go-libvirt`
+- XML templates in `pkg/hypervisor/xml_template.go`
+
+**Neutron real mode** (`networking_mode: iptables` or `ebpf`):
+- Requires Linux with network namespaces
+- Uses `github.com/vishvananda/netlink` for namespace/bridge creation
+- iptables via `github.com/coreos/go-iptables` for security groups
+
+**Cinder/Glance real mode** (`storage_mode: local`, `rbd`, `s3`, or hybrid):
+- `local`: Host filesystem storage
+- `rbd`: Ceph RBD via `github.com/ceph/go-ceph`
+- `s3`: AWS S3/MinIO via `github.com/aws/aws-sdk-go-v2`
+
+## Database Schema
+
+PostgreSQL with 15 tables. Key tables:
+
+- **users**: User credentials (bcrypt hashed passwords)
+- **projects**: Projects/tenants
+- **roles**, **role_assignments**: RBAC
+- **instances**: VM instances (linked to flavors, images)
+- **flavors**: VM flavor definitions
+- **networks**, **subnets**, **ports**: Network topology
+- **volumes**: Block storage volumes
+- **images**: Image metadata (data in storage backend)
+- **keypairs**: SSH public keys
+- **compute_nodes**: Multi-node registry for VXLAN coordination
+
+Migrations in `migrations/` directory, applied via `golang-migrate/migrate`.
+
+## Testing Guidelines
+
+### Unit Tests
+- Located alongside source files as `*_test.go`
+- Test database operations with mock connections or test DB
+- Test mode detection logic (stub vs real)
+
+### Integration Tests
+All integration tests are bash scripts in `test/` directory that:
+1. Start O3K in background
+2. Use OpenStack CLI (`openstack` command) to test workflows
+3. Verify responses with `jq` for JSON parsing
+4. Clean up resources
+
+**Common test patterns:**
+```bash
+# Authenticate
+openstack token issue
+
+# Test resource lifecycle
+openstack server create --flavor m1.small --image cirros test-vm
+openstack server show test-vm -f json | jq -r '.status'
+openstack server delete test-vm
+```
+
+### Running Tests
+- Integration tests require O3K to be running: `docker compose up -d` or `make run`
+- Tests use environment variables from `.env` or `~/.o3k-env`
+- Quick validation: `./test/quick_test.sh` (runs in ~30 seconds)
+
+## Configuration
+
+Configuration loaded from `config/o3k.yaml` (or via `--config` flag).
+
+**Critical settings:**
+- `database.url`: PostgreSQL connection string
+- `keystone.jwt_secret`: MUST change in production
+- `nova.libvirt_mode`: `stub` (dev) or `real` (prod)
+- `neutron.networking_mode`: `stub`, `iptables`, or `ebpf`
+- `cinder.storage_mode`: `stub`, `local`, `rbd`, `s3`, or hybrid
+- `glance.storage_mode`: `stub`, `local`, `rbd`, `s3`, or hybrid
+
+**Multi-node VXLAN** (advanced):
+- Set `neutron.vxlan_enabled: true`
+- Configure `compute.node_id` and `compute.tunnel_ip`
+- Enables cross-node VM networking via VXLAN overlay
+
+## Common Patterns and Idioms
+
+### Error Handling
+```go
+// Always wrap errors with context
+if err != nil {
+    return fmt.Errorf("failed to create volume: %w", err)
+}
+
+// Use helper functions for HTTP errors (internal/common/error_helpers.go)
+return common.HandleError(c, err)
+```
+
+### Database Queries
+```go
+// Always use context and prepared statements
+ctx := c.Request.Context()
+err := database.DB.QueryRow(ctx,
+    "SELECT id FROM instances WHERE project_id = $1",
+    projectID,
+).Scan(&instanceID)
+```
+
+### Mode Detection
+```go
+// Nova: Check libvirtMode or vmManager
+if svc.libvirtMode == "stub" || svc.vmManager == nil {
+    // Stub mode: return fake data
+}
+
+// Neutron: Check networkingMode
+if svc.networkingMode == "stub" {
+    // Stub mode: skip netlink operations
+}
+```
+
+### Microversion Negotiation (Nova)
+Nova supports OpenStack microversions. Check request header:
+```go
+requestedVersion := c.GetHeader("OpenStack-API-Version")
+if requestedVersion == "" {
+    requestedVersion = c.GetHeader("X-OpenStack-Nova-API-Version")
+}
+```
+
+## Important Notes
+
+### Security Considerations
+- Never commit production JWT secrets
+- Database passwords should use environment variables in production
+- Token TTL default is 24h (configurable)
+
+### Backwards Compatibility
+- All API endpoints must maintain OpenStack API compatibility
+- Breaking API changes require OpenStack microversion bumps
+- Horizon dashboard compatibility is tested in `test/horizon_compat_test.sh`
+
+### Performance
+- Database connection pool default: 20 connections
+- libvirt timeouts: 1 second for fail-fast
+- Ceph timeouts: 1 second for fail-fast
+
+### Platform Support
+- **macOS**: Stub mode only (no libvirt/KVM)
+- **Linux**: All modes supported
+- **Windows**: Not tested, likely stub mode only
+
+## Troubleshooting Development Issues
+
+**"Failed to connect to libvirt"**: Use stub mode on macOS or ensure libvirt is running on Linux
+**"Network namespace not found"**: Requires root/sudo on Linux, use stub mode otherwise
+**"Database connection failed"**: Check PostgreSQL is running and connection string is correct
+**"Token validation failed"**: Ensure `jwt_secret` matches between Keystone and other services

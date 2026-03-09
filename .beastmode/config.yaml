@@ -1,0 +1,50 @@
+system:
+  name: "o3k"
+  version: "0.1.0"
+
+# Beastmode: Progressive autonomy gates
+gates:
+  design:
+    design-approval: human
+    gray-area-discussion: human
+  plan:
+    plan-approval: human
+    constitution-gates: strict
+  implement:
+    architectural-deviation: auto
+    test-first-gate: strict
+  validate:
+    validation-failure: human
+  retro:
+    context-write: human
+    learnings: auto
+    sops: human
+  release:
+    version-confirmation: auto
+    beastmode-md-approval: human
+
+# Spec-Kit: Constitutional enforcement
+constitution:
+  path: "memory/constitution.md"
+  enforce_gates: true
+
+# Swarm mode
+swarm:
+  enabled: true
+  max_parallel: 5
+  file_isolation_check: true
+
+# Feature organization
+features:
+  numbering: sequential
+  directory: "specs/"
+
+# Transitions
+transitions:
+  specify-to-plan: auto
+  plan-to-tasks: auto
+  tasks-to-implement: human
+  implement-to-validate: auto
+  validate-to-release: human
+
+context_threshold: 20
