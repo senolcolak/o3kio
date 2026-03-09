@@ -31,6 +31,14 @@ test:
 	@echo "Running tests..."
 	go test -v ./...
 
+# Run contract tests (requires O3K to be running)
+test-contract:
+	@echo "Running contract tests..."
+	@echo "Checking O3K is running..."
+	@curl -s http://localhost:35357/v3 > /dev/null || (echo "ERROR: O3K not running. Run 'docker compose up -d' or 'make run' first." && exit 1)
+	@echo "Running gophercloud contract tests..."
+	go test -v ./test/contract/... -timeout 5m
+
 # Clean build artifacts
 clean:
 	@echo "Cleaning..."
@@ -87,6 +95,7 @@ help:
 	@echo "  build          - Build the binary"
 	@echo "  run            - Build and run the application"
 	@echo "  test           - Run tests"
+	@echo "  test-contract  - Run contract tests (requires O3K running)"
 	@echo "  clean          - Remove build artifacts"
 	@echo "  install-deps   - Install Go dependencies"
 	@echo "  migrate        - Run database migrations"

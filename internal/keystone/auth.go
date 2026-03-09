@@ -290,6 +290,17 @@ func (s *AuthService) ValidateToken(tokenString string) (*TokenClaims, error) {
 	return nil, common.NewUnauthorizedError("invalid token claims")
 }
 
+// HashPassword hashes a password using bcrypt
+func (s *AuthService) HashPassword(password string) ([]byte, error) {
+	return bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+}
+
+// CheckPassword verifies a password against a bcrypt hash
+func (s *AuthService) CheckPassword(password, hash string) bool {
+	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+	return err == nil
+}
+
 // BuildServiceCatalog builds the OpenStack service catalog
 func BuildServiceCatalog(projectID string) []CatalogEntry {
 	baseURL := "http://localhost"
