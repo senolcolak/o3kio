@@ -303,9 +303,16 @@ func createGlanceServer(cfg *common.Config, svc *glance.Service, authService *ke
 	r.Use(middleware.LoggingMiddleware())
 	r.Use(middleware.RecoveryMiddleware())
 	r.Use(middleware.CORSMiddleware())
-	r.Use(middleware.AuthMiddleware(authService))
 
-	svc.RegisterRoutes(r.Group(""))
+	// Version discovery endpoints (no auth required per OpenStack spec)
+	root := r.Group("")
+	root.GET("/", svc.GetVersions)
+	root.GET("/v2", svc.GetVersionV2)
+
+	// All other routes require authentication
+	authGroup := r.Group("")
+	authGroup.Use(middleware.AuthMiddleware(authService))
+	svc.RegisterRoutes(authGroup)
 
 	return &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.Glance.Port),

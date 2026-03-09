@@ -37,11 +37,10 @@ func NewService(mode, cephPool, cephConf, s3Bucket, s3Region, s3Endpoint string)
 	}
 }
 
-// RegisterRoutes registers Glance routes
+// RegisterRoutes registers Glance routes (excluding version discovery which is handled separately)
 func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
-	// Version discovery
-	r.GET("/", svc.GetVersions)
-	r.GET("/v2", svc.GetVersionV2)
+	// Note: Version discovery (GET / and GET /v2) are registered separately
+	// in main.go without auth middleware to comply with OpenStack spec
 
 	v2 := r.Group("/v2")
 	{
@@ -55,6 +54,13 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		// Image data
 		v2.PUT("/images/:id/file", svc.UploadImageData)
 		v2.GET("/images/:id/file", svc.DownloadImageData)
+
+		// Image members (sharing)
+		v2.POST("/images/:id/members", svc.CreateImageMember)
+		v2.GET("/images/:id/members", svc.ListImageMembers)
+		v2.GET("/images/:id/members/:member_id", svc.GetImageMember)
+		v2.PUT("/images/:id/members/:member_id", svc.UpdateImageMember)
+		v2.DELETE("/images/:id/members/:member_id", svc.DeleteImageMember)
 
 		// Schemas
 		v2.GET("/schemas/image", svc.GetImageSchema)
@@ -467,4 +473,315 @@ func (svc *Service) GetImagesSchema(c *gin.Context) {
 			},
 		},
 	})
+}
+
+// CreateImageMember creates a new image member (share image with another project)
+func (svc *Service) CreateImageMember(c *gin.Context) {
+	imageID := c.Param("id")
+	projectID := c.GetString("project_id")
+
+	var req struct {
+		Member string `json:"member"` // member_id is the project ID to share with
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+
+	// Check if image exists and is owned by requester
+	var ownerID sql.NullString
+	err := database.DB.QueryRow(c.Request.Context(),
+		"SELECT project_id FROM images WHERE id = $1",
+		imageID,
+	).Scan(&ownerID)
+
+	if err == pgx.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "image not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if !ownerID.Valid || ownerID.String != projectID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "not authorized to share this image"})
+		return
+	}
+
+	// Insert image member
+	memberID := uuid.New().String()
+	now := time.Now()
+	_, err = database.DB.Exec(c.Request.Context(), `
+		INSERT INTO image_members (id, image_id, member_id, status, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, memberID, imageID, req.Member, "pending", now, now)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"member_id":  req.Member,
+		"image_id":   imageID,
+		"status":     "pending",
+		"created_at": now.Format(time.RFC3339),
+		"updated_at": now.Format(time.RFC3339),
+		"schema":     "/v2/schemas/member",
+	})
+}
+
+// ListImageMembers lists all members for an image
+func (svc *Service) ListImageMembers(c *gin.Context) {
+	imageID := c.Param("id")
+	projectID := c.GetString("project_id")
+
+	// Check if image exists and requester has access
+	var ownerID sql.NullString
+	err := database.DB.QueryRow(c.Request.Context(),
+		"SELECT project_id FROM images WHERE id = $1",
+		imageID,
+	).Scan(&ownerID)
+
+	if err == pgx.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "image not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Only owner can list members
+	if !ownerID.Valid || ownerID.String != projectID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "not authorized to view image members"})
+		return
+	}
+
+	rows, err := database.DB.Query(c.Request.Context(), `
+		SELECT member_id, status, created_at, updated_at
+		FROM image_members
+		WHERE image_id = $1
+		ORDER BY created_at DESC
+	`, imageID)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	var members []gin.H
+	for rows.Next() {
+		var memberID, status string
+		var createdAt, updatedAt time.Time
+
+		if err := rows.Scan(&memberID, &status, &createdAt, &updatedAt); err != nil {
+			continue
+		}
+
+		members = append(members, gin.H{
+			"member_id":  memberID,
+			"image_id":   imageID,
+			"status":     status,
+			"created_at": createdAt.Format(time.RFC3339),
+			"updated_at": updatedAt.Format(time.RFC3339),
+			"schema":     "/v2/schemas/member",
+		})
+	}
+
+	if members == nil {
+		members = []gin.H{}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"members": members,
+		"schema":  "/v2/schemas/members",
+	})
+}
+
+// GetImageMember gets a specific image member
+func (svc *Service) GetImageMember(c *gin.Context) {
+	imageID := c.Param("id")
+	memberID := c.Param("member_id")
+	projectID := c.GetString("project_id")
+
+	// Check if image exists and requester has access
+	var ownerID sql.NullString
+	err := database.DB.QueryRow(c.Request.Context(),
+		"SELECT project_id FROM images WHERE id = $1",
+		imageID,
+	).Scan(&ownerID)
+
+	if err == pgx.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "image not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Only owner or member can view membership
+	if (!ownerID.Valid || ownerID.String != projectID) && memberID != projectID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "not authorized"})
+		return
+	}
+
+	var status string
+	var createdAt, updatedAt time.Time
+	err = database.DB.QueryRow(c.Request.Context(), `
+		SELECT status, created_at, updated_at
+		FROM image_members
+		WHERE image_id = $1 AND member_id = $2
+	`, imageID, memberID).Scan(&status, &createdAt, &updatedAt)
+
+	if err == pgx.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "member not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"member_id":  memberID,
+		"image_id":   imageID,
+		"status":     status,
+		"created_at": createdAt.Format(time.RFC3339),
+		"updated_at": updatedAt.Format(time.RFC3339),
+		"schema":     "/v2/schemas/member",
+	})
+}
+
+// UpdateImageMember updates image member status
+func (svc *Service) UpdateImageMember(c *gin.Context) {
+	imageID := c.Param("id")
+	memberID := c.Param("member_id")
+	projectID := c.GetString("project_id")
+
+	var req struct {
+		Status string `json:"status"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+
+	// Validate status
+	if req.Status != "accepted" && req.Status != "rejected" && req.Status != "pending" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid status"})
+		return
+	}
+
+	// Check if image exists
+	var ownerID sql.NullString
+	err := database.DB.QueryRow(c.Request.Context(),
+		"SELECT project_id FROM images WHERE id = $1",
+		imageID,
+	).Scan(&ownerID)
+
+	if err == pgx.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "image not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Both owner and member can update status:
+	// - Owner can set to "pending"
+	// - Member can set to "accepted" or "rejected"
+	isOwner := ownerID.Valid && ownerID.String == projectID
+	isMember := memberID == projectID
+
+	if !isOwner && !isMember {
+		c.JSON(http.StatusForbidden, gin.H{"error": "not authorized"})
+		return
+	}
+
+	// Owner can only set status to "pending"
+	if isOwner && !isMember && req.Status != "pending" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "owner can only set status to pending"})
+		return
+	}
+
+	// Update member status
+	_, err = database.DB.Exec(c.Request.Context(), `
+		UPDATE image_members
+		SET status = $1, updated_at = $2
+		WHERE image_id = $3 AND member_id = $4
+	`, req.Status, time.Now(), imageID, memberID)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Return updated member
+	var status string
+	var createdAt, updatedAt time.Time
+	err = database.DB.QueryRow(c.Request.Context(), `
+		SELECT status, created_at, updated_at
+		FROM image_members
+		WHERE image_id = $1 AND member_id = $2
+	`, imageID, memberID).Scan(&status, &createdAt, &updatedAt)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"member_id":  memberID,
+		"image_id":   imageID,
+		"status":     status,
+		"created_at": createdAt.Format(time.RFC3339),
+		"updated_at": updatedAt.Format(time.RFC3339),
+		"schema":     "/v2/schemas/member",
+	})
+}
+
+// DeleteImageMember deletes an image member (unshare)
+func (svc *Service) DeleteImageMember(c *gin.Context) {
+	imageID := c.Param("id")
+	memberID := c.Param("member_id")
+	projectID := c.GetString("project_id")
+
+	// Check if image exists and requester is owner
+	var ownerID sql.NullString
+	err := database.DB.QueryRow(c.Request.Context(),
+		"SELECT project_id FROM images WHERE id = $1",
+		imageID,
+	).Scan(&ownerID)
+
+	if err == pgx.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "image not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Only owner can delete members
+	if !ownerID.Valid || ownerID.String != projectID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "not authorized"})
+		return
+	}
+
+	// Delete member
+	_, err = database.DB.Exec(c.Request.Context(),
+		"DELETE FROM image_members WHERE image_id = $1 AND member_id = $2",
+		imageID, memberID,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.Status(http.StatusNoContent)
 }
