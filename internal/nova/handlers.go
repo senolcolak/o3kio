@@ -56,6 +56,11 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		v21.DELETE("/servers/:id", svc.DeleteServer)
 		v21.POST("/servers/:id/action", svc.ServerAction)
 
+		// Server metadata
+		v21.GET("/servers/:id/metadata", svc.GetServerMetadata)
+		v21.POST("/servers/:id/metadata", svc.UpdateServerMetadata)
+		v21.PUT("/servers/:id/metadata", svc.ResetServerMetadata)
+
 		// Flavors
 		v21.GET("/flavors", svc.ListFlavors)
 		v21.GET("/flavors/detail", svc.ListFlavorsDetail)
@@ -812,3 +817,207 @@ func (svc *Service) ListAvailabilityZones(c *gin.Context) {
 		},
 	}})
 }
+
+// GetServerMetadata returns metadata for a server (GET /v2.1/servers/:id/metadata)
+func (svc *Service) GetServerMetadata(c *gin.Context) {
+	serverID := c.Param("id")
+
+	// Check if server exists
+	var exists bool
+	err := database.DB.QueryRow(c.Request.Context(),
+		"SELECT EXISTS(SELECT 1 FROM instances WHERE id = $1)",
+		serverID,
+	).Scan(&exists)
+
+	if err != nil || !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": gin.H{
+			"message": "Instance not found",
+			"code":    404,
+			"title":   "Not Found",
+		}})
+		return
+	}
+
+	// Fetch metadata
+	rows, err := database.DB.Query(c.Request.Context(),
+		"SELECT meta_key, meta_value FROM instance_metadata WHERE instance_id = $1",
+		serverID,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{
+			"message": "Failed to fetch metadata",
+			"code":    500,
+			"title":   "Internal Server Error",
+		}})
+		return
+	}
+	defer rows.Close()
+
+	metadata := make(map[string]string)
+	for rows.Next() {
+		var key, value string
+		if err := rows.Scan(&key, &value); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{
+				"message": "Failed to scan metadata",
+				"code":    500,
+				"title":   "Internal Server Error",
+			}})
+			return
+		}
+		metadata[key] = value
+	}
+
+	c.JSON(http.StatusOK, gin.H{"metadata": metadata})
+}
+
+// UpdateServerMetadata updates/merges server metadata (POST /v2.1/servers/:id/metadata)
+func (svc *Service) UpdateServerMetadata(c *gin.Context) {
+	serverID := c.Param("id")
+
+	var req struct {
+		Metadata map[string]string `json:"metadata" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
+			"message": "Invalid request body: " + err.Error(),
+			"code":    400,
+			"title":   "Bad Request",
+		}})
+		return
+	}
+
+	// Check if server exists
+	var exists bool
+	err := database.DB.QueryRow(c.Request.Context(),
+		"SELECT EXISTS(SELECT 1 FROM instances WHERE id = $1)",
+		serverID,
+	).Scan(&exists)
+
+	if err != nil || !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": gin.H{
+			"message": "Instance not found",
+			"code":    404,
+			"title":   "Not Found",
+		}})
+		return
+	}
+
+	// Upsert each metadata key-value pair
+	for key, value := range req.Metadata {
+		_, err := database.DB.Exec(c.Request.Context(),
+			`INSERT INTO instance_metadata (instance_id, meta_key, meta_value)
+			 VALUES ($1, $2, $3)
+			 ON CONFLICT (instance_id, meta_key)
+			 DO UPDATE SET meta_value = $3, created_at = CURRENT_TIMESTAMP`,
+			serverID, key, value,
+		)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{
+				"message": "Failed to update metadata: " + err.Error(),
+				"code":    500,
+				"title":   "Internal Server Error",
+			}})
+			return
+		}
+	}
+
+	// Fetch and return all metadata
+	rows, err := database.DB.Query(c.Request.Context(),
+		"SELECT meta_key, meta_value FROM instance_metadata WHERE instance_id = $1",
+		serverID,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{
+			"message": "Failed to fetch metadata",
+			"code":    500,
+			"title":   "Internal Server Error",
+		}})
+		return
+	}
+	defer rows.Close()
+
+	metadata := make(map[string]string)
+	for rows.Next() {
+		var key, value string
+		if err := rows.Scan(&key, &value); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{
+				"message": "Failed to scan metadata",
+				"code":    500,
+				"title":   "Internal Server Error",
+			}})
+			return
+		}
+		metadata[key] = value
+	}
+
+	c.JSON(http.StatusOK, gin.H{"metadata": metadata})
+}
+
+// ResetServerMetadata replaces all server metadata (PUT /v2.1/servers/:id/metadata)
+func (svc *Service) ResetServerMetadata(c *gin.Context) {
+	serverID := c.Param("id")
+
+	var req struct {
+		Metadata map[string]string `json:"metadata" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
+			"message": "Invalid request body: " + err.Error(),
+			"code":    400,
+			"title":   "Bad Request",
+		}})
+		return
+	}
+
+	// Check if server exists
+	var exists bool
+	err := database.DB.QueryRow(c.Request.Context(),
+		"SELECT EXISTS(SELECT 1 FROM instances WHERE id = $1)",
+		serverID,
+	).Scan(&exists)
+
+	if err != nil || !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": gin.H{
+			"message": "Instance not found",
+			"code":    404,
+			"title":   "Not Found",
+		}})
+		return
+	}
+
+	// Delete all existing metadata for this server
+	_, err = database.DB.Exec(c.Request.Context(),
+		"DELETE FROM instance_metadata WHERE instance_id = $1",
+		serverID,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{
+			"message": "Failed to clear metadata: " + err.Error(),
+			"code":    500,
+			"title":   "Internal Server Error",
+		}})
+		return
+	}
+
+	// Insert new metadata
+	for key, value := range req.Metadata {
+		_, err := database.DB.Exec(c.Request.Context(),
+			`INSERT INTO instance_metadata (instance_id, meta_key, meta_value)
+			 VALUES ($1, $2, $3)`,
+			serverID, key, value,
+		)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{
+				"message": "Failed to insert metadata: " + err.Error(),
+				"code":    500,
+				"title":   "Internal Server Error",
+			}})
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"metadata": req.Metadata})
+}
+
