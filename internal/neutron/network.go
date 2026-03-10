@@ -53,6 +53,9 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		// Availability Zones
 		v2.GET("/availability_zones", svc.ListAvailabilityZones)
 
+		// Service Providers
+		v2.GET("/service-providers", svc.ListServiceProviders)
+
 		// Networks
 		v2.GET("/networks", svc.ListNetworks)
 		v2.POST("/networks", svc.CreateNetwork)
@@ -849,6 +852,19 @@ func (svc *Service) UpdateSubnet(c *gin.Context) {
 }
 
 // Helper functions
+
+// ListServiceProviders returns available service providers for VPN, Firewall, etc.
+func (svc *Service) ListServiceProviders(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"service_providers": []gin.H{
+			{
+				"name":         "default",
+				"service_type": "L3_ROUTER_NAT",
+				"default":      true,
+			},
+		},
+	})
+}
 
 // ListAvailabilityZones returns availability zones for network resources
 func (svc *Service) ListAvailabilityZones(c *gin.Context) {
