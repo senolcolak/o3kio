@@ -70,6 +70,9 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		// Volume types
 		v3.GET("/types", svc.ListVolumeTypes)
 		v3.GET("/types/:id", svc.GetVolumeType)
+
+		// Limits
+		v3.GET("/limits", svc.GetLimits)
 	}
 }
 
@@ -1279,4 +1282,41 @@ func (svc *Service) DeleteSnapshotMetadataKey(c *gin.Context) {
 	}
 
 	c.Status(http.StatusNoContent)
+}
+
+// GetLimits returns volume service limits and quotas
+func (svc *Service) GetLimits(c *gin.Context) {
+	projectID := c.Param("project_id")
+
+	// Query current usage from database
+	var volumesUsed, snapshotsUsed, gigabytesUsed int
+
+	database.DB.QueryRow(c.Request.Context(),
+		"SELECT COUNT(*), COALESCE(SUM(size_gb), 0) FROM volumes WHERE project_id = $1 AND status != 'deleted'",
+		projectID,
+	).Scan(&volumesUsed, &gigabytesUsed)
+
+	database.DB.QueryRow(c.Request.Context(),
+		"SELECT COUNT(*) FROM snapshots WHERE project_id = $1 AND status != 'deleted'",
+		projectID,
+	).Scan(&snapshotsUsed)
+
+	// Return limits response
+	c.JSON(200, gin.H{
+		"limits": gin.H{
+			"rate": []gin.H{}, // No rate limiting
+			"absolute": gin.H{
+				"maxTotalVolumes":       1000,
+				"maxTotalSnapshots":     1000,
+				"maxTotalVolumeGigabytes": 10000,
+				"maxTotalBackups":       100,
+				"maxTotalBackupGigabytes": 5000,
+				"totalVolumesUsed":      volumesUsed,
+				"totalSnapshotsUsed":    snapshotsUsed,
+				"totalGigabytesUsed":    gigabytesUsed,
+				"totalBackupsUsed":      0,
+				"totalBackupGigabytesUsed": 0,
+			},
+		},
+	})
 }
