@@ -73,6 +73,9 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 
 		// Limits
 		v3.GET("/limits", svc.GetLimits)
+
+		// Services
+		v3.GET("/os-services", svc.ListServices)
 	}
 }
 
@@ -1316,6 +1319,45 @@ func (svc *Service) GetLimits(c *gin.Context) {
 				"totalGigabytesUsed":    gigabytesUsed,
 				"totalBackupsUsed":      0,
 				"totalBackupGigabytesUsed": 0,
+			},
+		},
+	})
+}
+
+// ListServices returns list of volume services
+func (svc *Service) ListServices(c *gin.Context) {
+	// Format: OpenStack timestamp without Z
+	now := time.Now().Format("2006-01-02T15:04:05.000000")
+
+	// Return list of volume services for Horizon System Info
+	c.JSON(200, gin.H{
+		"services": []gin.H{
+			{
+				"binary":         "cinder-volume",
+				"host":           "o3k-volume-1",
+				"zone":           "nova",
+				"status":         "enabled",
+				"state":          "up",
+				"updated_at":     now,
+				"disabled_reason": nil,
+			},
+			{
+				"binary":         "cinder-scheduler",
+				"host":           "o3k-controller",
+				"zone":           "internal",
+				"status":         "enabled",
+				"state":          "up",
+				"updated_at":     now,
+				"disabled_reason": nil,
+			},
+			{
+				"binary":         "cinder-backup",
+				"host":           "o3k-backup-1",
+				"zone":           "nova",
+				"status":         "enabled",
+				"state":          "up",
+				"updated_at":     now,
+				"disabled_reason": nil,
 			},
 		},
 	})
