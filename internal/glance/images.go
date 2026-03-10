@@ -62,6 +62,10 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		v2.PUT("/images/:id/members/:member_id", svc.UpdateImageMember)
 		v2.DELETE("/images/:id/members/:member_id", svc.DeleteImageMember)
 
+		// Image tags
+		v2.PUT("/images/:id/tags/:tag", svc.AddImageTag)
+		v2.DELETE("/images/:id/tags/:tag", svc.DeleteImageTag)
+
 		// Schemas
 		v2.GET("/schemas/image", svc.GetImageSchema)
 		v2.GET("/schemas/images", svc.GetImagesSchema)
@@ -285,6 +289,28 @@ func (svc *Service) GetImage(c *gin.Context) {
 
 	if checksum.Valid && checksum.String != "" {
 		image["checksum"] = checksum.String
+	}
+
+	// Load tags
+	rows, err := database.DB.Query(c.Request.Context(),
+		"SELECT tag FROM image_tags WHERE image_id = $1 ORDER BY tag",
+		id,
+	)
+	if err == nil {
+		defer rows.Close()
+		var tags []string
+		for rows.Next() {
+			var tag string
+			if rows.Scan(&tag) == nil {
+				tags = append(tags, tag)
+			}
+		}
+		if tags == nil {
+			tags = []string{}
+		}
+		image["tags"] = tags
+	} else {
+		image["tags"] = []string{}
 	}
 
 	c.JSON(http.StatusOK, image)
@@ -777,6 +803,90 @@ func (svc *Service) DeleteImageMember(c *gin.Context) {
 	_, err = database.DB.Exec(c.Request.Context(),
 		"DELETE FROM image_members WHERE image_id = $1 AND member_id = $2",
 		imageID, memberID,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
+
+// AddImageTag adds a tag to an image
+func (svc *Service) AddImageTag(c *gin.Context) {
+	imageID := c.Param("id")
+	tag := c.Param("tag")
+	projectID := c.GetString("project_id")
+
+	// Check image exists and user has permission
+	var ownerID sql.NullString
+	err := database.DB.QueryRow(c.Request.Context(),
+		"SELECT project_id FROM images WHERE id = $1",
+		imageID,
+	).Scan(&ownerID)
+
+	if err == pgx.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "image not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Only owner can add tags
+	if !ownerID.Valid || ownerID.String != projectID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "not authorized"})
+		return
+	}
+
+	// Add tag (ignore if already exists due to UNIQUE constraint)
+	_, err = database.DB.Exec(c.Request.Context(), `
+		INSERT INTO image_tags (image_id, tag)
+		VALUES ($1, $2)
+		ON CONFLICT (image_id, tag) DO NOTHING
+	`, imageID, tag)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
+
+// DeleteImageTag removes a tag from an image
+func (svc *Service) DeleteImageTag(c *gin.Context) {
+	imageID := c.Param("id")
+	tag := c.Param("tag")
+	projectID := c.GetString("project_id")
+
+	// Check image exists and user has permission
+	var ownerID sql.NullString
+	err := database.DB.QueryRow(c.Request.Context(),
+		"SELECT project_id FROM images WHERE id = $1",
+		imageID,
+	).Scan(&ownerID)
+
+	if err == pgx.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "image not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Only owner can delete tags
+	if !ownerID.Valid || ownerID.String != projectID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "not authorized"})
+		return
+	}
+
+	// Delete tag
+	_, err = database.DB.Exec(c.Request.Context(),
+		"DELETE FROM image_tags WHERE image_id = $1 AND tag = $2",
+		imageID, tag,
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
