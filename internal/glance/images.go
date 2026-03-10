@@ -66,6 +66,10 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		v2.PUT("/images/:id/tags/:tag", svc.AddImageTag)
 		v2.DELETE("/images/:id/tags/:tag", svc.DeleteImageTag)
 
+		// Image actions
+		v2.POST("/images/:id/actions/deactivate", svc.DeactivateImage)
+		v2.POST("/images/:id/actions/reactivate", svc.ReactivateImage)
+
 		// Schemas
 		v2.GET("/schemas/image", svc.GetImageSchema)
 		v2.GET("/schemas/images", svc.GetImagesSchema)
@@ -887,6 +891,86 @@ func (svc *Service) DeleteImageTag(c *gin.Context) {
 	_, err = database.DB.Exec(c.Request.Context(),
 		"DELETE FROM image_tags WHERE image_id = $1 AND tag = $2",
 		imageID, tag,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
+
+// DeactivateImage deactivates an image
+func (svc *Service) DeactivateImage(c *gin.Context) {
+	imageID := c.Param("id")
+	projectID := c.GetString("project_id")
+
+	// Check image exists and user has permission
+	var ownerID sql.NullString
+	err := database.DB.QueryRow(c.Request.Context(),
+		"SELECT project_id FROM images WHERE id = $1",
+		imageID,
+	).Scan(&ownerID)
+
+	if err == pgx.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "image not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Only owner can deactivate
+	if !ownerID.Valid || ownerID.String != projectID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "not authorized"})
+		return
+	}
+
+	// Update status to deactivated
+	_, err = database.DB.Exec(c.Request.Context(),
+		"UPDATE images SET status = $1, updated_at = $2 WHERE id = $3",
+		"deactivated", time.Now(), imageID,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
+
+// ReactivateImage reactivates a deactivated image
+func (svc *Service) ReactivateImage(c *gin.Context) {
+	imageID := c.Param("id")
+	projectID := c.GetString("project_id")
+
+	// Check image exists and user has permission
+	var ownerID sql.NullString
+	err := database.DB.QueryRow(c.Request.Context(),
+		"SELECT project_id FROM images WHERE id = $1",
+		imageID,
+	).Scan(&ownerID)
+
+	if err == pgx.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "image not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Only owner can reactivate
+	if !ownerID.Valid || ownerID.String != projectID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "not authorized"})
+		return
+	}
+
+	// Update status to active
+	_, err = database.DB.Exec(c.Request.Context(),
+		"UPDATE images SET status = $1, updated_at = $2 WHERE id = $3",
+		"active", time.Now(), imageID,
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
