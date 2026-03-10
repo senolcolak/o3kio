@@ -60,8 +60,9 @@ services:
   #   openstack server list
   #
   # If you want to try Horizon anyway, uncomment below and adjust the image:
+  # HORIZON_IMAGE=quay.io/openstack.kolla/horizon:2025.1-ubuntu-noble
   # horizon:
-  #   image: quay.io/openstack.kolla/ubuntu-source-horizon:2024.1
+  #   image:quay.io/openstack.kolla/horizon:2025.1-ubuntu-noble 
   #   container_name: o3k-horizon
   #   depends_on:
   #     o3k:

@@ -55,6 +55,7 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		v21.GET("/servers/:id", svc.GetServer)
 		v21.DELETE("/servers/:id", svc.DeleteServer)
 		v21.POST("/servers/:id/action", svc.ServerAction)
+		v21.GET("/servers/:id/diagnostics", svc.GetServerDiagnostics)
 
 		// Server metadata
 		v21.GET("/servers/:id/metadata", svc.GetServerMetadata)
