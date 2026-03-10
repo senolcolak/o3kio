@@ -87,3 +87,62 @@ func (svc *Service) DeleteFlavor(c *gin.Context) {
 
 	c.Status(http.StatusNoContent)
 }
+
+// GetFlavorExtraSpecs handles GET /v2.1/flavors/:id/os-extra_specs
+func (svc *Service) GetFlavorExtraSpecs(c *gin.Context) {
+	flavorID := c.Param("id")
+
+	rows, err := database.DB.Query(c.Request.Context(),
+		"SELECT key, value FROM flavor_extra_specs WHERE flavor_id = $1",
+		flavorID,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	extraSpecs := make(map[string]string)
+	for rows.Next() {
+		var key, value string
+		if err := rows.Scan(&key, &value); err != nil {
+			continue
+		}
+		extraSpecs[key] = value
+	}
+
+	c.JSON(http.StatusOK, gin.H{"extra_specs": extraSpecs})
+}
+
+// CreateFlavorExtraSpecs handles POST /v2.1/flavors/:id/os-extra_specs
+func (svc *Service) CreateFlavorExtraSpecs(c *gin.Context) {
+	flavorID := c.Param("id")
+
+	var req struct {
+		ExtraSpecs map[string]string `json:"extra_specs" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"badRequest": gin.H{
+			"message": err.Error(),
+			"code":    400,
+		}})
+		return
+	}
+
+	// Insert or update extra specs
+	for key, value := range req.ExtraSpecs {
+		_, err := database.DB.Exec(c.Request.Context(),
+			`INSERT INTO flavor_extra_specs (flavor_id, key, value)
+			 VALUES ($1, $2, $3)
+			 ON CONFLICT (flavor_id, key) DO UPDATE SET value = $3`,
+			flavorID, key, value,
+		)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"extra_specs": req.ExtraSpecs})
+}
