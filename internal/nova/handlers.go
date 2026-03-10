@@ -91,6 +91,12 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		// Services (compute service status)
 		v21.GET("/os-services", svc.ListServices)
 
+		// Server groups
+		v21.GET("/os-server-groups", svc.ListServerGroups)
+		v21.POST("/os-server-groups", svc.CreateServerGroup)
+		v21.GET("/os-server-groups/:id", svc.GetServerGroup)
+		v21.DELETE("/os-server-groups/:id", svc.DeleteServerGroup)
+
 		// Volume attachments
 		v21.GET("/servers/:id/os-volume_attachments", svc.ListVolumeAttachments)
 		v21.POST("/servers/:id/os-volume_attachments", svc.AttachVolume)

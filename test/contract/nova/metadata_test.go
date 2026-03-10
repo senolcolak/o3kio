@@ -15,7 +15,7 @@ import (
 func setupNovaClient(t *testing.T) *gophercloud.ServiceClient {
 	t.Helper()
 
-	authURL := getEnvOrDefault("OS_AUTH_URL", "http://localhost:5001/v3")
+	authURL := getEnvOrDefault("OS_AUTH_URL", "http://localhost:35357/v3")
 	username := getEnvOrDefault("OS_USERNAME", "admin")
 	password := getEnvOrDefault("OS_PASSWORD", "secret")
 	projectName := getEnvOrDefault("OS_PROJECT_NAME", "default")
