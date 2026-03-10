@@ -50,6 +50,9 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		// Extensions
 		v2.GET("/extensions", svc.ListExtensions)
 
+		// Availability Zones
+		v2.GET("/availability_zones", svc.ListAvailabilityZones)
+
 		// Networks
 		v2.GET("/networks", svc.ListNetworks)
 		v2.POST("/networks", svc.CreateNetwork)
@@ -846,6 +849,18 @@ func (svc *Service) UpdateSubnet(c *gin.Context) {
 }
 
 // Helper functions
+
+// ListAvailabilityZones returns availability zones for network resources
+func (svc *Service) ListAvailabilityZones(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"availability_zones": []gin.H{
+			{
+				"name":  "nova",
+				"state": "available",
+			},
+		},
+	})
+}
 
 func incrementIP(ip net.IP, inc uint) net.IP {
 	result := make(net.IP, len(ip))
