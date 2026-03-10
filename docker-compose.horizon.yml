@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  # O3K OpenStack services (already running from main docker-compose.yml)
+
+  # Horizon Dashboard
+  horizon:
+    image: kolla/horizon:zed
+    container_name: o3k-horizon
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    environment:
+      - KOLLA_SERVICE_NAME=horizon
+      - OPENSTACK_HOST=o3k
+      - OPENSTACK_KEYSTONE_URL=http://o3k:35357/v3
+      - OPENSTACK_KEYSTONE_DEFAULT_ROLE=member
+      - OPENSTACK_NEUTRON_NETWORK=True
+      - OPENSTACK_CINDER_FEATURES_enabled=True
+    volumes:
+      - ./config/horizon/local_settings.py:/etc/openstack-dashboard/local_settings.py:ro
+    networks:
+      - o3k-network
+    depends_on:
+      - o3k
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  o3k-network:
+    external: true
+    name: o3k_o3k-network
