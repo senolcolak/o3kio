@@ -48,6 +48,16 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		v3.GET("/projects", svc.ListProjects)
 		v3.GET("/projects/:id", svc.GetProject)
 
+		// Groups
+		v3.GET("/groups", svc.ListGroups)
+		v3.POST("/groups", svc.CreateGroup)
+		v3.GET("/groups/:id", svc.GetGroup)
+		v3.PATCH("/groups/:id", svc.UpdateGroup)
+		v3.DELETE("/groups/:id", svc.DeleteGroup)
+		v3.GET("/groups/:id/users", svc.ListGroupUsers)
+		v3.PUT("/groups/:id/users/:user_id", svc.AddUserToGroup)
+		v3.DELETE("/groups/:id/users/:user_id", svc.RemoveUserFromGroup)
+
 		// Roles
 		v3.GET("/roles", svc.ListRoles)
 	}
