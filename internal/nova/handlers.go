@@ -83,6 +83,7 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 
 		// Availability zones
 		v21.GET("/os-availability-zone", svc.ListAvailabilityZones)
+		v21.GET("/os-availability-zone/detail", svc.ListAvailabilityZonesDetail)
 
 		// Volume attachments
 		v21.GET("/servers/:id/os-volume_attachments", svc.ListVolumeAttachments)
@@ -838,6 +839,26 @@ func (svc *Service) ListAvailabilityZones(c *gin.Context) {
 			"zoneName":  "nova",
 			"zoneState": gin.H{"available": true},
 			"hosts":     nil,
+		},
+	}})
+}
+
+// ListAvailabilityZonesDetail lists availability zones with host details
+func (svc *Service) ListAvailabilityZonesDetail(c *gin.Context) {
+	// Detail view includes compute hosts per zone
+	c.JSON(200, gin.H{"availabilityZoneInfo": []gin.H{
+		{
+			"zoneName":  "nova",
+			"zoneState": gin.H{"available": true},
+			"hosts": gin.H{
+				"o3k-compute-1": gin.H{
+					"nova-compute": gin.H{
+						"active":     true,
+						"available":  true,
+						"updated_at": time.Now(),
+					},
+				},
+			},
 		},
 	}})
 }

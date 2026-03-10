@@ -82,7 +82,8 @@ echo -e "${BLUE}═══ Identity Service (Keystone) Tests ═══${NC}"
 test_case "Token authentication"
 if TOKEN=$(openstack token issue -f value -c id 2>/dev/null); then
     pass
-    export OS_TOKEN="$TOKEN"
+    # Don't export OS_TOKEN - it conflicts with username/password auth
+    # OpenStack CLI will use username/password for subsequent calls
 else
     fail "Cannot get token"
     exit 1

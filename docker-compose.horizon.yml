@@ -5,7 +5,7 @@ services:
 
   # Horizon Dashboard
   horizon:
-    image: kolla/horizon:zed
+    image: quay.io/openstack.kolla/ubuntu-source-horizon:zed
     container_name: o3k-horizon
     restart: unless-stopped
     ports:
@@ -21,8 +21,6 @@ services:
       - ./config/horizon/local_settings.py:/etc/openstack-dashboard/local_settings.py:ro
     networks:
       - o3k-network
-    depends_on:
-      - o3k
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/"]
       interval: 30s

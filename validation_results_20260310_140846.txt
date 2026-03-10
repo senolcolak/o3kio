@@ -1,0 +1,64 @@
+[0;34m╔══════════════════════════════════════════════════════════════╗[0m
+[0;34m║          O3K REAL-WORLD VALIDATION TEST SUITE                ║[0m
+[0;34m║   Testing with Horizon Dashboard & OpenStack CLI             ║[0m
+[0;34m╔══════════════════════════════════════════════════════════════╝[0m
+
+[0;34m═══ Pre-flight Checks ═══[0m
+[1;33mTest 1:[0m Check O3K is running
+  [0;32m✓ PASS[0m
+[1;33mTest 2:[0m Check OpenStack CLI is installed
+  [0;32m✓ PASS[0m
+
+[0;34m═══ Identity Service (Keystone) Tests ═══[0m
+[1;33mTest 3:[0m Token authentication
+  [0;32m✓ PASS[0m
+[1;33mTest 4:[0m List users
+  [0;31m✗ FAIL[0m: Cannot list users
+[1;33mTest 5:[0m List projects
+  [0;31m✗ FAIL[0m: Cannot list projects
+[1;33mTest 6:[0m List roles
+  [0;31m✗ FAIL[0m: Cannot list roles
+[1;33mTest 7:[0m Create user
+  [0;31m✗ FAIL[0m: Cannot create user
+[1;33mTest 8:[0m Show user details
+  [0;31m✗ FAIL[0m: Cannot show user
+[1;33mTest 9:[0m Delete user
+  [0;31m✗ FAIL[0m: Cannot delete user
+
+[0;34m═══ Compute Service (Nova) Tests ═══[0m
+[1;33mTest 10:[0m List flavors
+  [0;31m✗ FAIL[0m: Cannot list flavors
+[1;33mTest 11:[0m List servers
+  [0;31m✗ FAIL[0m: Cannot list servers
+[1;33mTest 12:[0m Create server
+  [0;31m✗ FAIL[0m: Cannot create server
+
+[0;34m═══ Network Service (Neutron) Tests ═══[0m
+[1;33mTest 13:[0m List networks
+  [0;31m✗ FAIL[0m: Cannot list networks
+[1;33mTest 14:[0m Create network
+  [0;31m✗ FAIL[0m: Cannot create network
+
+[0;34m═══ Volume Service (Cinder) Tests ═══[0m
+[1;33mTest 15:[0m List volumes
+  [0;31m✗ FAIL[0m: Cannot list volumes
+[1;33mTest 16:[0m Create volume
+  [0;31m✗ FAIL[0m: Cannot create volume
+
+[0;34m═══ Image Service (Glance) Tests ═══[0m
+[1;33mTest 17:[0m List images
+  [0;31m✗ FAIL[0m: Cannot list images
+[1;33mTest 18:[0m Create image
+  [0;31m✗ FAIL[0m: Cannot create image
+
+[0;34m╔══════════════════════════════════════════════════════════════╗[0m
+[0;34m║                      TEST SUMMARY                             ║[0m
+[0;34m╚══════════════════════════════════════════════════════════════╝[0m
+
+Total Tests:  18
+[0;32mPassed:       3[0m
+[0;31mFailed:       15[0m
+
+Pass Rate: 16%
+
+[0;31m✗ Some tests failed[0m

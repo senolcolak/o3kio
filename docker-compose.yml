@@ -31,7 +31,7 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "5001:35357"   # Keystone (Identity) - map external 5001 to internal 35357 (5000 is used by AirPlay on macOS)
+      - "35357:35357"  # Keystone (Identity)
       - "8774:8774"    # Nova (Compute)
       - "9696:9696"    # Neutron (Network)
       - "8776:8776"    # Cinder (Block Storage)
@@ -46,7 +46,7 @@ services:
       - o3k-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:5000/v3 || exit 1"]
+      test: ["CMD-SHELL", "curl -f http://localhost:35357/v3 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 3
