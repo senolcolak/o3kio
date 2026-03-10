@@ -44,12 +44,26 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		v3.DELETE("/volumes/:id", svc.DeleteVolume)
 		v3.POST("/volumes/:id/action", svc.VolumeAction)
 
+		// Volume metadata
+		v3.GET("/volumes/:id/metadata", svc.GetVolumeMetadata)
+		v3.POST("/volumes/:id/metadata", svc.SetVolumeMetadata)
+		v3.GET("/volumes/:id/metadata/:key", svc.GetVolumeMetadataKey)
+		v3.PUT("/volumes/:id/metadata/:key", svc.UpdateVolumeMetadataKey)
+		v3.DELETE("/volumes/:id/metadata/:key", svc.DeleteVolumeMetadataKey)
+
 		// Snapshots
 		v3.GET("/snapshots", svc.ListSnapshots)
 		v3.POST("/snapshots", svc.CreateSnapshot)
 		v3.GET("/snapshots/:id", svc.GetSnapshot)
 		v3.PATCH("/snapshots/:id", svc.UpdateSnapshot)
 		v3.DELETE("/snapshots/:id", svc.DeleteSnapshot)
+
+		// Snapshot metadata
+		v3.GET("/snapshots/:id/metadata", svc.GetSnapshotMetadata)
+		v3.POST("/snapshots/:id/metadata", svc.SetSnapshotMetadata)
+		v3.GET("/snapshots/:id/metadata/:key", svc.GetSnapshotMetadataKey)
+		v3.PUT("/snapshots/:id/metadata/:key", svc.UpdateSnapshotMetadataKey)
+		v3.DELETE("/snapshots/:id/metadata/:key", svc.DeleteSnapshotMetadataKey)
 
 		// Volume types
 		v3.GET("/types", svc.ListVolumeTypes)
@@ -767,4 +781,410 @@ func (svc *Service) UpdateSnapshot(c *gin.Context) {
 			"created_at":  createdAt.Format(time.RFC3339),
 		},
 	})
+}
+
+// GetVolumeMetadata returns all metadata for a volume
+func (svc *Service) GetVolumeMetadata(c *gin.Context) {
+	volumeID := c.Param("id")
+	projectID := c.GetString("project_id")
+
+	// Check volume exists and belongs to project
+	var exists bool
+	err := database.DB.QueryRow(c.Request.Context(),
+		"SELECT EXISTS(SELECT 1 FROM volumes WHERE id = $1 AND project_id = $2)",
+		volumeID, projectID,
+	).Scan(&exists)
+
+	if err != nil || !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "volume not found"})
+		return
+	}
+
+	rows, err := database.DB.Query(c.Request.Context(),
+		"SELECT meta_key, meta_value FROM volume_metadata WHERE volume_id = $1",
+		volumeID,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	metadata := make(map[string]string)
+	for rows.Next() {
+		var key, value string
+		if err := rows.Scan(&key, &value); err != nil {
+			continue
+		}
+		metadata[key] = value
+	}
+
+	c.JSON(http.StatusOK, gin.H{"metadata": metadata})
+}
+
+// SetVolumeMetadata sets/replaces all metadata for a volume
+func (svc *Service) SetVolumeMetadata(c *gin.Context) {
+	volumeID := c.Param("id")
+	projectID := c.GetString("project_id")
+
+	var req struct {
+		Metadata map[string]string `json:"metadata"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+
+	// Check volume exists and belongs to project
+	var exists bool
+	err := database.DB.QueryRow(c.Request.Context(),
+		"SELECT EXISTS(SELECT 1 FROM volumes WHERE id = $1 AND project_id = $2)",
+		volumeID, projectID,
+	).Scan(&exists)
+
+	if err != nil || !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "volume not found"})
+		return
+	}
+
+	// Delete existing metadata
+	_, err = database.DB.Exec(c.Request.Context(),
+		"DELETE FROM volume_metadata WHERE volume_id = $1",
+		volumeID,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Insert new metadata
+	for key, value := range req.Metadata {
+		_, err = database.DB.Exec(c.Request.Context(), `
+			INSERT INTO volume_metadata (volume_id, meta_key, meta_value)
+			VALUES ($1, $2, $3)
+		`, volumeID, key, value)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"metadata": req.Metadata})
+}
+
+// GetVolumeMetadataKey returns a single metadata key
+func (svc *Service) GetVolumeMetadataKey(c *gin.Context) {
+	volumeID := c.Param("id")
+	key := c.Param("key")
+	projectID := c.GetString("project_id")
+
+	// Check volume exists and belongs to project
+	var exists bool
+	err := database.DB.QueryRow(c.Request.Context(),
+		"SELECT EXISTS(SELECT 1 FROM volumes WHERE id = $1 AND project_id = $2)",
+		volumeID, projectID,
+	).Scan(&exists)
+
+	if err != nil || !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "volume not found"})
+		return
+	}
+
+	var value string
+	err = database.DB.QueryRow(c.Request.Context(),
+		"SELECT meta_value FROM volume_metadata WHERE volume_id = $1 AND meta_key = $2",
+		volumeID, key,
+	).Scan(&value)
+
+	if err == pgx.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "metadata key not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"meta": map[string]string{key: value}})
+}
+
+// UpdateVolumeMetadataKey updates a single metadata key
+func (svc *Service) UpdateVolumeMetadataKey(c *gin.Context) {
+	volumeID := c.Param("id")
+	key := c.Param("key")
+	projectID := c.GetString("project_id")
+
+	var req struct {
+		Meta map[string]string `json:"meta"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+
+	value, ok := req.Meta[key]
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "key not found in request body"})
+		return
+	}
+
+	// Check volume exists and belongs to project
+	var exists bool
+	err := database.DB.QueryRow(c.Request.Context(),
+		"SELECT EXISTS(SELECT 1 FROM volumes WHERE id = $1 AND project_id = $2)",
+		volumeID, projectID,
+	).Scan(&exists)
+
+	if err != nil || !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "volume not found"})
+		return
+	}
+
+	// Upsert metadata
+	_, err = database.DB.Exec(c.Request.Context(), `
+		INSERT INTO volume_metadata (volume_id, meta_key, meta_value, updated_at)
+		VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+		ON CONFLICT (volume_id, meta_key)
+		DO UPDATE SET meta_value = $3, updated_at = CURRENT_TIMESTAMP
+	`, volumeID, key, value)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"meta": map[string]string{key: value}})
+}
+
+// DeleteVolumeMetadataKey deletes a single metadata key
+func (svc *Service) DeleteVolumeMetadataKey(c *gin.Context) {
+	volumeID := c.Param("id")
+	key := c.Param("key")
+	projectID := c.GetString("project_id")
+
+	// Check volume exists and belongs to project
+	var exists bool
+	err := database.DB.QueryRow(c.Request.Context(),
+		"SELECT EXISTS(SELECT 1 FROM volumes WHERE id = $1 AND project_id = $2)",
+		volumeID, projectID,
+	).Scan(&exists)
+
+	if err != nil || !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "volume not found"})
+		return
+	}
+
+	_, err = database.DB.Exec(c.Request.Context(),
+		"DELETE FROM volume_metadata WHERE volume_id = $1 AND meta_key = $2",
+		volumeID, key,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
+
+// GetSnapshotMetadata returns all metadata for a snapshot
+func (svc *Service) GetSnapshotMetadata(c *gin.Context) {
+	snapshotID := c.Param("id")
+	projectID := c.GetString("project_id")
+
+	// Check snapshot exists and belongs to project
+	var exists bool
+	err := database.DB.QueryRow(c.Request.Context(),
+		"SELECT EXISTS(SELECT 1 FROM snapshots WHERE id = $1 AND project_id = $2)",
+		snapshotID, projectID,
+	).Scan(&exists)
+
+	if err != nil || !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "snapshot not found"})
+		return
+	}
+
+	rows, err := database.DB.Query(c.Request.Context(),
+		"SELECT meta_key, meta_value FROM snapshot_metadata WHERE snapshot_id = $1",
+		snapshotID,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	metadata := make(map[string]string)
+	for rows.Next() {
+		var key, value string
+		if err := rows.Scan(&key, &value); err != nil {
+			continue
+		}
+		metadata[key] = value
+	}
+
+	c.JSON(http.StatusOK, gin.H{"metadata": metadata})
+}
+
+// SetSnapshotMetadata sets/replaces all metadata for a snapshot
+func (svc *Service) SetSnapshotMetadata(c *gin.Context) {
+	snapshotID := c.Param("id")
+	projectID := c.GetString("project_id")
+
+	var req struct {
+		Metadata map[string]string `json:"metadata"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+
+	// Check snapshot exists and belongs to project
+	var exists bool
+	err := database.DB.QueryRow(c.Request.Context(),
+		"SELECT EXISTS(SELECT 1 FROM snapshots WHERE id = $1 AND project_id = $2)",
+		snapshotID, projectID,
+	).Scan(&exists)
+
+	if err != nil || !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "snapshot not found"})
+		return
+	}
+
+	// Delete existing metadata
+	_, err = database.DB.Exec(c.Request.Context(),
+		"DELETE FROM snapshot_metadata WHERE snapshot_id = $1",
+		snapshotID,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Insert new metadata
+	for key, value := range req.Metadata {
+		_, err = database.DB.Exec(c.Request.Context(), `
+			INSERT INTO snapshot_metadata (snapshot_id, meta_key, meta_value)
+			VALUES ($1, $2, $3)
+		`, snapshotID, key, value)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"metadata": req.Metadata})
+}
+
+// GetSnapshotMetadataKey returns a single metadata key
+func (svc *Service) GetSnapshotMetadataKey(c *gin.Context) {
+	snapshotID := c.Param("id")
+	key := c.Param("key")
+	projectID := c.GetString("project_id")
+
+	// Check snapshot exists and belongs to project
+	var exists bool
+	err := database.DB.QueryRow(c.Request.Context(),
+		"SELECT EXISTS(SELECT 1 FROM snapshots WHERE id = $1 AND project_id = $2)",
+		snapshotID, projectID,
+	).Scan(&exists)
+
+	if err != nil || !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "snapshot not found"})
+		return
+	}
+
+	var value string
+	err = database.DB.QueryRow(c.Request.Context(),
+		"SELECT meta_value FROM snapshot_metadata WHERE snapshot_id = $1 AND meta_key = $2",
+		snapshotID, key,
+	).Scan(&value)
+
+	if err == pgx.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "metadata key not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"meta": map[string]string{key: value}})
+}
+
+// UpdateSnapshotMetadataKey updates a single metadata key
+func (svc *Service) UpdateSnapshotMetadataKey(c *gin.Context) {
+	snapshotID := c.Param("id")
+	key := c.Param("key")
+	projectID := c.GetString("project_id")
+
+	var req struct {
+		Meta map[string]string `json:"meta"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+
+	value, ok := req.Meta[key]
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "key not found in request body"})
+		return
+	}
+
+	// Check snapshot exists and belongs to project
+	var exists bool
+	err := database.DB.QueryRow(c.Request.Context(),
+		"SELECT EXISTS(SELECT 1 FROM snapshots WHERE id = $1 AND project_id = $2)",
+		snapshotID, projectID,
+	).Scan(&exists)
+
+	if err != nil || !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "snapshot not found"})
+		return
+	}
+
+	// Upsert metadata
+	_, err = database.DB.Exec(c.Request.Context(), `
+		INSERT INTO snapshot_metadata (snapshot_id, meta_key, meta_value, updated_at)
+		VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+		ON CONFLICT (snapshot_id, meta_key)
+		DO UPDATE SET meta_value = $3, updated_at = CURRENT_TIMESTAMP
+	`, snapshotID, key, value)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"meta": map[string]string{key: value}})
+}
+
+// DeleteSnapshotMetadataKey deletes a single metadata key
+func (svc *Service) DeleteSnapshotMetadataKey(c *gin.Context) {
+	snapshotID := c.Param("id")
+	key := c.Param("key")
+	projectID := c.GetString("project_id")
+
+	// Check snapshot exists and belongs to project
+	var exists bool
+	err := database.DB.QueryRow(c.Request.Context(),
+		"SELECT EXISTS(SELECT 1 FROM snapshots WHERE id = $1 AND project_id = $2)",
+		snapshotID, projectID,
+	).Scan(&exists)
+
+	if err != nil || !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "snapshot not found"})
+		return
+	}
+
+	_, err = database.DB.Exec(c.Request.Context(),
+		"DELETE FROM snapshot_metadata WHERE snapshot_id = $1 AND meta_key = $2",
+		snapshotID, key,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.Status(http.StatusNoContent)
 }
