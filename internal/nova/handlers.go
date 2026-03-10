@@ -88,6 +88,9 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		// Limits (quotas and usage)
 		v21.GET("/limits", svc.GetLimits)
 
+		// Services (compute service status)
+		v21.GET("/os-services", svc.ListServices)
+
 		// Volume attachments
 		v21.GET("/servers/:id/os-volume_attachments", svc.ListVolumeAttachments)
 		v21.POST("/servers/:id/os-volume_attachments", svc.AttachVolume)
@@ -925,6 +928,51 @@ func (svc *Service) GetLimits(c *gin.Context) {
 				"totalFloatingIpsUsed":  0,
 				"totalSecurityGroupsUsed": 0,
 				"totalServerGroupsUsed": 0,
+			},
+		},
+	})
+}
+
+// ListServices returns list of compute services
+func (svc *Service) ListServices(c *gin.Context) {
+	// Format: "2006-01-02T15:04:05.000000" (without Z, microseconds)
+	now := time.Now().Format("2006-01-02T15:04:05.000000")
+
+	// Return list of compute services for Horizon System Info panel
+	c.JSON(200, gin.H{
+		"services": []gin.H{
+			{
+				"id":                 1,
+				"binary":             "nova-compute",
+				"host":               "o3k-compute-1",
+				"zone":               "nova",
+				"status":             "enabled",
+				"state":              "up",
+				"updated_at":         now,
+				"disabled_reason":    nil,
+				"forced_down":        false,
+			},
+			{
+				"id":                 2,
+				"binary":             "nova-scheduler",
+				"host":               "o3k-controller",
+				"zone":               "internal",
+				"status":             "enabled",
+				"state":              "up",
+				"updated_at":         now,
+				"disabled_reason":    nil,
+				"forced_down":        false,
+			},
+			{
+				"id":                 3,
+				"binary":             "nova-conductor",
+				"host":               "o3k-controller",
+				"zone":               "internal",
+				"status":             "enabled",
+				"state":              "up",
+				"updated_at":         now,
+				"disabled_reason":    nil,
+				"forced_down":        false,
 			},
 		},
 	})
