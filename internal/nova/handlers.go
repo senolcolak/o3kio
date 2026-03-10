@@ -539,6 +539,15 @@ func (svc *Service) ServerAction(c *gin.Context) {
 	} else if _, ok := req["revertResize"]; ok {
 		svc.RevertResizeInstance(c)
 		return
+	} else if rebuildData, ok := req["rebuild"]; ok {
+		svc.RebuildInstanceAction(c, rebuildData)
+		return
+	} else if rescueData, ok := req["rescue"]; ok {
+		svc.RescueInstanceAction(c, rescueData)
+		return
+	} else if createImageData, ok := req["createImage"]; ok {
+		svc.CreateImageAction(c, createImageData)
+		return
 	}
 
 	// Get libvirt domain ID for remaining actions (support lookup by ID or name)
@@ -1019,5 +1028,153 @@ func (svc *Service) ResetServerMetadata(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"metadata": req.Metadata})
+}
+
+// RebuildInstanceAction handles the rebuild action
+func (svc *Service) RebuildInstanceAction(c *gin.Context, rebuildData interface{}) {
+	instanceID := c.Param("id")
+	projectID := c.GetString("project_id")
+
+	rebuildMap, ok := rebuildData.(map[string]interface{})
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid rebuild data"})
+		return
+	}
+
+	imageRef, _ := rebuildMap["imageRef"].(string)
+	name, _ := rebuildMap["name"].(string)
+
+	if imageRef == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "imageRef is required"})
+		return
+	}
+
+	// Update instance in database
+	now := time.Now()
+	_, err := database.DB.Exec(c.Request.Context(),
+		"UPDATE instances SET image_id = $1, name = COALESCE(NULLIF($2, ''), name), status = $3, updated_at = $4 WHERE id = $5 AND project_id = $6",
+		imageRef, name, "REBUILD", now, instanceID, projectID,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// In stub mode, simulate rebuild completion
+	if svc.libvirtMode == "stub" {
+		go func() {
+			time.Sleep(2 * time.Second)
+			database.DB.Exec(context.Background(),
+				"UPDATE instances SET status = $1, updated_at = $2 WHERE id = $3 AND project_id = $4",
+				"ACTIVE", time.Now(), instanceID, projectID)
+		}()
+	}
+
+	// Return updated server details
+	var server gin.H
+	var flavorID, userID, imageID, serverName, status string
+	var createdAt, updatedAt time.Time
+	err = database.DB.QueryRow(c.Request.Context(),
+		"SELECT id, name, flavor_id, image_id, user_id, status, created_at, updated_at FROM instances WHERE id = $1 AND project_id = $2",
+		instanceID, projectID,
+	).Scan(&instanceID, &serverName, &flavorID, &imageID, &userID, &status, &createdAt, &updatedAt)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	server = gin.H{
+		"id":         instanceID,
+		"name":       serverName,
+		"status":     status,
+		"tenant_id":  projectID,
+		"user_id":    userID,
+		"created":    createdAt.Format(time.RFC3339),
+		"updated":    updatedAt.Format(time.RFC3339),
+		"image": gin.H{
+			"id": imageID,
+		},
+		"flavor": gin.H{
+			"id": flavorID,
+		},
+	}
+
+	c.JSON(http.StatusOK, gin.H{"server": server})
+}
+
+// RescueInstanceAction handles the rescue action
+func (svc *Service) RescueInstanceAction(c *gin.Context, rescueData interface{}) {
+	instanceID := c.Param("id")
+	projectID := c.GetString("project_id")
+
+	// Update instance status to RESCUE
+	now := time.Now()
+	_, err := database.DB.Exec(c.Request.Context(),
+		"UPDATE instances SET status = $1, updated_at = $2 WHERE id = $3 AND project_id = $4",
+		"RESCUE", now, instanceID, projectID,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Return admin password (in real OpenStack this would be a generated rescue password)
+	c.JSON(http.StatusOK, gin.H{
+		"adminPass": "rescuepass123",
+	})
+}
+
+// CreateImageAction handles the createImage action
+func (svc *Service) CreateImageAction(c *gin.Context, createImageData interface{}) {
+	projectID := c.GetString("project_id")
+
+	createImageMap, ok := createImageData.(map[string]interface{})
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid createImage data"})
+		return
+	}
+
+	imageName, _ := createImageMap["name"].(string)
+	if imageName == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name is required"})
+		return
+	}
+
+	// Get metadata if provided
+	metadata := make(map[string]string)
+	if metadataRaw, ok := createImageMap["metadata"].(map[string]interface{}); ok {
+		for k, v := range metadataRaw {
+			if vStr, ok := v.(string); ok {
+				metadata[k] = vStr
+			}
+		}
+	}
+
+	// Create image record in database
+	imageID := uuid.New().String()
+	now := time.Now()
+	_, err := database.DB.Exec(c.Request.Context(), `
+		INSERT INTO images (id, name, project_id, status, container_format, disk_format, size_bytes, visibility, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	`, imageID, imageName, projectID, "active", "bare", "qcow2", 0, "private", now, now)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Store metadata if provided
+	for key, value := range metadata {
+		database.DB.Exec(c.Request.Context(), `
+			INSERT INTO image_properties (image_id, name, value)
+			VALUES ($1, $2, $3)
+		`, imageID, key, value)
+	}
+
+	// Return Location header with image URL
+	imageLocation := fmt.Sprintf("http://localhost:9292/v2/images/%s", imageID)
+	c.Header("Location", imageLocation)
+	c.Status(http.StatusAccepted)
 }
 
