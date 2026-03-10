@@ -65,6 +65,10 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 
 		// Roles
 		v3.GET("/roles", svc.ListRoles)
+		v3.POST("/roles", svc.CreateRole)
+		v3.GET("/roles/:id", svc.GetRole)
+		v3.PATCH("/roles/:id", svc.UpdateRole)
+		v3.DELETE("/roles/:id", svc.DeleteRole)
 	}
 }
 
@@ -502,6 +506,183 @@ func (svc *Service) ListRoles(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"roles": roles})
+}
+
+// GetRole handles GET /v3/roles/:id
+func (svc *Service) GetRole(c *gin.Context) {
+	roleID := c.Param("id")
+
+	var id, name string
+	err := database.DB.QueryRow(c.Request.Context(),
+		"SELECT id, name FROM roles WHERE id = $1",
+		roleID,
+	).Scan(&id, &name)
+
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": gin.H{
+			"message": "role not found",
+			"code":    404,
+			"title":   "Not Found",
+		}})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"role": gin.H{
+		"id":   id,
+		"name": name,
+		"links": gin.H{
+			"self": c.Request.Host + "/v3/roles/" + id,
+		},
+	}})
+}
+
+// CreateRole handles POST /v3/roles
+func (svc *Service) CreateRole(c *gin.Context) {
+	var req struct {
+		Role struct {
+			Name     string `json:"name" binding:"required"`
+			DomainID string `json:"domain_id"`
+		} `json:"role" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
+			"message": "invalid request body",
+			"code":    400,
+			"title":   "Bad Request",
+		}})
+		return
+	}
+
+	// Generate new role ID
+	roleID := uuid.New().String()
+	now := time.Now()
+
+	// Insert into database (domain_id support can be added later via migration)
+	_, err := database.DB.Exec(c.Request.Context(),
+		`INSERT INTO roles (id, name, created_at)
+		 VALUES ($1, $2, $3)`,
+		roleID, req.Role.Name, now,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{
+			"message": err.Error(),
+			"code":    500,
+			"title":   "Internal Server Error",
+		}})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"role": gin.H{
+		"id":   roleID,
+		"name": req.Role.Name,
+		"links": gin.H{
+			"self": c.Request.Host + "/v3/roles/" + roleID,
+		},
+	}})
+}
+
+// UpdateRole handles PATCH /v3/roles/:id
+func (svc *Service) UpdateRole(c *gin.Context) {
+	roleID := c.Param("id")
+
+	var req struct {
+		Role struct {
+			Name *string `json:"name"`
+		} `json:"role" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
+			"message": "invalid request body",
+			"code":    400,
+			"title":   "Bad Request",
+		}})
+		return
+	}
+
+	// Build dynamic update query
+	updates := []string{}
+	args := []interface{}{}
+	argIdx := 1
+
+	if req.Role.Name != nil {
+		updates = append(updates, fmt.Sprintf("name = $%d", argIdx))
+		args = append(args, *req.Role.Name)
+		argIdx++
+	}
+
+	if len(updates) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
+			"message": "No fields to update",
+			"code":    400,
+		}})
+		return
+	}
+
+	args = append(args, roleID)
+
+	query := fmt.Sprintf("UPDATE roles SET %s WHERE id = $%d", joinUpdates(updates), argIdx)
+	_, err := database.DB.Exec(c.Request.Context(), query, args...)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{
+			"message": err.Error(),
+			"code":    500,
+		}})
+		return
+	}
+
+	// Fetch updated role
+	var name string
+	err = database.DB.QueryRow(c.Request.Context(),
+		"SELECT name FROM roles WHERE id = $1",
+		roleID,
+	).Scan(&name)
+
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": gin.H{
+			"message": "role not found",
+			"code":    404,
+		}})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"role": gin.H{
+		"id":   roleID,
+		"name": name,
+		"links": gin.H{
+			"self": c.Request.Host + "/v3/roles/" + roleID,
+		},
+	}})
+}
+
+// DeleteRole handles DELETE /v3/roles/:id
+func (svc *Service) DeleteRole(c *gin.Context) {
+	roleID := c.Param("id")
+
+	result, err := database.DB.Exec(c.Request.Context(),
+		"DELETE FROM roles WHERE id = $1",
+		roleID,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{
+			"message": err.Error(),
+			"code":    500,
+		}})
+		return
+	}
+
+	rowsAffected := result.RowsAffected()
+	if rowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": gin.H{
+			"message": "role not found",
+			"code":    404,
+			"title":   "Not Found",
+		}})
+		return
+	}
+
+	c.Status(http.StatusNoContent)
 }
 
 // CreateUser creates a new user (POST /v3/users)
