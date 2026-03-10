@@ -73,6 +73,8 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		// Schemas
 		v2.GET("/schemas/image", svc.GetImageSchema)
 		v2.GET("/schemas/images", svc.GetImagesSchema)
+		v2.GET("/schemas/member", svc.GetMemberSchema)
+		v2.GET("/schemas/members", svc.GetMembersSchema)
 	}
 }
 
@@ -978,4 +980,86 @@ func (svc *Service) ReactivateImage(c *gin.Context) {
 	}
 
 	c.Status(http.StatusNoContent)
+}
+
+// GetMemberSchema returns the member schema
+func (svc *Service) GetMemberSchema(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"name": "member",
+		"properties": gin.H{
+			"created_at": gin.H{
+				"type":        "string",
+				"description": "Date and time of member creation",
+				"readOnly":    true,
+			},
+			"image_id": gin.H{
+				"type":        "string",
+				"description": "An identifier for the image",
+				"pattern":     "^([0-9a-fA-F]){8}-([0-9a-fA-F]){4}-([0-9a-fA-F]){4}-([0-9a-fA-F]){4}-([0-9a-fA-F]){12}$",
+			},
+			"member_id": gin.H{
+				"type":        "string",
+				"description": "An identifier for the image member (tenant ID)",
+			},
+			"status": gin.H{
+				"type":        "string",
+				"description": "The status of this image member",
+				"enum":        []string{"pending", "accepted", "rejected"},
+			},
+			"updated_at": gin.H{
+				"type":        "string",
+				"description": "Date and time of last member update",
+				"readOnly":    true,
+			},
+			"schema": gin.H{
+				"type":        "string",
+				"description": "The URL for the schema describing this member",
+				"readOnly":    true,
+			},
+		},
+	})
+}
+
+// GetMembersSchema returns the members list schema
+func (svc *Service) GetMembersSchema(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"name": "members",
+		"properties": gin.H{
+			"members": gin.H{
+				"type": "array",
+				"items": gin.H{
+					"type": "object",
+					"name": "member",
+					"properties": gin.H{
+						"created_at": gin.H{
+							"type":        "string",
+							"description": "Date and time of member creation",
+						},
+						"image_id": gin.H{
+							"type":        "string",
+							"description": "An identifier for the image",
+						},
+						"member_id": gin.H{
+							"type":        "string",
+							"description": "An identifier for the image member",
+						},
+						"status": gin.H{
+							"type":        "string",
+							"description": "The status of this image member",
+						},
+						"updated_at": gin.H{
+							"type":        "string",
+							"description": "Date and time of last member update",
+						},
+						"schema": gin.H{
+							"type": "string",
+						},
+					},
+				},
+			},
+			"schema": gin.H{
+				"type": "string",
+			},
+		},
+	})
 }
