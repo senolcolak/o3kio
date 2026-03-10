@@ -97,6 +97,10 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		// Services (compute service status)
 		v21.GET("/os-services", svc.ListServices)
 
+		// Tenant usage (usage statistics)
+		v21.GET("/os-simple-tenant-usage", svc.ListTenantUsage)
+		v21.GET("/os-simple-tenant-usage/:id", svc.GetTenantUsage)
+
 		// Server groups
 		v21.GET("/os-server-groups", svc.ListServerGroups)
 		v21.POST("/os-server-groups", svc.CreateServerGroup)
