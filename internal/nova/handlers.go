@@ -85,6 +85,9 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		v21.GET("/os-availability-zone", svc.ListAvailabilityZones)
 		v21.GET("/os-availability-zone/detail", svc.ListAvailabilityZonesDetail)
 
+		// Limits (quotas and usage)
+		v21.GET("/limits", svc.GetLimits)
+
 		// Volume attachments
 		v21.GET("/servers/:id/os-volume_attachments", svc.ListVolumeAttachments)
 		v21.POST("/servers/:id/os-volume_attachments", svc.AttachVolume)
@@ -877,6 +880,54 @@ func (svc *Service) ListAvailabilityZonesDetail(c *gin.Context) {
 			},
 		},
 	}})
+}
+
+// GetLimits returns compute limits and quota information
+func (svc *Service) GetLimits(c *gin.Context) {
+	projectID := c.GetString("project_id")
+
+	// Query current usage from database
+	var instancesUsed, coresUsed, ramUsed int
+	database.DB.QueryRow(c.Request.Context(),
+		`SELECT
+			COUNT(*),
+			COALESCE(SUM(vcpus), 0),
+			COALESCE(SUM(memory_mb), 0)
+		FROM instances
+		WHERE project_id = $1 AND status != 'DELETED'`,
+		projectID,
+	).Scan(&instancesUsed, &coresUsed, &ramUsed)
+
+	// Return limits response
+	c.JSON(200, gin.H{
+		"limits": gin.H{
+			"rate": []gin.H{}, // No rate limiting implemented
+			"absolute": gin.H{
+				// Quota limits (hardcoded for now, should come from quota table)
+				"maxTotalInstances":       100,
+				"maxTotalCores":           200,
+				"maxTotalRAMSize":         512000, // 500GB in MB
+				"maxTotalKeypairs":        100,
+				"maxServerMeta":           128,
+				"maxPersonality":          5,
+				"maxPersonalitySize":      10240,
+				"maxServerGroups":         10,
+				"maxServerGroupMembers":   10,
+				"maxTotalFloatingIps":     10,
+				"maxSecurityGroups":       50,
+				"maxSecurityGroupRules":   100,
+				"maxImageMeta":            128,
+
+				// Current usage
+				"totalInstancesUsed":    instancesUsed,
+				"totalCoresUsed":        coresUsed,
+				"totalRAMUsed":          ramUsed,
+				"totalFloatingIpsUsed":  0,
+				"totalSecurityGroupsUsed": 0,
+				"totalServerGroupsUsed": 0,
+			},
+		},
+	})
 }
 
 // GetServerMetadata returns metadata for a server (GET /v2.1/servers/:id/metadata)
