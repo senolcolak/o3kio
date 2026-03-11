@@ -144,6 +144,15 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		v2.DELETE("/trunks/:id", svc.DeleteTrunk)
 		v2.PUT("/trunks/:id/add_subports", svc.AddSubports)
 		v2.PUT("/trunks/:id/remove_subports", svc.RemoveSubports)
+
+		// Metering
+		v2.GET("/metering/metering-labels", svc.ListMeteringLabels)
+		v2.POST("/metering/metering-labels", svc.CreateMeteringLabel)
+		v2.GET("/metering/metering-labels/:id", svc.GetMeteringLabel)
+		v2.DELETE("/metering/metering-labels/:id", svc.DeleteMeteringLabel)
+		v2.GET("/metering/metering-label-rules", svc.ListMeteringLabelRules)
+		v2.POST("/metering/metering-label-rules", svc.CreateMeteringLabelRule)
+		v2.DELETE("/metering/metering-label-rules/:id", svc.DeleteMeteringLabelRule)
 	}
 }
 
