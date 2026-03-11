@@ -117,6 +117,13 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		v21.GET("/os-server-groups/:id", svc.GetServerGroup)
 		v21.DELETE("/os-server-groups/:id", svc.DeleteServerGroup)
 
+		// Server migrations
+		v21.GET("/os-migrations", svc.ListMigrations)
+		v21.GET("/servers/:id/migrations", svc.ListServerMigrations)
+		v21.GET("/servers/:id/migrations/:migration_id", svc.GetServerMigration)
+		v21.DELETE("/servers/:id/migrations/:migration_id", svc.DeleteServerMigration)
+		v21.POST("/servers/:id/migrations/:migration_id/action", svc.ServerMigrationAction)
+
 		// Volume attachments
 		v21.GET("/servers/:id/os-volume_attachments", svc.ListVolumeAttachments)
 		v21.POST("/servers/:id/os-volume_attachments", svc.AttachVolume)
