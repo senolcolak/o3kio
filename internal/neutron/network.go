@@ -135,6 +135,15 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		v2.GET("/rbac-policies/:id", svc.GetRBACPolicy)
 		v2.PUT("/rbac-policies/:id", svc.UpdateRBACPolicy)
 		v2.DELETE("/rbac-policies/:id", svc.DeleteRBACPolicy)
+
+		// Trunk Ports
+		v2.GET("/trunks", svc.ListTrunks)
+		v2.POST("/trunks", svc.CreateTrunk)
+		v2.GET("/trunks/:id", svc.GetTrunk)
+		v2.PUT("/trunks/:id", svc.UpdateTrunk)
+		v2.DELETE("/trunks/:id", svc.DeleteTrunk)
+		v2.PUT("/trunks/:id/add_subports", svc.AddSubports)
+		v2.PUT("/trunks/:id/remove_subports", svc.RemoveSubports)
 	}
 }
 
