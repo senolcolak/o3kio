@@ -46,9 +46,13 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		v3.GET("/users/:id/projects", svc.GetUserProjects)
 		v3.GET("/users/:id/groups", svc.GetUserGroups)
 
-		// Projects
+		// Projects (role assignments must come before /projects/:id to avoid conflicts)
 		v3.GET("/projects", svc.ListProjects)
 		v3.POST("/projects", svc.CreateProject)
+		v3.PUT("/projects/:id/users/:user_id/roles/:role_id", svc.AssignRole)
+		v3.DELETE("/projects/:id/users/:user_id/roles/:role_id", svc.UnassignRole)
+		v3.GET("/projects/:id/users/:user_id/roles", svc.ListUserProjectRoles)
+		v3.GET("/projects/:id/users/:user_id/roles/:role_id", svc.CheckRoleAssignment)
 		v3.GET("/projects/:id", svc.GetProject)
 		v3.PATCH("/projects/:id", svc.UpdateProject)
 		v3.DELETE("/projects/:id", svc.DeleteProject)
@@ -69,6 +73,9 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		v3.GET("/roles/:id", svc.GetRole)
 		v3.PATCH("/roles/:id", svc.UpdateRole)
 		v3.DELETE("/roles/:id", svc.DeleteRole)
+
+		// Role Assignments (additional endpoint)
+		v3.GET("/role_assignments", svc.ListRoleAssignments)
 	}
 }
 
@@ -683,6 +690,195 @@ func (svc *Service) DeleteRole(c *gin.Context) {
 	}
 
 	c.Status(http.StatusNoContent)
+}
+
+// AssignRole handles PUT /v3/projects/:id/users/:user_id/roles/:role_id
+func (svc *Service) AssignRole(c *gin.Context) {
+	projectID := c.Param("id")
+	userID := c.Param("user_id")
+	roleID := c.Param("role_id")
+
+	// Insert role assignment (idempotent)
+	_, err := database.DB.Exec(c.Request.Context(),
+		`INSERT INTO role_assignments (id, user_id, project_id, role_id, created_at)
+		 VALUES (gen_random_uuid(), $1, $2, $3, NOW())
+		 ON CONFLICT (user_id, project_id, role_id) DO NOTHING`,
+		userID, projectID, roleID,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{
+			"message": err.Error(),
+			"code":    500,
+		}})
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
+
+// UnassignRole handles DELETE /v3/projects/:id/users/:user_id/roles/:role_id
+func (svc *Service) UnassignRole(c *gin.Context) {
+	projectID := c.Param("id")
+	userID := c.Param("user_id")
+	roleID := c.Param("role_id")
+
+	result, err := database.DB.Exec(c.Request.Context(),
+		"DELETE FROM role_assignments WHERE user_id = $1 AND project_id = $2 AND role_id = $3",
+		userID, projectID, roleID,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{
+			"message": err.Error(),
+			"code":    500,
+		}})
+		return
+	}
+
+	rowsAffected := result.RowsAffected()
+	if rowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": gin.H{
+			"message": "role assignment not found",
+			"code":    404,
+		}})
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
+
+// ListUserProjectRoles handles GET /v3/projects/:id/users/:user_id/roles
+func (svc *Service) ListUserProjectRoles(c *gin.Context) {
+	projectID := c.Param("id")
+	userID := c.Param("user_id")
+
+	rows, err := database.DB.Query(c.Request.Context(),
+		`SELECT r.id, r.name
+		 FROM roles r
+		 INNER JOIN role_assignments ra ON r.id = ra.role_id
+		 WHERE ra.user_id = $1 AND ra.project_id = $2`,
+		userID, projectID,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	var roles []gin.H
+	for rows.Next() {
+		var id, name string
+		if err := rows.Scan(&id, &name); err != nil {
+			continue
+		}
+		roles = append(roles, gin.H{
+			"id":   id,
+			"name": name,
+		})
+	}
+
+	if roles == nil {
+		roles = []gin.H{}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"roles": roles})
+}
+
+// CheckRoleAssignment handles GET /v3/projects/:id/users/:user_id/roles/:role_id
+func (svc *Service) CheckRoleAssignment(c *gin.Context) {
+	projectID := c.Param("id")
+	userID := c.Param("user_id")
+	roleID := c.Param("role_id")
+
+	var exists bool
+	err := database.DB.QueryRow(c.Request.Context(),
+		`SELECT EXISTS(
+			SELECT 1 FROM role_assignments
+			WHERE user_id = $1 AND project_id = $2 AND role_id = $3
+		)`,
+		userID, projectID, roleID,
+	).Scan(&exists)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": gin.H{
+			"message": "role assignment not found",
+			"code":    404,
+		}})
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
+
+// ListRoleAssignments handles GET /v3/role_assignments
+func (svc *Service) ListRoleAssignments(c *gin.Context) {
+	// Parse query parameters
+	userID := c.Query("user.id")
+	projectID := c.Query("scope.project.id")
+	roleID := c.Query("role.id")
+
+	// Build dynamic query
+	query := `SELECT ra.user_id, ra.project_id, ra.role_id, r.name as role_name
+	          FROM role_assignments ra
+	          INNER JOIN roles r ON ra.role_id = r.id
+	          WHERE 1=1`
+	args := []interface{}{}
+	argIdx := 1
+
+	if userID != "" {
+		query += fmt.Sprintf(" AND ra.user_id = $%d", argIdx)
+		args = append(args, userID)
+		argIdx++
+	}
+	if projectID != "" {
+		query += fmt.Sprintf(" AND ra.project_id = $%d", argIdx)
+		args = append(args, projectID)
+		argIdx++
+	}
+	if roleID != "" {
+		query += fmt.Sprintf(" AND ra.role_id = $%d", argIdx)
+		args = append(args, roleID)
+		argIdx++
+	}
+
+	rows, err := database.DB.Query(c.Request.Context(), query, args...)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	var assignments []gin.H
+	for rows.Next() {
+		var uid, pid, rid, rname string
+		if err := rows.Scan(&uid, &pid, &rid, &rname); err != nil {
+			continue
+		}
+		assignments = append(assignments, gin.H{
+			"user": gin.H{
+				"id": uid,
+			},
+			"scope": gin.H{
+				"project": gin.H{
+					"id": pid,
+				},
+			},
+			"role": gin.H{
+				"id":   rid,
+				"name": rname,
+			},
+		})
+	}
+
+	if assignments == nil {
+		assignments = []gin.H{}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"role_assignments": assignments})
 }
 
 // CreateUser creates a new user (POST /v3/users)

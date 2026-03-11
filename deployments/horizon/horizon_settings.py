@@ -12,7 +12,7 @@ ALLOWED_HOSTS = ['*']
 # OpenStack settings - connect to O3K container
 # Use "o3k" when running in Docker Compose, or "host.docker.internal" for host-based O3K
 OPENSTACK_HOST = os.environ.get('OPENSTACK_HOST', 'o3k')
-OPENSTACK_KEYSTONE_URL = "http://%s:5000/v3" % OPENSTACK_HOST
+OPENSTACK_KEYSTONE_URL = "http://%s:35357/v3" % OPENSTACK_HOST
 
 # Default region
 OPENSTACK_KEYSTONE_DEFAULT_REGION = "RegionOne"
@@ -34,7 +34,7 @@ OPENSTACK_ENDPOINT_TYPE = "publicURL"
 
 # Available regions
 AVAILABLE_REGIONS = [
-    ('http://%s:5000/v3' % os.environ.get('OPENSTACK_HOST', 'o3k'), 'RegionOne'),
+    ('http://%s:35357/v3' % os.environ.get('OPENSTACK_HOST', 'o3k'), 'RegionOne'),
 ]
 
 # Console type
