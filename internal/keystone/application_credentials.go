@@ -2,7 +2,7 @@ package keystone
 
 import (
 	"crypto/rand"
-	"encoding/hex"
+	"encoding/base64"
 	"net/http"
 	"time"
 
@@ -10,211 +10,317 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"golang.org/x/crypto/bcrypt"
 )
 
-// CreateApplicationCredential handles POST /v3/users/:id/application_credentials
-func (svc *Service) CreateApplicationCredential(c *gin.Context) {
-	userID := c.Param("id")
-
-	var req struct {
-		ApplicationCredential struct {
-			Name         string  `json:"name" binding:"required"`
-			Description  string  `json:"description"`
-			ProjectID    *string `json:"project_id"`
-			ExpiresAt    *string `json:"expires_at"`
-			Unrestricted bool    `json:"unrestricted"`
-		} `json:"application_credential" binding:"required"`
-	}
-
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// Generate random secret
-	secretBytes := make([]byte, 32)
-	rand.Read(secretBytes)
-	secret := hex.EncodeToString(secretBytes)
-
-	// Hash the secret for storage
-	hashedSecret, err := bcrypt.GenerateFromPassword([]byte(secret), bcrypt.DefaultCost)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	credID := uuid.New().String()
-	now := time.Now()
-
-	var expiresAt *time.Time
-	if req.ApplicationCredential.ExpiresAt != nil {
-		t, err := time.Parse(time.RFC3339, *req.ApplicationCredential.ExpiresAt)
-		if err == nil {
-			expiresAt = &t
-		}
-	}
-
-	_, err = database.DB.Exec(c.Request.Context(), `
-		INSERT INTO application_credentials (id, name, user_id, project_id, secret_hash, description, unrestricted, expires_at, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-	`, credID, req.ApplicationCredential.Name, userID, req.ApplicationCredential.ProjectID, string(hashedSecret), req.ApplicationCredential.Description, req.ApplicationCredential.Unrestricted, expiresAt, now)
-
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	response := gin.H{
-		"id":           credID,
-		"name":         req.ApplicationCredential.Name,
-		"description":  req.ApplicationCredential.Description,
-		"user_id":      userID,
-		"project_id":   req.ApplicationCredential.ProjectID,
-		"unrestricted": req.ApplicationCredential.Unrestricted,
-		"secret":       secret, // Only returned on create
-		"created_at":   now.Format(time.RFC3339),
-	}
-
-	if expiresAt != nil {
-		response["expires_at"] = expiresAt.Format(time.RFC3339)
-	}
-
-	c.JSON(http.StatusCreated, gin.H{
-		"application_credential": response,
-	})
-}
-
-// ListApplicationCredentials handles GET /v3/users/:id/application_credentials
+// ListApplicationCredentials returns application credentials for a user
 func (svc *Service) ListApplicationCredentials(c *gin.Context) {
 	userID := c.Param("id")
 
-	rows, err := database.DB.Query(c.Request.Context(),
-		`SELECT id, name, description, project_id, unrestricted, expires_at, created_at
-		 FROM application_credentials
-		 WHERE user_id = $1
-		 ORDER BY created_at DESC`,
-		userID,
-	)
+	rows, err := database.DB.Query(c.Request.Context(), `
+		SELECT id, user_id, project_id, name, description, expires_at, unrestricted, created_at
+		FROM application_credentials
+		WHERE user_id = $1
+		ORDER BY created_at DESC
+	`, userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query application credentials"})
 		return
 	}
 	defer rows.Close()
 
-	var credentials []gin.H
+	credentials := []map[string]interface{}{}
 	for rows.Next() {
-		var id, name, description string
-		var projectID *string
-		var unrestricted bool
+		var id, userIDVal, name string
+		var projectID, description *string
 		var expiresAt *time.Time
+		var unrestricted bool
 		var createdAt time.Time
 
-		if err := rows.Scan(&id, &name, &description, &projectID, &unrestricted, &expiresAt, &createdAt); err != nil {
+		if err := rows.Scan(&id, &userIDVal, &projectID, &name, &description, &expiresAt, &unrestricted, &createdAt); err != nil {
 			continue
 		}
 
-		cred := gin.H{
+		credential := map[string]interface{}{
 			"id":           id,
+			"user_id":      userIDVal,
 			"name":         name,
-			"description":  description,
-			"user_id":      userID,
-			"project_id":   projectID,
 			"unrestricted": unrestricted,
-			"created_at":   createdAt.Format(time.RFC3339),
 		}
 
+		if projectID != nil {
+			credential["project_id"] = *projectID
+		}
+		if description != nil {
+			credential["description"] = *description
+		}
 		if expiresAt != nil {
-			cred["expires_at"] = expiresAt.Format(time.RFC3339)
+			credential["expires_at"] = expiresAt.Format(time.RFC3339)
 		}
 
-		credentials = append(credentials, cred)
-	}
+		// Get roles
+		roleRows, err := database.DB.Query(c.Request.Context(), `
+			SELECT r.id, r.name
+			FROM application_credential_roles acr
+			JOIN roles r ON acr.role_id = r.id
+			WHERE acr.application_credential_id = $1
+		`, id)
+		if err == nil {
+			roles := []map[string]interface{}{}
+			for roleRows.Next() {
+				var roleID, roleName string
+				if err := roleRows.Scan(&roleID, &roleName); err == nil {
+					roles = append(roles, map[string]interface{}{
+						"id":   roleID,
+						"name": roleName,
+					})
+				}
+			}
+			roleRows.Close()
+			credential["roles"] = roles
+		}
 
-	if credentials == nil {
-		credentials = []gin.H{}
+		credentials = append(credentials, credential)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"application_credentials": credentials})
 }
 
-// GetApplicationCredential handles GET /v3/users/:id/application_credentials/:cred_id
-func (svc *Service) GetApplicationCredential(c *gin.Context) {
+// CreateApplicationCredential creates a new application credential
+func (svc *Service) CreateApplicationCredential(c *gin.Context) {
 	userID := c.Param("id")
-	credID := c.Param("cred_id")
 
-	var name, description string
-	var projectID *string
-	var unrestricted bool
-	var expiresAt *time.Time
-	var createdAt time.Time
+	var req struct {
+		ApplicationCredential struct {
+			Name          string                   `json:"name" binding:"required"`
+			Description   string                   `json:"description"`
+			ProjectID     string                   `json:"project_id"`
+			ExpiresAt     string                   `json:"expires_at"`
+			Unrestricted  bool                     `json:"unrestricted"`
+			Roles         []map[string]interface{} `json:"roles"`
+		} `json:"application_credential"`
+	}
 
-	err := database.DB.QueryRow(c.Request.Context(),
-		`SELECT name, description, project_id, unrestricted, expires_at, created_at
-		 FROM application_credentials
-		 WHERE id = $1 AND user_id = $2`,
-		credID, userID,
-	).Scan(&name, &description, &projectID, &unrestricted, &expiresAt, &createdAt)
-
-	if err == pgx.ErrNoRows {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error": gin.H{
-				"message": "Application credential not found",
-				"code":    404,
-				"title":   "Not Found",
-			},
-		})
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
 	}
+
+	credID := uuid.New()
+	now := time.Now()
+
+	// Generate random secret
+	secretBytes := make([]byte, 32)
+	rand.Read(secretBytes)
+	secret := base64.URLEncoding.EncodeToString(secretBytes)
+
+	var projectID interface{}
+	if req.ApplicationCredential.ProjectID != "" {
+		projectID = req.ApplicationCredential.ProjectID
+	}
+
+	var expiresAt interface{}
+	if req.ApplicationCredential.ExpiresAt != "" {
+		if t, err := time.Parse(time.RFC3339, req.ApplicationCredential.ExpiresAt); err == nil {
+			expiresAt = t
+		}
+	}
+
+	_, err := database.DB.Exec(c.Request.Context(), `
+		INSERT INTO application_credentials (id, user_id, project_id, name, secret_hash, description, expires_at, unrestricted, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	`, credID, userID, projectID, req.ApplicationCredential.Name, secret, req.ApplicationCredential.Description, expiresAt, req.ApplicationCredential.Unrestricted, now)
+
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	response := gin.H{
-		"id":           credID,
-		"name":         name,
-		"description":  description,
+	// Associate roles
+	for _, role := range req.ApplicationCredential.Roles {
+		roleID := role["id"].(string)
+		database.DB.Exec(c.Request.Context(), `
+			INSERT INTO application_credential_roles (application_credential_id, role_id)
+			VALUES ($1, $2)
+		`, credID, roleID)
+	}
+
+	credential := map[string]interface{}{
+		"id":           credID.String(),
 		"user_id":      userID,
-		"project_id":   projectID,
-		"unrestricted": unrestricted,
-		"created_at":   createdAt.Format(time.RFC3339),
+		"name":         req.ApplicationCredential.Name,
+		"secret":       secret,
+		"unrestricted": req.ApplicationCredential.Unrestricted,
 	}
 
+	if req.ApplicationCredential.ProjectID != "" {
+		credential["project_id"] = req.ApplicationCredential.ProjectID
+	}
+	if req.ApplicationCredential.Description != "" {
+		credential["description"] = req.ApplicationCredential.Description
+	}
 	if expiresAt != nil {
-		response["expires_at"] = expiresAt.Format(time.RFC3339)
+		credential["expires_at"] = expiresAt.(time.Time).Format(time.RFC3339)
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"application_credential": response,
-	})
+	// Add roles to response
+	if len(req.ApplicationCredential.Roles) > 0 {
+		credential["roles"] = req.ApplicationCredential.Roles
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"application_credential": credential})
 }
 
-// DeleteApplicationCredential handles DELETE /v3/users/:id/application_credentials/:cred_id
+// GetApplicationCredential returns a specific application credential
+func (svc *Service) GetApplicationCredential(c *gin.Context) {
+	userID := c.Param("id")
+	credID := c.Param("cred_id")
+
+	var id, userIDVal, name string
+	var projectID, description *string
+	var expiresAt *time.Time
+	var unrestricted bool
+
+	err := database.DB.QueryRow(c.Request.Context(), `
+		SELECT id, user_id, project_id, name, description, expires_at, unrestricted
+		FROM application_credentials
+		WHERE id = $1 AND user_id = $2
+	`, credID, userID).Scan(&id, &userIDVal, &projectID, &name, &description, &expiresAt, &unrestricted)
+
+	if err == pgx.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Application credential not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query application credential"})
+		return
+	}
+
+	credential := map[string]interface{}{
+		"id":           id,
+		"user_id":      userIDVal,
+		"name":         name,
+		"unrestricted": unrestricted,
+	}
+
+	if projectID != nil {
+		credential["project_id"] = *projectID
+	}
+	if description != nil {
+		credential["description"] = *description
+	}
+	if expiresAt != nil {
+		credential["expires_at"] = expiresAt.Format(time.RFC3339)
+	}
+
+	// Get roles
+	roleRows, err := database.DB.Query(c.Request.Context(), `
+		SELECT r.id, r.name
+		FROM application_credential_roles acr
+		JOIN roles r ON acr.role_id = r.id
+		WHERE acr.application_credential_id = $1
+	`, id)
+	if err == nil {
+		roles := []map[string]interface{}{}
+		for roleRows.Next() {
+			var roleID, roleName string
+			if err := roleRows.Scan(&roleID, &roleName); err == nil {
+				roles = append(roles, map[string]interface{}{
+					"id":   roleID,
+					"name": roleName,
+				})
+			}
+		}
+		roleRows.Close()
+		credential["roles"] = roles
+	}
+
+	c.JSON(http.StatusOK, gin.H{"application_credential": credential})
+}
+
+// DeleteApplicationCredential deletes an application credential
 func (svc *Service) DeleteApplicationCredential(c *gin.Context) {
 	userID := c.Param("id")
 	credID := c.Param("cred_id")
 
 	result, err := database.DB.Exec(c.Request.Context(),
 		"DELETE FROM application_credentials WHERE id = $1 AND user_id = $2",
-		credID, userID,
-	)
+		credID, userID)
+
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete application credential"})
 		return
 	}
 
-	rowsAffected := result.RowsAffected()
-	if rowsAffected == 0 {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error": gin.H{
-				"message": "Application credential not found",
-				"code":    404,
-				"title":   "Not Found",
-			},
-		})
+	if result.RowsAffected() == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Application credential not found"})
 		return
 	}
 
 	c.Status(http.StatusNoContent)
+}
+
+// GetApplicationCredentialByID returns an application credential by ID only
+func (svc *Service) GetApplicationCredentialByID(c *gin.Context) {
+	credID := c.Param("id")
+
+	var id, userID, name string
+	var projectID, description *string
+	var expiresAt *time.Time
+	var unrestricted bool
+
+	err := database.DB.QueryRow(c.Request.Context(), `
+		SELECT id, user_id, project_id, name, description, expires_at, unrestricted
+		FROM application_credentials
+		WHERE id = $1
+	`, credID).Scan(&id, &userID, &projectID, &name, &description, &expiresAt, &unrestricted)
+
+	if err == pgx.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Application credential not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query application credential"})
+		return
+	}
+
+	credential := map[string]interface{}{
+		"id":           id,
+		"user_id":      userID,
+		"name":         name,
+		"unrestricted": unrestricted,
+	}
+
+	if projectID != nil {
+		credential["project_id"] = *projectID
+	}
+	if description != nil {
+		credential["description"] = *description
+	}
+	if expiresAt != nil {
+		credential["expires_at"] = expiresAt.Format(time.RFC3339)
+	}
+
+	// Get roles
+	roleRows, err := database.DB.Query(c.Request.Context(), `
+		SELECT r.id, r.name
+		FROM application_credential_roles acr
+		JOIN roles r ON acr.role_id = r.id
+		WHERE acr.application_credential_id = $1
+	`, id)
+	if err == nil {
+		roles := []map[string]interface{}{}
+		for roleRows.Next() {
+			var roleID, roleName string
+			if err := roleRows.Scan(&roleID, &roleName); err == nil {
+				roles = append(roles, map[string]interface{}{
+					"id":   roleID,
+					"name": roleName,
+				})
+			}
+		}
+		roleRows.Close()
+		credential["roles"] = roles
+	}
+
+	c.JSON(http.StatusOK, gin.H{"application_credential": credential})
 }

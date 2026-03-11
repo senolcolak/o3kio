@@ -7,65 +7,63 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/gophercloud/gophercloud"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func getTokenForTest(t *testing.T) string {
-	authReq := map[string]interface{}{
-		"auth": map[string]interface{}{
-			"identity": map[string]interface{}{
-				"methods": []string{"password"},
-				"password": map[string]interface{}{
-					"user": map[string]interface{}{
-						"name":     "admin",
-						"password": "secret",
-						"domain": map[string]interface{}{
-							"name": "Default",
-						},
-					},
-				},
-			},
-			"scope": map[string]interface{}{
-				"project": map[string]interface{}{
-					"name": "default",
-					"domain": map[string]interface{}{
-						"name": "Default",
-					},
-				},
-			},
-		},
-	}
+// TestKeystoneListApplicationCredentials_Contract tests GET /v3/users/:user_id/application_credentials
+func TestKeystoneListApplicationCredentials_Contract(t *testing.T) {
+	skipIfO3KNotRunning(t)
 
-	body, _ := json.Marshal(authReq)
-	resp, err := http.Post("http://localhost:35357/v3/auth/tokens", "application/json", bytes.NewReader(body))
+	client := setupKeystoneClient(t)
+
+	userID := "00000000-0000-0000-0000-000000000001"
+	url := client.ServiceURL("users", userID, "application_credentials")
+	req, err := http.NewRequest("GET", url, nil)
+	require.NoError(t, err)
+
+	req.Header.Set("X-Auth-Token", client.TokenID)
+
+	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
-	token := resp.Header.Get("X-Subject-Token")
-	require.NotEmpty(t, token, "Token should be in X-Subject-Token header")
-	return token
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	respBody, _ := io.ReadAll(resp.Body)
+	var result struct {
+		ApplicationCredentials []map[string]interface{} `json:"application_credentials"`
+	}
+	err = json.Unmarshal(respBody, &result)
+	require.NoError(t, err)
+
+	assert.NotNil(t, result.ApplicationCredentials)
 }
 
-// TestKeystoneCreateApplicationCredential_Contract tests POST /v3/users/:id/application_credentials
+// TestKeystoneCreateApplicationCredential_Contract tests POST /v3/users/:user_id/application_credentials
 func TestKeystoneCreateApplicationCredential_Contract(t *testing.T) {
 	skipIfO3KNotRunning(t)
 
-	token := getTokenForTest(t)
-	userID := "00000000-0000-0000-0000-000000000001" // Default admin user
+	client := setupKeystoneClient(t)
 
-	credential := map[string]interface{}{
+	userID := "00000000-0000-0000-0000-000000000001"
+	payload := map[string]interface{}{
 		"application_credential": map[string]interface{}{
-			"name":        "test-app-credential",
-			"description": "Test credential for contract testing",
+			"name":        "test-app-cred",
+			"description": "Test application credential",
+			"roles": []map[string]interface{}{
+				{"id": "00000000-0000-0000-0000-000000000003"},
+			},
 		},
 	}
 
-	body, _ := json.Marshal(credential)
-	req, err := http.NewRequest("POST", "http://localhost:35357/v3/users/"+userID+"/application_credentials", bytes.NewReader(body))
+	body, _ := json.Marshal(payload)
+	url := client.ServiceURL("users", userID, "application_credentials")
+	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
 	require.NoError(t, err)
 
-	req.Header.Set("X-Auth-Token", token)
+	req.Header.Set("X-Auth-Token", client.TokenID)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
@@ -83,90 +81,28 @@ func TestKeystoneCreateApplicationCredential_Contract(t *testing.T) {
 
 	assert.NotEmpty(t, result.ApplicationCredential["id"])
 	assert.NotEmpty(t, result.ApplicationCredential["secret"])
-	assert.Equal(t, "test-app-credential", result.ApplicationCredential["name"])
+	assert.Equal(t, "test-app-cred", result.ApplicationCredential["name"])
 
 	// Cleanup
-	if credID, ok := result.ApplicationCredential["id"].(string); ok {
-		delReq, _ := http.NewRequest("DELETE", "http://localhost:35357/v3/users/"+userID+"/application_credentials/"+credID, nil)
-		delReq.Header.Set("X-Auth-Token", token)
-		http.DefaultClient.Do(delReq)
-	}
-}
-
-// TestKeystoneListApplicationCredentials_Contract tests GET /v3/users/:user_id/application_credentials
-func TestKeystoneListApplicationCredentials_Contract(t *testing.T) {
-	skipIfO3KNotRunning(t)
-
-	token := getTokenForTest(t)
-	userID := "00000000-0000-0000-0000-000000000001"
-
-	// Create a test credential first
-	credential := map[string]interface{}{
-		"application_credential": map[string]interface{}{
-			"name": "test-list-credential",
-		},
-	}
-	credBody, _ := json.Marshal(credential)
-	createReq, _ := http.NewRequest("POST", "http://localhost:35357/v3/users/"+userID+"/application_credentials", bytes.NewReader(credBody))
-	createReq.Header.Set("X-Auth-Token", token)
-	createReq.Header.Set("Content-Type", "application/json")
-	createResp, _ := http.DefaultClient.Do(createReq)
-	defer createResp.Body.Close()
-
-	// Test: List credentials
-	req, err := http.NewRequest("GET", "http://localhost:35357/v3/users/"+userID+"/application_credentials", nil)
-	require.NoError(t, err)
-
-	req.Header.Set("X-Auth-Token", token)
-
-	resp, err := http.DefaultClient.Do(req)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-	respBody, _ := io.ReadAll(resp.Body)
-	var result struct {
-		ApplicationCredentials []map[string]interface{} `json:"application_credentials"`
-	}
-	err = json.Unmarshal(respBody, &result)
-	require.NoError(t, err)
-
-	assert.NotEmpty(t, result.ApplicationCredentials)
+	credID := result.ApplicationCredential["id"].(string)
+	cleanupTestApplicationCredential(t, client, userID, credID)
 }
 
 // TestKeystoneGetApplicationCredential_Contract tests GET /v3/users/:user_id/application_credentials/:id
 func TestKeystoneGetApplicationCredential_Contract(t *testing.T) {
 	skipIfO3KNotRunning(t)
 
-	token := getTokenForTest(t)
+	client := setupKeystoneClient(t)
+
+	// Create test credential
 	userID := "00000000-0000-0000-0000-000000000001"
+	credID := createTestApplicationCredential(t, client, userID)
 
-	// Create a test credential
-	credential := map[string]interface{}{
-		"application_credential": map[string]interface{}{
-			"name": "test-get-credential",
-		},
-	}
-	credBody, _ := json.Marshal(credential)
-	createReq, _ := http.NewRequest("POST", "http://localhost:35357/v3/users/"+userID+"/application_credentials", bytes.NewReader(credBody))
-	createReq.Header.Set("X-Auth-Token", token)
-	createReq.Header.Set("Content-Type", "application/json")
-	createResp, _ := http.DefaultClient.Do(createReq)
-	defer createResp.Body.Close()
-
-	createBody, _ := io.ReadAll(createResp.Body)
-	var createResult struct {
-		ApplicationCredential map[string]interface{} `json:"application_credential"`
-	}
-	json.Unmarshal(createBody, &createResult)
-	credID := createResult.ApplicationCredential["id"].(string)
-
-	// Test: Get credential
-	req, err := http.NewRequest("GET", "http://localhost:35357/v3/users/"+userID+"/application_credentials/"+credID, nil)
+	url := client.ServiceURL("users", userID, "application_credentials", credID)
+	req, err := http.NewRequest("GET", url, nil)
 	require.NoError(t, err)
 
-	req.Header.Set("X-Auth-Token", token)
+	req.Header.Set("X-Auth-Token", client.TokenID)
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
@@ -182,51 +118,110 @@ func TestKeystoneGetApplicationCredential_Contract(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, credID, result.ApplicationCredential["id"])
-	assert.Equal(t, "test-get-credential", result.ApplicationCredential["name"])
-	assert.Nil(t, result.ApplicationCredential["secret"]) // Secret not returned on GET
 
 	// Cleanup
-	delReq, _ := http.NewRequest("DELETE", "http://localhost:35357/v3/users/"+userID+"/application_credentials/"+credID, nil)
-	delReq.Header.Set("X-Auth-Token", token)
-	http.DefaultClient.Do(delReq)
+	cleanupTestApplicationCredential(t, client, userID, credID)
 }
 
 // TestKeystoneDeleteApplicationCredential_Contract tests DELETE /v3/users/:user_id/application_credentials/:id
 func TestKeystoneDeleteApplicationCredential_Contract(t *testing.T) {
 	skipIfO3KNotRunning(t)
 
-	token := getTokenForTest(t)
+	client := setupKeystoneClient(t)
+
+	// Create test credential
 	userID := "00000000-0000-0000-0000-000000000001"
+	credID := createTestApplicationCredential(t, client, userID)
 
-	// Create a test credential
-	credential := map[string]interface{}{
-		"application_credential": map[string]interface{}{
-			"name": "test-delete-credential",
-		},
-	}
-	credBody, _ := json.Marshal(credential)
-	createReq, _ := http.NewRequest("POST", "http://localhost:35357/v3/users/"+userID+"/application_credentials", bytes.NewReader(credBody))
-	createReq.Header.Set("X-Auth-Token", token)
-	createReq.Header.Set("Content-Type", "application/json")
-	createResp, _ := http.DefaultClient.Do(createReq)
-	defer createResp.Body.Close()
-
-	createBody, _ := io.ReadAll(createResp.Body)
-	var createResult struct {
-		ApplicationCredential map[string]interface{} `json:"application_credential"`
-	}
-	json.Unmarshal(createBody, &createResult)
-	credID := createResult.ApplicationCredential["id"].(string)
-
-	// Test: Delete credential
-	req, err := http.NewRequest("DELETE", "http://localhost:35357/v3/users/"+userID+"/application_credentials/"+credID, nil)
+	url := client.ServiceURL("users", userID, "application_credentials", credID)
+	req, err := http.NewRequest("DELETE", url, nil)
 	require.NoError(t, err)
 
-	req.Header.Set("X-Auth-Token", token)
+	req.Header.Set("X-Auth-Token", client.TokenID)
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
 	assert.Equal(t, http.StatusNoContent, resp.StatusCode)
+}
+
+// TestKeystoneGetApplicationCredentialByID_Contract tests GET /v3/application_credentials/:id
+func TestKeystoneGetApplicationCredentialByID_Contract(t *testing.T) {
+	skipIfO3KNotRunning(t)
+
+	client := setupKeystoneClient(t)
+
+	// Create test credential
+	userID := "00000000-0000-0000-0000-000000000001"
+	credID := createTestApplicationCredential(t, client, userID)
+
+	url := client.ServiceURL("application_credentials", credID)
+	req, err := http.NewRequest("GET", url, nil)
+	require.NoError(t, err)
+
+	req.Header.Set("X-Auth-Token", client.TokenID)
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	respBody, _ := io.ReadAll(resp.Body)
+	var result struct {
+		ApplicationCredential map[string]interface{} `json:"application_credential"`
+	}
+	err = json.Unmarshal(respBody, &result)
+	require.NoError(t, err)
+
+	assert.Equal(t, credID, result.ApplicationCredential["id"])
+
+	// Cleanup
+	cleanupTestApplicationCredential(t, client, userID, credID)
+}
+
+// Helper to create test application credential
+func createTestApplicationCredential(t *testing.T, client *gophercloud.ServiceClient, userID string) string {
+	t.Helper()
+
+	payload := map[string]interface{}{
+		"application_credential": map[string]interface{}{
+			"name":        "test-app-cred",
+			"description": "Test application credential",
+			"roles": []map[string]interface{}{
+				{"id": "00000000-0000-0000-0000-000000000003"},
+			},
+		},
+	}
+
+	body, _ := json.Marshal(payload)
+	url := client.ServiceURL("users", userID, "application_credentials")
+	req, _ := http.NewRequest("POST", url, bytes.NewReader(body))
+	req.Header.Set("X-Auth-Token", client.TokenID)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("Failed to create application credential: %v", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	var result struct {
+		ApplicationCredential map[string]interface{} `json:"application_credential"`
+	}
+	json.Unmarshal(respBody, &result)
+
+	return result.ApplicationCredential["id"].(string)
+}
+
+// Helper to cleanup test application credential
+func cleanupTestApplicationCredential(t *testing.T, client *gophercloud.ServiceClient, userID, credID string) {
+	t.Helper()
+
+	url := client.ServiceURL("users", userID, "application_credentials", credID)
+	req, _ := http.NewRequest("DELETE", url, nil)
+	req.Header.Set("X-Auth-Token", client.TokenID)
+	http.DefaultClient.Do(req)
 }

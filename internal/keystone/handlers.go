@@ -106,6 +106,9 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		v3.GET("/credentials/:id", svc.GetCredential)
 		v3.PATCH("/credentials/:id", svc.UpdateCredential)
 		v3.DELETE("/credentials/:id", svc.DeleteCredential)
+
+		// Application Credentials (lookup by ID without user_id)
+		v3.GET("/application_credentials/:id", svc.GetApplicationCredentialByID)
 	}
 }
 
