@@ -587,6 +587,17 @@ func (svc *Service) ServerAction(c *gin.Context) {
 	} else if _, ok := req["forceDelete"]; ok {
 		svc.ForceDeleteInstanceAction(c)
 		return
+	} else if _, ok := req["evacuate"]; ok {
+		svc.EvacuateInstance(c)
+		return
+	} else if _, ok := req["migrate"]; ok {
+		svc.MigrateInstance(c)
+		return
+	} else if liveMigrate, ok := req["os-migrateLive"]; ok {
+		// Pass the parsed live migrate data through context
+		c.Set("action_data", liveMigrate)
+		svc.LiveMigrateInstance(c)
+		return
 	}
 
 	// Get libvirt domain ID for remaining actions (support lookup by ID or name)

@@ -389,3 +389,126 @@ func (svc *Service) RevertResizeInstance(c *gin.Context) {
 
 	c.Status(http.StatusAccepted)
 }
+
+// EvacuateInstance handles evacuating an instance from a failed host
+func (svc *Service) EvacuateInstance(c *gin.Context) {
+	instanceID := c.Param("id")
+	projectID := c.GetString("project_id")
+
+	var status string
+	err := database.DB.QueryRow(c.Request.Context(),
+		"SELECT status FROM instances WHERE id = $1 AND project_id = $2",
+		instanceID, projectID,
+	).Scan(&status)
+
+	if err == pgx.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "instance not found"})
+		return
+	}
+
+	_, err = database.DB.Exec(c.Request.Context(), `
+		UPDATE instances SET status = $1, task_state = $2, updated_at = $3
+		WHERE id = $4
+	`, "ACTIVE", "evacuating", time.Now(), instanceID)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.Status(http.StatusOK)
+}
+
+// MigrateInstance handles cold migration
+func (svc *Service) MigrateInstance(c *gin.Context) {
+	instanceID := c.Param("id")
+	projectID := c.GetString("project_id")
+
+	var status string
+	err := database.DB.QueryRow(c.Request.Context(),
+		"SELECT status FROM instances WHERE id = $1 AND project_id = $2",
+		instanceID, projectID,
+	).Scan(&status)
+
+	if err == pgx.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "instance not found"})
+		return
+	}
+
+	if status != "ACTIVE" && status != "SHUTOFF" {
+		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("cannot migrate instance in %s state", status)})
+		return
+	}
+
+	_, err = database.DB.Exec(c.Request.Context(), `
+		UPDATE instances SET status = $1, task_state = $2, updated_at = $3
+		WHERE id = $4
+	`, "ACTIVE", "migrating", time.Now(), instanceID)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.Status(http.StatusAccepted)
+}
+
+// LiveMigrateInstance handles live migration
+func (svc *Service) LiveMigrateInstance(c *gin.Context) {
+	instanceID := c.Param("id")
+	projectID := c.GetString("project_id")
+
+	// Get action data from context (already parsed by ServerAction)
+	actionData, exists := c.Get("action_data")
+	if !exists {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing os-migrateLive data"})
+		return
+	}
+
+	// Type assert to map (from JSON interface{})
+	liveMigrateMap, ok := actionData.(map[string]interface{})
+	if !ok {
+		// Action data might be nil or empty object, which is fine
+		liveMigrateMap = make(map[string]interface{})
+	}
+
+	// Extract optional host and block_migration (not used in stub mode but parsed for API compatibility)
+	var host *string
+	var blockMigration bool
+	if hostVal, ok := liveMigrateMap["host"].(string); ok && hostVal != "" {
+		host = &hostVal
+	}
+	if bmVal, ok := liveMigrateMap["block_migration"].(bool); ok {
+		blockMigration = bmVal
+	}
+	_ = host
+	_ = blockMigration
+
+	var status string
+	err := database.DB.QueryRow(c.Request.Context(),
+		"SELECT status FROM instances WHERE id = $1 AND project_id = $2",
+		instanceID, projectID,
+	).Scan(&status)
+
+	if err == pgx.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "instance not found"})
+		return
+	}
+
+	if status != "ACTIVE" {
+		c.JSON(http.StatusConflict, gin.H{"error": "instance must be active"})
+		return
+	}
+
+	_, err = database.DB.Exec(c.Request.Context(), `
+		UPDATE instances SET task_state = $1, updated_at = $2
+		WHERE id = $3
+	`, "migrating", time.Now(), instanceID)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.Status(http.StatusAccepted)
+}
