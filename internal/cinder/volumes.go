@@ -69,7 +69,11 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 
 		// Volume types
 		v3.GET("/types", svc.ListVolumeTypes)
+		v3.POST("/types", svc.CreateVolumeType)
 		v3.GET("/types/:id", svc.GetVolumeType)
+		v3.PUT("/types/:id", svc.UpdateVolumeType)
+		v3.DELETE("/types/:id", svc.DeleteVolumeType)
+		v3.GET("/types/:id/extra_specs", svc.ListVolumeTypeExtraSpecs)
 
 		// Limits
 		v3.GET("/limits", svc.GetLimits)
