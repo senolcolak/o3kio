@@ -153,6 +153,12 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		v2.GET("/metering/metering-label-rules", svc.ListMeteringLabelRules)
 		v2.POST("/metering/metering-label-rules", svc.CreateMeteringLabelRule)
 		v2.DELETE("/metering/metering-label-rules/:id", svc.DeleteMeteringLabelRule)
+
+		// Agents
+		v2.GET("/agents", svc.ListAgents)
+		v2.GET("/agents/:id", svc.GetAgent)
+		v2.GET("/routers/:id/l3-agents", svc.ListL3AgentsOnRouter)
+		v2.POST("/routers/:id/l3-agents", svc.AddL3AgentToRouter)
 	}
 }
 
