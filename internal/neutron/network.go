@@ -114,6 +114,20 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		// Quotas
 		v2.GET("/quotas/:id", svc.GetQuota)
 		v2.GET("/quotas/:id/details", svc.GetQuotaDetails)
+
+		// QoS Policies
+		v2.GET("/qos/policies", svc.ListQoSPolicies)
+		v2.POST("/qos/policies", svc.CreateQoSPolicy)
+		v2.GET("/qos/policies/:id", svc.GetQoSPolicy)
+		v2.PUT("/qos/policies/:id", svc.UpdateQoSPolicy)
+		v2.DELETE("/qos/policies/:id", svc.DeleteQoSPolicy)
+
+		// QoS Bandwidth Limit Rules
+		v2.GET("/qos/policies/:id/bandwidth_limit_rules", svc.ListBandwidthLimitRules)
+		v2.POST("/qos/policies/:id/bandwidth_limit_rules", svc.CreateBandwidthLimitRule)
+		v2.GET("/qos/policies/:id/bandwidth_limit_rules/:rule_id", svc.GetBandwidthLimitRule)
+		v2.PUT("/qos/policies/:id/bandwidth_limit_rules/:rule_id", svc.UpdateBandwidthLimitRule)
+		v2.DELETE("/qos/policies/:id/bandwidth_limit_rules/:rule_id", svc.DeleteBandwidthLimitRule)
 	}
 }
 
