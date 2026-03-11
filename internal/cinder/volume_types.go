@@ -1,6 +1,7 @@
 package cinder
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -172,4 +173,176 @@ func (svc *Service) ListVolumeTypeExtraSpecs(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"extra_specs": extraSpecs})
+}
+
+// CreateVolumeTypeExtraSpecs handles POST /v3/:project_id/types/:id/extra_specs
+func (svc *Service) CreateVolumeTypeExtraSpecs(c *gin.Context) {
+	typeID := c.Param("id")
+
+	var req struct {
+		ExtraSpecs map[string]string `json:"extra_specs" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Convert to JSONB
+	extraSpecsJSON, err := json.Marshal(req.ExtraSpecs)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	_, err = database.DB.Exec(c.Request.Context(),
+		"UPDATE volume_types SET extra_specs = $1 WHERE id = $2",
+		extraSpecsJSON, typeID,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"extra_specs": req.ExtraSpecs})
+}
+
+// GetVolumeTypeExtraSpecKey handles GET /v3/:project_id/types/:id/extra_specs/:key
+func (svc *Service) GetVolumeTypeExtraSpecKey(c *gin.Context) {
+	typeID := c.Param("id")
+	key := c.Param("key")
+
+	var extraSpecs map[string]string
+	err := database.DB.QueryRow(c.Request.Context(),
+		"SELECT COALESCE(extra_specs, '{}'::jsonb) FROM volume_types WHERE id = $1",
+		typeID,
+	).Scan(&extraSpecs)
+
+	if err == pgx.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "volume type not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	value, ok := extraSpecs[key]
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "extra spec key not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{key: value})
+}
+
+// UpdateVolumeTypeExtraSpecKey handles PUT /v3/:project_id/types/:id/extra_specs/:key
+func (svc *Service) UpdateVolumeTypeExtraSpecKey(c *gin.Context) {
+	typeID := c.Param("id")
+	key := c.Param("key")
+
+	var req map[string]string
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	value, ok := req[key]
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "key not found in request body"})
+		return
+	}
+
+	// Get existing extra specs
+	var extraSpecs map[string]string
+	err := database.DB.QueryRow(c.Request.Context(),
+		"SELECT COALESCE(extra_specs, '{}'::jsonb) FROM volume_types WHERE id = $1",
+		typeID,
+	).Scan(&extraSpecs)
+
+	if err == pgx.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "volume type not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if extraSpecs == nil {
+		extraSpecs = make(map[string]string)
+	}
+
+	// Update the key
+	extraSpecs[key] = value
+
+	// Save back to database
+	extraSpecsJSON, err := json.Marshal(extraSpecs)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	_, err = database.DB.Exec(c.Request.Context(),
+		"UPDATE volume_types SET extra_specs = $1 WHERE id = $2",
+		extraSpecsJSON, typeID,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{key: value})
+}
+
+// DeleteVolumeTypeExtraSpecKey handles DELETE /v3/:project_id/types/:id/extra_specs/:key
+func (svc *Service) DeleteVolumeTypeExtraSpecKey(c *gin.Context) {
+	typeID := c.Param("id")
+	key := c.Param("key")
+
+	// Get existing extra specs
+	var extraSpecs map[string]string
+	err := database.DB.QueryRow(c.Request.Context(),
+		"SELECT COALESCE(extra_specs, '{}'::jsonb) FROM volume_types WHERE id = $1",
+		typeID,
+	).Scan(&extraSpecs)
+
+	if err == pgx.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "volume type not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if extraSpecs == nil {
+		extraSpecs = make(map[string]string)
+	}
+
+	// Check if key exists
+	if _, ok := extraSpecs[key]; !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "extra spec key not found"})
+		return
+	}
+
+	// Delete the key
+	delete(extraSpecs, key)
+
+	// Save back to database
+	extraSpecsJSON, err := json.Marshal(extraSpecs)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	_, err = database.DB.Exec(c.Request.Context(),
+		"UPDATE volume_types SET extra_specs = $1 WHERE id = $2",
+		extraSpecsJSON, typeID,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.Status(http.StatusNoContent)
 }
