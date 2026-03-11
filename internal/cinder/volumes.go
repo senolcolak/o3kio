@@ -101,6 +101,11 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		v3.GET("/os-volume-transfer/:id", svc.GetVolumeTransfer)
 		v3.DELETE("/os-volume-transfer/:id", svc.DeleteVolumeTransfer)
 		v3.POST("/os-volume-transfer/:id/accept", svc.AcceptVolumeTransfer)
+
+		// Volume/Snapshot management
+		v3.POST("/os-volume-manage", svc.ManageVolume)
+		v3.GET("/manageable_volumes", svc.ListManageableVolumes)
+		v3.POST("/os-snapshot-manage", svc.ManageSnapshot)
 	}
 }
 
@@ -504,6 +509,12 @@ func (svc *Service) VolumeAction(c *gin.Context) {
 		}
 
 		c.Status(http.StatusAccepted)
+		return
+	}
+
+	// Handle unmanage action
+	if _, ok := req["os-unmanage"]; ok {
+		svc.UnmanageVolume(c, volumeID)
 		return
 	}
 
