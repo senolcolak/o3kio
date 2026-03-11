@@ -45,6 +45,10 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		v3.POST("/users/:id/password", svc.ChangePassword)
 		v3.GET("/users/:id/projects", svc.GetUserProjects)
 		v3.GET("/users/:id/groups", svc.GetUserGroups)
+		v3.POST("/users/:id/application_credentials", svc.CreateApplicationCredential)
+		v3.GET("/users/:id/application_credentials", svc.ListApplicationCredentials)
+		v3.GET("/users/:id/application_credentials/:cred_id", svc.GetApplicationCredential)
+		v3.DELETE("/users/:id/application_credentials/:cred_id", svc.DeleteApplicationCredential)
 
 		// Projects (role assignments must come before /projects/:id to avoid conflicts)
 		v3.GET("/projects", svc.ListProjects)
