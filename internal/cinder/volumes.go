@@ -106,6 +106,11 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		v3.POST("/os-volume-manage", svc.ManageVolume)
 		v3.GET("/manageable_volumes", svc.ListManageableVolumes)
 		v3.POST("/os-snapshot-manage", svc.ManageSnapshot)
+
+		// Quotas
+		v3.GET("/quota-sets/:id", svc.GetQuotaSet)
+		v3.PUT("/quota-sets/:id", svc.UpdateQuotaSet)
+		v3.DELETE("/quota-sets/:id", svc.DeleteQuotaSet)
 	}
 }
 
