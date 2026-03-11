@@ -76,6 +76,14 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 
 		// Services
 		v3.GET("/os-services", svc.ListServices)
+
+		// Backups
+		v3.GET("/backups", svc.ListBackups)
+		v3.GET("/backups/detail", svc.ListBackupsDetail)
+		v3.POST("/backups", svc.CreateBackup)
+		v3.GET("/backups/:id", svc.GetBackup)
+		v3.DELETE("/backups/:id", svc.DeleteBackup)
+		v3.POST("/backups/:id/restore", svc.RestoreBackup)
 	}
 }
 
