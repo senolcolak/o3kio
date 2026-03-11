@@ -56,6 +56,8 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		v21.DELETE("/servers/:id", svc.DeleteServer)
 		v21.POST("/servers/:id/action", svc.ServerAction)
 		v21.GET("/servers/:id/diagnostics", svc.GetServerDiagnostics)
+		v21.GET("/servers/:id/os-instance-actions", svc.ListInstanceActions)
+		v21.GET("/servers/:id/os-instance-actions/:request_id", svc.GetInstanceAction)
 
 		// Server metadata
 		v21.GET("/servers/:id/metadata", svc.GetServerMetadata)
@@ -287,6 +289,13 @@ func (svc *Service) CreateServer(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	// Log instance action
+	requestID := uuid.New().String()
+	_, _ = database.DB.Exec(c.Request.Context(), `
+		INSERT INTO instance_actions (instance_id, action, request_id, user_id, project_id, start_time, message)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, instanceID, "create", requestID, userID, projectID, now, "Instance created")
 
 	// Create VM asynchronously (or synchronously if libvirt is available)
 	if svc.vmManager != nil {

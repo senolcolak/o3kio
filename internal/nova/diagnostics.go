@@ -63,3 +63,117 @@ func (svc *Service) GetServerDiagnostics(c *gin.Context) {
 		"vnet0_tx_packets": 500,
 	})
 }
+
+// ListInstanceActions handles GET /v2.1/servers/:id/os-instance-actions
+func (svc *Service) ListInstanceActions(c *gin.Context) {
+	instanceID := c.Param("id")
+	projectID := c.GetString("project_id")
+
+	// Verify instance exists and belongs to project
+	var exists bool
+	err := database.DB.QueryRow(c.Request.Context(),
+		"SELECT EXISTS(SELECT 1 FROM instances WHERE id = $1 AND project_id = $2)",
+		instanceID, projectID,
+	).Scan(&exists)
+
+	if err != nil || !exists {
+		c.JSON(http.StatusNotFound, gin.H{
+			"itemNotFound": gin.H{
+				"message": "Instance not found",
+				"code":    404,
+			},
+		})
+		return
+	}
+
+	// Query instance actions
+	rows, err := database.DB.Query(c.Request.Context(),
+		`SELECT id, action, request_id, user_id, project_id, start_time, message
+		 FROM instance_actions
+		 WHERE instance_id = $1
+		 ORDER BY start_time DESC`,
+		instanceID,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	actions := []gin.H{}
+	for rows.Next() {
+		var id, action, requestID, userID, projectIDStr, message string
+		var startTime time.Time
+
+		if err := rows.Scan(&id, &action, &requestID, &userID, &projectIDStr, &startTime, &message); err != nil {
+			continue
+		}
+
+		actions = append(actions, gin.H{
+			"action":     action,
+			"request_id": requestID,
+			"user_id":    userID,
+			"project_id": projectIDStr,
+			"start_time": startTime.Format(time.RFC3339),
+			"message":    message,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{"instanceActions": actions})
+}
+
+// GetInstanceAction handles GET /v2.1/servers/:id/os-instance-actions/:request_id
+func (svc *Service) GetInstanceAction(c *gin.Context) {
+	instanceID := c.Param("id")
+	requestID := c.Param("request_id")
+	projectID := c.GetString("project_id")
+
+	// Verify instance exists and belongs to project
+	var exists bool
+	err := database.DB.QueryRow(c.Request.Context(),
+		"SELECT EXISTS(SELECT 1 FROM instances WHERE id = $1 AND project_id = $2)",
+		instanceID, projectID,
+	).Scan(&exists)
+
+	if err != nil || !exists {
+		c.JSON(http.StatusNotFound, gin.H{
+			"itemNotFound": gin.H{
+				"message": "Instance not found",
+				"code":    404,
+			},
+		})
+		return
+	}
+
+	// Query specific action
+	var action, userID, projectIDStr, message string
+	var startTime time.Time
+
+	err = database.DB.QueryRow(c.Request.Context(),
+		`SELECT action, user_id, project_id, start_time, message
+		 FROM instance_actions
+		 WHERE instance_id = $1 AND request_id = $2`,
+		instanceID, requestID,
+	).Scan(&action, &userID, &projectIDStr, &startTime, &message)
+
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"itemNotFound": gin.H{
+				"message": "Action not found",
+				"code":    404,
+			},
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"instanceAction": gin.H{
+			"action":     action,
+			"request_id": requestID,
+			"user_id":    userID,
+			"project_id": projectIDStr,
+			"start_time": startTime.Format(time.RFC3339),
+			"message":    message,
+		},
+	})
+}
