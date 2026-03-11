@@ -125,6 +125,14 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 
 		// Console access
 		v21.POST("/servers/:id/remote-consoles", svc.GetRemoteConsole)
+
+		// Host aggregates
+		v21.GET("/os-aggregates", svc.ListAggregates)
+		v21.POST("/os-aggregates", svc.CreateAggregate)
+		v21.GET("/os-aggregates/:id", svc.GetAggregate)
+		v21.PUT("/os-aggregates/:id", svc.UpdateAggregate)
+		v21.DELETE("/os-aggregates/:id", svc.DeleteAggregate)
+		v21.POST("/os-aggregates/:id/action", svc.AggregateAction)
 	}
 }
 
