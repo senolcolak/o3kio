@@ -512,3 +512,156 @@ func (svc *Service) LiveMigrateInstance(c *gin.Context) {
 
 	c.Status(http.StatusAccepted)
 }
+
+// AddSecurityGroup adds a security group to an instance
+func (svc *Service) AddSecurityGroup(c *gin.Context) {
+	instanceID := c.Param("id")
+	projectID := c.GetString("project_id")
+
+	// Get action data from context (already parsed by ServerAction)
+	actionData, exists := c.Get("action_data")
+	if !exists {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing addSecurityGroup data"})
+		return
+	}
+
+	addSGMap, ok := actionData.(map[string]interface{})
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid addSecurityGroup data"})
+		return
+	}
+
+	sgName, ok := addSGMap["name"].(string)
+	if !ok || sgName == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing security group name"})
+		return
+	}
+
+	// Verify instance exists
+	var exists_check bool
+	err := database.DB.QueryRow(c.Request.Context(),
+		"SELECT EXISTS(SELECT 1 FROM instances WHERE id = $1 AND project_id = $2)",
+		instanceID, projectID,
+	).Scan(&exists_check)
+
+	if err != nil || !exists_check {
+		c.JSON(http.StatusNotFound, gin.H{"error": "instance not found"})
+		return
+	}
+
+	// Verify security group exists
+	var sgID string
+	err = database.DB.QueryRow(c.Request.Context(),
+		"SELECT id FROM security_groups WHERE name = $1 AND project_id = $2",
+		sgName, projectID,
+	).Scan(&sgID)
+
+	if err == pgx.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "security group not found"})
+		return
+	}
+
+	// In stub mode, just return success
+	// In real mode, would apply iptables rules
+	c.Status(http.StatusAccepted)
+}
+
+// RemoveSecurityGroup removes a security group from an instance
+func (svc *Service) RemoveSecurityGroup(c *gin.Context) {
+	instanceID := c.Param("id")
+	projectID := c.GetString("project_id")
+
+	// Get action data from context
+	actionData, exists := c.Get("action_data")
+	if !exists {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing removeSecurityGroup data"})
+		return
+	}
+
+	removeSGMap, ok := actionData.(map[string]interface{})
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid removeSecurityGroup data"})
+		return
+	}
+
+	sgName, ok := removeSGMap["name"].(string)
+	if !ok || sgName == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing security group name"})
+		return
+	}
+
+	// Verify instance exists
+	var exists_check bool
+	err := database.DB.QueryRow(c.Request.Context(),
+		"SELECT EXISTS(SELECT 1 FROM instances WHERE id = $1 AND project_id = $2)",
+		instanceID, projectID,
+	).Scan(&exists_check)
+
+	if err != nil || !exists_check {
+		c.JSON(http.StatusNotFound, gin.H{"error": "instance not found"})
+		return
+	}
+
+	// Verify security group exists
+	var sgID string
+	err = database.DB.QueryRow(c.Request.Context(),
+		"SELECT id FROM security_groups WHERE name = $1 AND project_id = $2",
+		sgName, projectID,
+	).Scan(&sgID)
+
+	if err == pgx.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "security group not found"})
+		return
+	}
+
+	// In stub mode, just return success
+	// In real mode, would remove iptables rules
+	c.Status(http.StatusAccepted)
+}
+
+// ChangePassword changes the admin password for an instance
+func (svc *Service) ChangePassword(c *gin.Context) {
+	instanceID := c.Param("id")
+	projectID := c.GetString("project_id")
+
+	// Get action data from context
+	actionData, exists := c.Get("action_data")
+	if !exists {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing changePassword data"})
+		return
+	}
+
+	changePassMap, ok := actionData.(map[string]interface{})
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid changePassword data"})
+		return
+	}
+
+	adminPass, ok := changePassMap["adminPass"].(string)
+	if !ok || adminPass == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing adminPass"})
+		return
+	}
+
+	// Verify instance exists
+	var status string
+	err := database.DB.QueryRow(c.Request.Context(),
+		"SELECT status FROM instances WHERE id = $1 AND project_id = $2",
+		instanceID, projectID,
+	).Scan(&status)
+
+	if err == pgx.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "instance not found"})
+		return
+	}
+
+	// Can only change password on ACTIVE instances
+	if status != "ACTIVE" {
+		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("cannot change password for instance in %s state", status)})
+		return
+	}
+
+	// In stub mode, just return success
+	// In real mode, would use libvirt guest agent or cloud-init to change password
+	c.Status(http.StatusAccepted)
+}

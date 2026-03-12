@@ -645,6 +645,18 @@ func (svc *Service) ServerAction(c *gin.Context) {
 		c.Set("action_data", liveMigrate)
 		svc.LiveMigrateInstance(c)
 		return
+	} else if addSG, ok := req["addSecurityGroup"]; ok {
+		c.Set("action_data", addSG)
+		svc.AddSecurityGroup(c)
+		return
+	} else if removeSG, ok := req["removeSecurityGroup"]; ok {
+		c.Set("action_data", removeSG)
+		svc.RemoveSecurityGroup(c)
+		return
+	} else if changePass, ok := req["changePassword"]; ok {
+		c.Set("action_data", changePass)
+		svc.ChangePassword(c)
+		return
 	}
 
 	// Get libvirt domain ID for remaining actions (support lookup by ID or name)
