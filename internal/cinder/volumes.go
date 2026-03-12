@@ -126,6 +126,9 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		v3.PUT("/qos-specs/:id", svc.UpdateQosSpec)
 		v3.DELETE("/qos-specs/:id", svc.DeleteQosSpec)
 		v3.DELETE("/quota-sets/:id", svc.DeleteQuotaSet)
+
+		// Availability Zones
+		v3.GET("/os-availability-zone", svc.ListAvailabilityZones)
 	}
 }
 
