@@ -36,6 +36,7 @@ Thumbs.db
 # Local config overrides
 config/local.yaml
 .env
+.env.*
 
 # Database
 *.db
@@ -43,3 +44,25 @@ config/local.yaml
 
 # Docker
 .dockerignore
+
+# Sensitive files
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+secrets/
+credentials/
+
+# LLM-generated temporary files (keep in sprints/ instead)
+/SPRINT_SUMMARY*.md
+/PROJECT_STATUS.md
+/PRE_APPROVAL_CHECKLIST.md
+/TEST_COVERAGE_REPORT.md
+/validation_results*.txt
+
+# Keep important docs
+!/README.md
+!/CLAUDE.md
+!/CHANGELOG.md
+!/ROADMAP.md
