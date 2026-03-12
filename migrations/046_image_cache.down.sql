@@ -1,0 +1,1 @@
+ALTER TABLE images DROP COLUMN IF EXISTS cached_at;

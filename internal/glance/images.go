@@ -94,6 +94,12 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		v2.PUT("/metadefs/namespaces/:namespace", svc.UpdateMetadefNamespace)
 		v2.DELETE("/metadefs/namespaces/:namespace", svc.DeleteMetadefNamespace)
 		v2.GET("/metadefs/resource_types", svc.ListMetadefResourceTypes)
+
+		// Cache management
+		v2.GET("/cache/images", svc.ListCachedImages)
+		v2.DELETE("/cache/images", svc.ClearCache)
+		v2.PUT("/cache/images/:id", svc.PrefetchImage)
+		v2.DELETE("/cache/images/:id", svc.DeleteCachedImage)
 	}
 }
 
