@@ -537,6 +537,93 @@ func (svc *Service) VolumeAction(c *gin.Context) {
 		return
 	}
 
+	// Handle update readonly flag action
+	if readonlyData, ok := req["os-update_readonly_flag"]; ok {
+		readonlyMap := readonlyData.(map[string]interface{})
+		readonly := readonlyMap["readonly"].(bool)
+
+		// Update volume readonly flag (stored in metadata or separate field)
+		// For now, update in volume_metadata table
+		_, err := database.DB.Exec(c.Request.Context(), `
+			INSERT INTO volume_metadata (volume_id, meta_key, meta_value)
+			VALUES ($1, 'readonly', $2)
+			ON CONFLICT (volume_id, meta_key) DO UPDATE SET meta_value = EXCLUDED.meta_value
+		`, volumeID, fmt.Sprintf("%t", readonly))
+
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.Status(http.StatusAccepted)
+		return
+	}
+
+	// Handle set image metadata action (make volume bootable)
+	if imageMetadataData, ok := req["os-set_image_metadata"]; ok {
+		imageMetadataMap := imageMetadataData.(map[string]interface{})
+		metadata := imageMetadataMap["metadata"].(map[string]interface{})
+
+		// Store image metadata to make volume bootable
+		for key, value := range metadata {
+			valueStr := fmt.Sprintf("%v", value)
+			_, err := database.DB.Exec(c.Request.Context(), `
+				INSERT INTO volume_metadata (volume_id, meta_key, meta_value)
+				VALUES ($1, $2, $3)
+				ON CONFLICT (volume_id, meta_key) DO UPDATE SET meta_value = EXCLUDED.meta_value
+			`, volumeID, "volume_image_"+key, valueStr)
+
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+		}
+
+		c.JSON(http.StatusOK, gin.H{})
+		return
+	}
+
+	// Handle force detach action
+	if _, ok := req["os-force_detach"]; ok {
+		// Force detach volume from any server
+		// In stub mode, just mark as available
+		// In real mode, would force detach from hypervisor
+		_, err := database.DB.Exec(c.Request.Context(), `
+			UPDATE volumes
+			SET status = $1, attached_to_instance_id = NULL, updated_at = $2
+			WHERE id = $3 AND project_id = $4
+		`, "available", time.Now(), volumeID, projectID)
+
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.Status(http.StatusAccepted)
+		return
+	}
+
+	// Handle reset status action (admin operation)
+	if resetStatusData, ok := req["os-reset_status"]; ok {
+		resetStatusMap := resetStatusData.(map[string]interface{})
+		newStatus := resetStatusMap["status"].(string)
+
+		// Admin operation to manually set volume status
+		_, err := database.DB.Exec(c.Request.Context(), `
+			UPDATE volumes
+			SET status = $1, updated_at = $2
+			WHERE id = $3 AND project_id = $4
+		`, newStatus, time.Now(), volumeID, projectID)
+
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.Status(http.StatusAccepted)
+		return
+	}
+
 	c.JSON(http.StatusBadRequest, gin.H{"error": "unknown action"})
 }
 
