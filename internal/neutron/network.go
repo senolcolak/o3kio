@@ -145,6 +145,13 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		v2.PUT("/trunks/:id/add_subports", svc.AddSubports)
 		v2.PUT("/trunks/:id/remove_subports", svc.RemoveSubports)
 
+		// Address Scopes
+		v2.GET("/address-scopes", svc.ListAddressScopes)
+		v2.POST("/address-scopes", svc.CreateAddressScope)
+		v2.GET("/address-scopes/:id", svc.GetAddressScope)
+		v2.PUT("/address-scopes/:id", svc.UpdateAddressScope)
+		v2.DELETE("/address-scopes/:id", svc.DeleteAddressScope)
+
 		// Metering
 		v2.GET("/metering/metering-labels", svc.ListMeteringLabels)
 		v2.POST("/metering/metering-labels", svc.CreateMeteringLabel)
