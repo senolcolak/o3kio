@@ -19,7 +19,7 @@ func getEnvOrDefault(key, defaultValue string) string {
 
 func skipIfO3KNotRunning(t *testing.T) {
 	// Try to connect - if it fails, skip the test
-	authURL := getEnvOrDefault("OS_AUTH_URL", "http://localhost:5001/v3")
+	authURL := getEnvOrDefault("OS_AUTH_URL", "http://localhost:35357/v3")
 	opts := gophercloud.AuthOptions{
 		IdentityEndpoint: authURL,
 		Username:         getEnvOrDefault("OS_USERNAME", "admin"),
@@ -41,7 +41,7 @@ func skipIfO3KNotRunning(t *testing.T) {
 }
 
 func setupCinderClient(t *testing.T) *gophercloud.ServiceClient {
-	authURL := getEnvOrDefault("OS_AUTH_URL", "http://localhost:5001/v3")
+	authURL := getEnvOrDefault("OS_AUTH_URL", "http://localhost:35357/v3")
 	opts := gophercloud.AuthOptions{
 		IdentityEndpoint: authURL,
 		Username:         getEnvOrDefault("OS_USERNAME", "admin"),

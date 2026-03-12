@@ -99,6 +99,17 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		v3.POST("/os-volume-transfer", svc.CreateVolumeTransfer)
 		v3.GET("/os-volume-transfer", svc.ListVolumeTransfers)
 		v3.GET("/os-volume-transfer/:id", svc.GetVolumeTransfer)
+		v3.POST("/os-volume-transfer/:id/accept", svc.AcceptVolumeTransfer)
+		v3.DELETE("/os-volume-transfer/:id", svc.DeleteVolumeTransfer)
+
+		// Volume groups (consistency groups)
+		v3.GET("/groups", svc.ListGroups)
+		v3.POST("/groups", svc.CreateGroup)
+		v3.GET("/groups/:id", svc.GetGroup)
+		v3.PUT("/groups/:id", svc.UpdateGroup)
+		v3.DELETE("/groups/:id", svc.DeleteGroup)
+		v3.GET("/os-volume-transfer", svc.ListVolumeTransfers)
+		v3.GET("/os-volume-transfer/:id", svc.GetVolumeTransfer)
 		v3.DELETE("/os-volume-transfer/:id", svc.DeleteVolumeTransfer)
 		v3.POST("/os-volume-transfer/:id/accept", svc.AcceptVolumeTransfer)
 
