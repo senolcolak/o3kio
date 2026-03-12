@@ -159,6 +159,11 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		v2.PUT("/subnetpools/:id", svc.UpdateSubnetPool)
 		v2.DELETE("/subnetpools/:id", svc.DeleteSubnetPool)
 
+		// Auto-Allocated Topology
+		v2.GET("/auto-allocated-topology/:project", svc.GetAutoAllocatedTopology)
+		v2.POST("/auto-allocated-topology/:project", svc.CreateAutoAllocatedTopology)
+		v2.DELETE("/auto-allocated-topology/:project", svc.DeleteAutoAllocatedTopology)
+
 		// Metering
 		v2.GET("/metering/metering-labels", svc.ListMeteringLabels)
 		v2.POST("/metering/metering-labels", svc.CreateMeteringLabel)
