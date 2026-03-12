@@ -301,8 +301,78 @@ func (s *AuthService) CheckPassword(password, hash string) bool {
 	return err == nil
 }
 
-// BuildServiceCatalog builds the OpenStack service catalog
+// BuildServiceCatalog builds the OpenStack service catalog from database
 func BuildServiceCatalog(projectID string) []CatalogEntry {
+	catalog := []CatalogEntry{}
+
+	// Query services and their endpoints from database
+	rows, err := database.DB.Query(context.Background(), `
+		SELECT s.id, s.type, s.name, e.id, e.interface, e.url, e.region
+		FROM services s
+		LEFT JOIN endpoints e ON s.id = e.service_id
+		WHERE s.enabled = true AND (e.enabled = true OR e.enabled IS NULL)
+		ORDER BY s.type, e.interface
+	`)
+	if err != nil {
+		// Fall back to hardcoded catalog on error
+		return buildHardcodedCatalog(projectID)
+	}
+	defer rows.Close()
+
+	// Group endpoints by service
+	serviceMap := make(map[string]*CatalogEntry)
+	for rows.Next() {
+		var (
+			serviceID  string
+			svcType    string
+			svcName    string
+			endpointID *string
+			iface      *string
+			url        *string
+			region     *string
+		)
+
+		if err := rows.Scan(&serviceID, &svcType, &svcName, &endpointID, &iface, &url, &region); err != nil {
+			continue
+		}
+
+		// Create service entry if not exists
+		if _, exists := serviceMap[serviceID]; !exists {
+			serviceMap[serviceID] = &CatalogEntry{
+				Type:      svcType,
+				Name:      svcName,
+				Endpoints: []Endpoint{},
+			}
+		}
+
+		// Add endpoint if present
+		if endpointID != nil && iface != nil && url != nil {
+			endpoint := Endpoint{
+				Interface: *iface,
+				URL:       *url,
+			}
+			if region != nil {
+				endpoint.Region = *region
+			}
+			serviceMap[serviceID].Endpoints = append(serviceMap[serviceID].Endpoints, endpoint)
+		}
+	}
+
+	// Convert map to slice
+	for _, entry := range serviceMap {
+		catalog = append(catalog, *entry)
+	}
+
+	// Fall back to hardcoded if query returned nothing
+	if len(catalog) == 0 {
+		return buildHardcodedCatalog(projectID)
+	}
+
+	return catalog
+}
+
+// buildHardcodedCatalog provides fallback catalog (previous implementation)
+func buildHardcodedCatalog(projectID string) []CatalogEntry {
 	baseURL := "http://localhost"
 
 	return []CatalogEntry{

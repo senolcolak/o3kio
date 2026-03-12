@@ -93,6 +93,7 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		v3.GET("/services", svc.ListServices)
 		v3.POST("/services", svc.CreateService)
 		v3.GET("/services/:id", svc.GetService)
+		v3.PATCH("/services/:id", svc.UpdateService)
 		v3.DELETE("/services/:id", svc.DeleteService)
 
 		// Endpoints

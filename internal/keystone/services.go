@@ -1,7 +1,9 @@
 package keystone
 
 import (
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/cobaltcore-dev/o3k/internal/database"
@@ -155,6 +157,114 @@ func (svc *Service) DeleteService(c *gin.Context) {
 	}
 
 	c.Status(http.StatusNoContent)
+}
+
+// UpdateService updates a service (PATCH /v3/services/:id)
+func (svc *Service) UpdateService(c *gin.Context) {
+	serviceID := c.Param("id")
+
+	// Parse request body
+	var req struct {
+		Service struct {
+			Name        *string `json:"name,omitempty"`
+			Description *string `json:"description,omitempty"`
+			Enabled     *bool   `json:"enabled,omitempty"`
+		} `json:"service"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
+			"message": "Invalid request body",
+			"code":    400,
+		}})
+		return
+	}
+
+	// Build dynamic UPDATE query
+	updates := []string{}
+	params := []interface{}{}
+	paramIndex := 1
+
+	if req.Service.Name != nil {
+		updates = append(updates, fmt.Sprintf("name = $%d", paramIndex))
+		params = append(params, *req.Service.Name)
+		paramIndex++
+	}
+	if req.Service.Description != nil {
+		updates = append(updates, fmt.Sprintf("description = $%d", paramIndex))
+		params = append(params, *req.Service.Description)
+		paramIndex++
+	}
+	if req.Service.Enabled != nil {
+		updates = append(updates, fmt.Sprintf("enabled = $%d", paramIndex))
+		params = append(params, *req.Service.Enabled)
+		paramIndex++
+	}
+
+	if len(updates) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
+			"message": "No fields to update",
+			"code":    400,
+		}})
+		return
+	}
+
+	// Always update updated_at
+	updates = append(updates, fmt.Sprintf("updated_at = $%d", paramIndex))
+	params = append(params, time.Now())
+	paramIndex++
+
+	// Add serviceID as final parameter
+	params = append(params, serviceID)
+
+	query := fmt.Sprintf(`
+		UPDATE services
+		SET %s
+		WHERE id = $%d
+		RETURNING id, type, name, description, enabled, created_at, updated_at
+	`, strings.Join(updates, ", "), paramIndex)
+
+	// Execute update
+	var id, svcType, name string
+	var description *string
+	var enabled bool
+	var createdAt, updatedAt time.Time
+
+	err := database.DB.QueryRow(c.Request.Context(), query, params...).Scan(
+		&id, &svcType, &name, &description, &enabled, &createdAt, &updatedAt,
+	)
+
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"error": gin.H{
+				"message": "Service not found",
+				"code":    404,
+			}})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{
+			"message": fmt.Sprintf("Failed to update service: %v", err),
+			"code":    500,
+		}})
+		return
+	}
+
+	// Build response
+	service := map[string]interface{}{
+		"id":      id,
+		"type":    svcType,
+		"name":    name,
+		"enabled": enabled,
+		"links": map[string]interface{}{
+			"self": fmt.Sprintf("http://localhost:35357/v3/services/%s", id),
+		},
+	}
+
+	if description != nil {
+		service["description"] = *description
+	}
+
+	c.JSON(http.StatusOK, gin.H{"service": service})
 }
 
 // ListEndpoints returns all endpoints in the catalog
