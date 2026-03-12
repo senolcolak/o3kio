@@ -57,6 +57,7 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		v3.GET("/snapshots", svc.ListSnapshots)
 		v3.POST("/snapshots", svc.CreateSnapshot)
 		v3.GET("/snapshots/:id", svc.GetSnapshot)
+		v3.PUT("/snapshots/:id", svc.UpdateSnapshot)
 		v3.PATCH("/snapshots/:id", svc.UpdateSnapshot)
 		v3.DELETE("/snapshots/:id", svc.DeleteSnapshot)
 
