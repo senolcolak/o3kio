@@ -64,6 +64,13 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		v21.POST("/servers/:id/metadata", svc.UpdateServerMetadata)
 		v21.PUT("/servers/:id/metadata", svc.ResetServerMetadata)
 
+		// Server tags
+		v21.GET("/servers/:id/tags", svc.ListServerTags)
+		v21.PUT("/servers/:id/tags", svc.ReplaceServerTags)
+		v21.DELETE("/servers/:id/tags", svc.DeleteAllServerTags)
+		v21.PUT("/servers/:id/tags/:tag", svc.AddServerTag)
+		v21.DELETE("/servers/:id/tags/:tag", svc.DeleteServerTag)
+
 		// Flavors
 		v21.GET("/flavors", svc.ListFlavors)
 		v21.GET("/flavors/detail", svc.ListFlavorsDetail)
