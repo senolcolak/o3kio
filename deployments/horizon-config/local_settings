@@ -62,9 +62,8 @@ OPENSTACK_KEYSTONE_DOMAIN_CHOICES = (
 # Session timeout (matches O3K token TTL - 4 hours)
 SESSION_TIMEOUT = 14400
 
-# Session engine (use file-based for reliability across processes)
-SESSION_ENGINE = 'django.contrib.sessions.backends.file'
-SESSION_FILE_PATH = None  # Use Django default: /var/tmp
+# Session engine (use cache with Memcached for multi-process reliability)
+SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
 
 # Security settings (enable in production with HTTPS)
 SESSION_COOKIE_SECURE = False  # Set True with HTTPS
@@ -301,8 +300,8 @@ LOGGING = {
 
 CACHES = {
     'default': {
-        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
-        'LOCATION': 'unique-snowflake',
+        'BACKEND': 'django.core.cache.backends.memcached.PyMemcacheCache',
+        'LOCATION': 'memcached:11211',
     }
 }
 
