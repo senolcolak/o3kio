@@ -8,46 +8,146 @@ This document describes how O3K integrates with OpenStack Horizon (Flamingo 2025
 
 ### Components
 
-The unified deployment includes four main services:
+The unified deployment includes five main services:
 
 1. **PostgreSQL 18.3** - Database for O3K
 2. **O3K** - OpenStack-compatible cloud platform (Keystone, Nova, Neutron, Cinder, Glance, Metadata)
 3. **Horizon** - OpenStack Flamingo (2025.2) web dashboard
-4. **noVNC** - VNC console proxy for instance access
+4. **Memcached 1.6** - Distributed session storage for Horizon (multi-process support)
+5. **noVNC** - VNC console proxy for instance access
 
 ### Service Communication Flow
 
 ```
 User Browser → Horizon (Port 80) → O3K API Services (Ports 35357, 8774, 9696, 8776, 9292)
-                                         ↓
-                                   PostgreSQL (Port 5432)
+                    ↓                        ↓
+                Memcached            PostgreSQL (Port 5432)
+              (Port 11211)
 ```
 
 ### Keystone Integration
 
-Horizon authenticates users through O3K's Keystone service using the following flow:
+Horizon authenticates users through O3K's Keystone service using a 3-step authentication flow:
 
-1. **User Login**: User enters credentials (default: admin/secret) in Horizon login form
-2. **Token Request**: Horizon sends POST to `http://o3k:35357/v3/auth/tokens` with credentials
-3. **Token Response**: Keystone returns JWT token with user info, project, and roles
-4. **Service Catalog**: Token includes service catalog mapping service types to endpoints:
+#### Step 1: Unscoped Password Authentication
+
+User enters credentials (default: admin/secret) in Horizon login form. Horizon sends:
+
+```http
+POST /v3/auth/tokens HTTP/1.1
+Content-Type: application/json
+
+{
+  "auth": {
+    "identity": {
+      "methods": ["password"],
+      "password": {
+        "user": {
+          "name": "admin",
+          "password": "secret",
+          "domain": {"name": "Default"}
+        }
+      }
+    },
+    "scope": "unscoped"
+  }
+}
+```
+
+**Response**: HTTP 201 with unscoped JWT token in `X-Subject-Token` header. The token contains user_id and domain_id but no project_id.
+
+#### Step 2: List Available Projects
+
+Horizon uses the unscoped token to fetch available projects:
+
+```http
+GET /v3/auth/projects HTTP/1.1
+X-Auth-Token: <unscoped-token>
+```
+
+**Response**: HTTP 200 with list of projects the user has access to
+
+#### Step 3: Token Re-Authentication with Project Scope
+
+Horizon re-authenticates using the unscoped token to get a scoped token:
+
+```http
+POST /v3/auth/tokens HTTP/1.1
+Content-Type: application/json
+
+{
+  "auth": {
+    "identity": {
+      "methods": ["token"],
+      "token": {"id": "<unscoped-token>"}
+    },
+    "scope": {
+      "project": {
+        "name": "default",
+        "domain": {"name": "Default"}
+      }
+    }
+  }
+}
+```
+
+**Response**: HTTP 201 with scoped JWT token and service catalog
+**Response**: HTTP 201 with scoped JWT token and service catalog
+
+The scoped token contains:
+- user_id, username
+- project_id, project_name
+- domain_id
+- roles (e.g., ["admin"])
+- Service catalog mapping service types to endpoints:
+
    ```json
    {
-     "compute": "http://o3k:8774/v2.1",
-     "network": "http://o3k:9696/v2.0",
-     "volumev3": "http://o3k:8776/v3",
-     "image": "http://o3k:9292/v2",
-     "identity": "http://o3k:35357/v3"
+     "token": {
+       "catalog": [
+         {
+           "type": "compute",
+           "name": "nova",
+           "endpoints": [{"interface": "public", "region": "RegionOne", "url": "http://o3k:8774/v2.1"}]
+         },
+         {
+           "type": "network",
+           "name": "neutron",
+           "endpoints": [{"interface": "public", "region": "RegionOne", "url": "http://o3k:9696/v2.0"}]
+         },
+         {
+           "type": "volumev3",
+           "name": "cinderv3",
+           "endpoints": [{"interface": "public", "region": "RegionOne", "url": "http://o3k:8776/v3"}]
+         },
+         {
+           "type": "image",
+           "name": "glance",
+           "endpoints": [{"interface": "public", "region": "RegionOne", "url": "http://o3k:9292/v2"}]
+         },
+         {
+           "type": "identity",
+           "name": "keystone",
+           "endpoints": [{"interface": "public", "region": "RegionOne", "url": "http://o3k:35357/v3"}]
+         }
+       ]
+     }
    }
    ```
-5. **API Calls**: Horizon uses token and service catalog to make authenticated calls to other services
+
+#### Step 4: Dashboard API Calls
+
+Horizon uses the scoped token and service catalog to make authenticated API calls to all OpenStack services (Nova, Neutron, Cinder, Glance). All requests include the `X-Auth-Token` header with the scoped token.
+
+**Critical Implementation Detail**: Service catalog endpoints use `http://o3k` (Docker service name) instead of `http://localhost` to enable container-to-container communication within the Docker network.
 
 ### API Compatibility
 
 O3K implements 100% OpenStack API compatibility for the endpoints Horizon requires:
 
 #### Keystone (Identity - Port 35357)
-- `POST /v3/auth/tokens` - Token generation
+- `POST /v3/auth/tokens` - Token generation (password and token methods)
+- `GET /v3/auth/projects` - List projects for unscoped token
 - `GET /v3/auth/tokens` - Token validation
 - `DELETE /v3/auth/tokens` - Token revocation
 - `GET /v3/projects` - List projects
@@ -112,6 +212,22 @@ The deployment is defined in `deployments/docker-compose-horizon.yml` and includ
 - `horizon-static` - Django static files (CSS, JS)
 - `horizon-logs` - Horizon and Apache logs
 
+### Horizon Session Management
+
+**Challenge**: Horizon runs as a Django application in Apache with mod_wsgi using multiple worker processes. Session data must be shared across these processes for login to work correctly.
+
+**Problem with Default Backends**:
+- `LocMemCache`: Per-process memory, sessions not shared between Apache workers
+- `django.contrib.sessions.backends.cache` with `LocMemCache`: Same issue
+- File-based sessions: File locking issues with concurrent process access
+- Signed cookies: Security concerns, size limits, can't be invalidated server-side
+
+**Solution**: Use Memcached for distributed session storage. Memcached provides:
+- Shared memory cache accessible by all Apache worker processes
+- Fast session read/write (<1ms latency)
+- Automatic session expiration (SESSION_TIMEOUT = 4 hours)
+- No file I/O overhead
+
 ### Horizon Configuration
 
 Horizon is configured through several files mounted into the container:
@@ -149,20 +265,41 @@ Controls how Kolla's startup script (`kolla_set_configs`) initializes the contai
 
 #### 2. Django Settings (`horizon-config/local_settings`)
 
-Configures Horizon's Django application (300+ lines):
+Configures Horizon's Django application (400+ lines):
 
 **Key Settings**:
-- `OPENSTACK_HOST = "o3k"` - O3K service hostname
+- `DEBUG = True` - Enable for troubleshooting (set to False in production)
+- `OPENSTACK_HOST = "o3k"` - O3K service hostname (Docker service name)
 - `OPENSTACK_KEYSTONE_URL = "http://o3k:35357/v3"` - Keystone endpoint
 - `OPENSTACK_API_VERSIONS` - API versions for each service:
-  - `identity: 3`
-  - `image: 2`
-  - `volume: 3`
-  - `compute: 2`
+  - `identity: 3` - Keystone v3
+  - `image: 2` - Glance v2
+  - `volume: 3` - Cinder v3
+  - `compute: 2.1` - Nova v2.1
 - `OPENSTACK_KEYSTONE_MULTIDOMAIN_SUPPORT = False` - Single domain mode
 - `OPENSTACK_KEYSTONE_DEFAULT_DOMAIN = "Default"` - Default domain
-- `SESSION_ENGINE = 'django.contrib.sessions.backends.cache'` - Session storage
-- `CACHES` - Memcached configuration (stub mode - in-memory)
+- `SESSION_ENGINE = 'django.contrib.sessions.backends.cache'` - Cache-based sessions
+- `SESSION_TIMEOUT = 14400` - 4 hours (matches O3K JWT token TTL)
+
+**Session and Cache Configuration (CRITICAL)**:
+```python
+# Session engine uses cache backend
+SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
+
+# Memcached provides distributed cache for multi-process Apache
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.memcached.PyMemcacheCache',
+        'LOCATION': 'memcached:11211',
+    }
+}
+```
+
+**Why This Is Required**:
+- Apache mod_wsgi runs multiple worker processes (configured in virtual host)
+- Each process needs to access the same session data
+- Memcached provides a shared store accessible by all processes
+- Without Memcached, login works but sessions aren't persisted (redirect loop)
 
 **Neutron Features**:
 ```python
@@ -378,7 +515,7 @@ docker exec o3k-horizon grep WSGIScriptAlias /etc/apache2/sites-enabled/000-defa
 
 ### Authentication Failures
 
-**Symptom**: Login fails with "Unable to authenticate" or similar error
+**Symptom**: Login fails with "Unable to authenticate" or "Unable to retrieve authorized projects"
 
 **Diagnosis**:
 ```bash
@@ -388,7 +525,7 @@ docker exec o3k-horizon curl -v http://o3k:35357/v3
 # Check O3K logs for authentication errors
 docker logs o3k | grep -i auth
 
-# Test direct authentication
+# Test unscoped authentication
 curl -X POST http://localhost:35357/v3/auth/tokens \
   -H "Content-Type: application/json" \
   -d '{
@@ -403,6 +540,19 @@ curl -X POST http://localhost:35357/v3/auth/tokens \
           }
         }
       },
+      "scope": "unscoped"
+    }
+  }'
+
+# Test token re-authentication
+curl -X POST http://localhost:35357/v3/auth/tokens \
+  -H "Content-Type: application/json" \
+  -d '{
+    "auth": {
+      "identity": {
+        "methods": ["token"],
+        "token": {"id": "<unscoped-token>"}
+      },
       "scope": {
         "project": {
           "name": "default",
@@ -413,11 +563,105 @@ curl -X POST http://localhost:35357/v3/auth/tokens \
   }'
 ```
 
+**Common Causes**:
+1. **Service catalog using localhost instead of o3k**:
+   - Symptom: "Unable to retrieve authorized projects" with HTTP 400
+   - Fix: Ensure `buildHardcodedCatalog()` uses `baseURL := "http://o3k"`
+   - Verify database endpoints: `docker exec o3k-postgres psql -U o3k -c "SELECT service_id, url FROM endpoints"`
+
+2. **Token authentication not implemented**:
+   - Symptom: HTTP 400 "password authentication required" during Step 3
+   - Fix: Ensure `AuthenticateToken()` method exists in internal/keystone/auth.go
+   - Verify handler routes both password and token methods
+
+3. **Auto-scoping prevents unscoped tokens**:
+   - Symptom: Step 1 returns token with project_id when it shouldn't
+   - Fix: Remove auto-scoping logic - only add project when explicitly requested
+
 **Resolution**:
 1. Verify O3K container is healthy: `docker ps | grep o3k`
 2. Check database migrations completed: `docker logs o3k | grep migration`
 3. Verify default user exists: Check database or O3K logs
 4. Ensure `local_settings` has correct `OPENSTACK_HOST = "o3k"`
+
+### Login Redirect Loop
+
+**Symptom**: Login form submits successfully, but returns to login page instead of dashboard. No error messages displayed.
+
+**Diagnosis**:
+```bash
+# Check if Memcached is running
+docker ps | grep memcached
+
+# Test Memcached connectivity from Horizon
+docker exec o3k-horizon /var/lib/kolla/venv/bin/python -c \
+  "from pymemcache.client import base; \
+   c = base.Client(('memcached', 11211)); \
+   c.set('test', 'value'); \
+   print(c.get('test'))"
+# Should output: b'value'
+
+# Check session configuration
+docker exec o3k-horizon grep -A 5 "SESSION_ENGINE\|CACHES" \
+  /etc/openstack-dashboard/local_settings.py
+
+# Watch authentication flow in O3K logs
+docker logs o3k -f
+# Then try login in browser
+```
+
+**Root Cause**: Django sessions not persisting across Apache worker processes
+
+**Common Causes**:
+1. **Memcached container not running**:
+   - Check docker-compose-horizon.yml includes memcached service
+   - Verify: `docker ps | grep memcached`
+
+2. **Wrong cache backend**:
+   - LocMemCache (per-process) instead of PyMemcacheCache (shared)
+   - Fix: Use `django.core.cache.backends.memcached.PyMemcacheCache`
+
+3. **Memcached not accessible**:
+   - Check network connectivity: `docker exec o3k-horizon ping memcached`
+   - Verify LOCATION: `'memcached:11211'` (Docker service name, not localhost)
+
+4. **File-based sessions with permission issues**:
+   - Don't use file-based sessions with multiple Apache workers
+   - Prefer Memcached for production reliability
+
+**Resolution**:
+1. Add Memcached container to docker-compose.yml:
+   ```yaml
+   memcached:
+     image: memcached:1.6-alpine
+     container_name: o3k-memcached
+     hostname: memcached
+     command: memcached -m 64
+     networks:
+       - o3k-network
+   ```
+
+2. Configure Horizon to use Memcached (in local_settings):
+   ```python
+   SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
+   CACHES = {
+       'default': {
+           'BACKEND': 'django.core.cache.backends.memcached.PyMemcacheCache',
+           'LOCATION': 'memcached:11211',
+       }
+   }
+   ```
+
+3. Restart services:
+   ```bash
+   docker compose -f docker-compose-horizon.yml down
+   docker compose -f docker-compose-horizon.yml up -d
+   ```
+
+4. Verify sessions work:
+   - Login with admin/secret
+   - Should redirect to `/dashboard/project/` (Overview page)
+   - Check logs: `docker logs o3k-horizon --tail 50` for successful authentication
 
 ### Static Files Not Loading (CSS/JS Missing)
 
