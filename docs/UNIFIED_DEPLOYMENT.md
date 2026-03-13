@@ -64,8 +64,13 @@ This guide provides a complete, unified deployment of O3K and OpenStack Horizon 
 
 ### Platform Support
 
-- ✅ **Linux**: Full support (AMD64, ARM64)
-- ✅ **macOS**: Full support (Intel, Apple Silicon via Rosetta)
+- ✅ **Linux x86_64 (AMD64)**: Full support (all services)
+- ⚠️ **Linux ARM64**: O3K works natively; Horizon/noVNC run via emulation (slower)
+- ✅ **macOS Intel**: Full support (Docker Desktop with Rosetta)
+- ⚠️ **macOS Apple Silicon (ARM64)**: O3K works natively; Horizon/noVNC require emulation
+  - **Note**: Horizon and noVNC are x86_64 images and will run under emulation
+  - O3K itself is built as ARM64 and runs natively
+  - For ARM64-only environments, use API-only deployment (see Alternative Deployment Options below)
 - ⚠️ **Windows**: WSL2 required
 
 ## Quick Start (5 Minutes)
@@ -138,6 +143,31 @@ http://localhost/dashboard
 - Password: `secret`
 
 🎉 **You're done!** You now have a fully functional OpenStack environment with web UI.
+
+## Alternative Deployment Options
+
+### API-Only Deployment (ARM64 Native)
+
+If you're on ARM64 (Apple Silicon, ARM servers) and want to avoid emulation overhead, use the API-only deployment which runs O3K natively:
+
+```bash
+# Use the standard docker-compose without Horizon
+docker compose -f docker-compose.yml up -d
+
+# Access via OpenStack CLI
+export OS_AUTH_URL=http://localhost:35357/v3
+export OS_USERNAME=admin
+export OS_PASSWORD=secret
+export OS_PROJECT_NAME=default
+export OS_DOMAIN_NAME=Default
+openstack token issue
+```
+
+This gives you full OpenStack API access with native ARM64 performance, without the web UI.
+
+### Native Horizon (x86_64 Only)
+
+For x86_64 systems or when performance is critical, the unified deployment (`docker-compose-horizon.yml`) provides the best experience with native performance for all components.
 
 ## Detailed Configuration
 
@@ -525,6 +555,46 @@ openstack network delete test-net
 ```
 
 ## Troubleshooting
+
+### Platform-Specific Issues
+
+#### ARM64 (Apple Silicon, ARM Servers)
+
+**Symptom**: Horizon or noVNC containers restart repeatedly
+
+**Diagnosis**:
+```bash
+docker compose -f docker-compose-horizon.yml ps
+# Look for "platform (linux/amd64) does not match" warnings
+```
+
+**Explanation**: Horizon (OpenStack Kolla) and noVNC are x86_64 images. On ARM64 systems, Docker runs them via emulation (QEMU). This works but may be slower and less stable.
+
+**Solutions**:
+1. **Continue with emulation** (works but slower):
+   - Horizon may take 2-3x longer to start
+   - Slightly higher resource usage
+   - Fully functional once started
+
+2. **Use API-only deployment** (recommended for ARM64):
+   ```bash
+   docker compose -f docker-compose.yml up -d
+   # Use OpenStack CLI instead of web UI
+   ```
+
+3. **Use native ARM64 Horizon** (future):
+   - Track: https://github.com/cobaltcore-dev/o3k/issues/XXX
+   - Custom ARM64 Horizon build in development
+
+**Verification**:
+```bash
+# Check O3K (should be ARM64 and healthy)
+docker inspect o3k | jq '.[0].Architecture'  # Should show "arm64"
+docker compose -f docker-compose-horizon.yml ps o3k  # Should be "healthy"
+
+# O3K works natively on ARM64, only Horizon requires emulation
+docker exec o3k curl -s http://localhost:35357/v3 | jq '.version.status'
+```
 
 ### Service Won't Start
 
