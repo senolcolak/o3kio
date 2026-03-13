@@ -46,7 +46,7 @@ OPENSTACK_API_VERSIONS = {
 # Keystone v3 Configuration
 # ==========================================
 
-OPENSTACK_KEYSTONE_MULTIDOMAIN_SUPPORT = True
+OPENSTACK_KEYSTONE_MULTIDOMAIN_SUPPORT = False
 OPENSTACK_KEYSTONE_DEFAULT_DOMAIN = "Default"
 
 # Default user domain for authentication
