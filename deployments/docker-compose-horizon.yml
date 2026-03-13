@@ -72,6 +72,7 @@ services:
       - horizon-static:/var/lib/kolla/venv/lib/python3.12/site-packages/static:rw
       - horizon-logs:/var/log/kolla/horizon:rw
       - horizon-apache-logs:/var/log/apache2:rw
+      - horizon-apache-run:/var/run/apache2:rw
     networks:
       - o3k-network
     depends_on:
@@ -119,3 +120,4 @@ volumes:
   horizon-static:
   horizon-logs:
   horizon-apache-logs:
+  horizon-apache-run:

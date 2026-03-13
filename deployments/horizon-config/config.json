@@ -16,7 +16,12 @@
         },
         {
             "path": "/var/log/apache2",
-            "owner": "horizon:kolla",
+            "owner": "www-data:adm",
+            "recurse": true
+        },
+        {
+            "path": "/var/run/apache2",
+            "owner": "www-data:www-data",
             "recurse": true
         },
         {
