@@ -145,7 +145,8 @@ func (svc *Service) AuthenticateToken(c *gin.Context) {
 
 	var req AuthRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		fmt.Printf("DEBUG: Failed to parse auth request. Error: %v, Body: %s\n", err, string(bodyBytes))
+		// Log parse error with request body
+		c.Error(fmt.Errorf("auth parse failed: %v, body: %s", err, string(bodyBytes)))
 		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
 			"message": "invalid request body: " + err.Error(),
 			"code":    400,
