@@ -1,7 +1,6 @@
 package nova_test
 
 import (
-	"os"
 	"testing"
 
 	"github.com/gophercloud/gophercloud"

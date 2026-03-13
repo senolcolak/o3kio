@@ -404,6 +404,8 @@ func substituteURLTemplates(url, projectID string) string {
 	url = strings.Replace(url, "$(project_id)s", projectID, -1)
 	// Also handle %(project_id)s format (Python string formatting)
 	url = strings.Replace(url, "%(project_id)s", projectID, -1)
+	// Also handle plain %s format (legacy)
+	url = strings.Replace(url, "%s", projectID, -1)
 
 	return url
 }

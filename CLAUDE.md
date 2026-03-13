@@ -409,3 +409,10 @@ if requestedVersion == "" {
 **"Network namespace not found"**: Requires root/sudo on Linux, use stub mode otherwise
 **"Database connection failed"**: Check PostgreSQL is running and connection string is correct
 **"Token validation failed"**: Ensure `jwt_secret` matches between Keystone and other services
+
+## Active Technologies
+- Go 1.24 + Gin (HTTP framework), pgx (PostgreSQL driver), gophercloud (contract testing), go-libvirt (hypervisor), netlink (networking) (002-horizon-full-compatibility)
+- PostgreSQL 16 (primary database) (002-horizon-full-compatibility)
+
+## Recent Changes
+- 002-horizon-full-compatibility: Added Go 1.24 + Gin (HTTP framework), pgx (PostgreSQL driver), gophercloud (contract testing), go-libvirt (hypervisor), netlink (networking)
