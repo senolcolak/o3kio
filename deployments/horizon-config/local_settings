@@ -62,8 +62,8 @@ OPENSTACK_KEYSTONE_DOMAIN_CHOICES = (
 # Session timeout (matches O3K token TTL - 4 hours)
 SESSION_TIMEOUT = 14400
 
-# Session engine (use cache for better performance)
-SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
+# Session engine (use database for reliability)
+SESSION_ENGINE = 'django.contrib.sessions.backends.db'
 
 # Security settings (enable in production with HTTPS)
 SESSION_COOKIE_SECURE = False  # Set True with HTTPS
