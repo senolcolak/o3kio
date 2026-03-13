@@ -62,8 +62,9 @@ OPENSTACK_KEYSTONE_DOMAIN_CHOICES = (
 # Session timeout (matches O3K token TTL - 4 hours)
 SESSION_TIMEOUT = 14400
 
-# Session engine (use signed cookies for simplicity)
-SESSION_ENGINE = 'django.contrib.sessions.backends.signed_cookies'
+# Session engine (use file-based for reliability across processes)
+SESSION_ENGINE = 'django.contrib.sessions.backends.file'
+SESSION_FILE_PATH = '/tmp/horizon_sessions'
 
 # Security settings (enable in production with HTTPS)
 SESSION_COOKIE_SECURE = False  # Set True with HTTPS
