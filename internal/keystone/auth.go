@@ -3,6 +3,7 @@ package keystone
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -368,9 +369,12 @@ func BuildServiceCatalog(projectID string) []CatalogEntry {
 
 		// Add endpoint if present
 		if endpointID != nil && iface != nil && url != nil {
+			// Substitute URL templates
+			substitutedURL := substituteURLTemplates(*url, projectID)
+
 			endpoint := Endpoint{
 				Interface: *iface,
-				URL:       *url,
+				URL:       substitutedURL,
 			}
 			if region != nil {
 				endpoint.Region = *region
@@ -390,6 +394,18 @@ func BuildServiceCatalog(projectID string) []CatalogEntry {
 	}
 
 	return catalog
+}
+
+// substituteURLTemplates replaces template placeholders in endpoint URLs
+func substituteURLTemplates(url, projectID string) string {
+	// Replace {project_id} placeholder
+	url = strings.Replace(url, "{project_id}", projectID, -1)
+	// Also handle $(project_id)s format (OpenStack convention)
+	url = strings.Replace(url, "$(project_id)s", projectID, -1)
+	// Also handle %(project_id)s format (Python string formatting)
+	url = strings.Replace(url, "%(project_id)s", projectID, -1)
+
+	return url
 }
 
 // buildHardcodedCatalog provides fallback catalog (previous implementation)

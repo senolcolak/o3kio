@@ -151,3 +151,54 @@ func TestBuildServiceCatalog(t *testing.T) {
 		t.Error("Identity service not found in catalog")
 	}
 }
+
+func TestSubstituteURLTemplates(t *testing.T) {
+	projectID := "abc123-def456"
+
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "braces format",
+			input:    "http://localhost:8776/v3/{project_id}/volumes",
+			expected: "http://localhost:8776/v3/abc123-def456/volumes",
+		},
+		{
+			name:     "dollar format",
+			input:    "http://localhost:8776/v3/$(project_id)s/volumes",
+			expected: "http://localhost:8776/v3/abc123-def456/volumes",
+		},
+		{
+			name:     "percent format",
+			input:    "http://localhost:8776/v3/%(project_id)s/volumes",
+			expected: "http://localhost:8776/v3/abc123-def456/volumes",
+		},
+		{
+			name:     "multiple occurrences",
+			input:    "http://localhost:8776/v3/{project_id}/volumes/{project_id}",
+			expected: "http://localhost:8776/v3/abc123-def456/volumes/abc123-def456",
+		},
+		{
+			name:     "no placeholder",
+			input:    "http://localhost:9292/v2/images",
+			expected: "http://localhost:9292/v2/images",
+		},
+		{
+			name:     "mixed placeholders",
+			input:    "http://localhost:8776/v3/{project_id}/volumes/%(project_id)s",
+			expected: "http://localhost:8776/v3/abc123-def456/volumes/abc123-def456",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := substituteURLTemplates(tt.input, projectID)
+			if result != tt.expected {
+				t.Errorf("substituteURLTemplates(%q, %q) = %q; want %q",
+					tt.input, projectID, result, tt.expected)
+			}
+		})
+	}
+}
