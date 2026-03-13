@@ -25,7 +25,7 @@ services:
   o3k:
     build:
       context: ..
-      dockerfile: deployments/Dockerfile
+      dockerfile: build/package/Dockerfile
     image: o3k:latest
     container_name: o3k
     hostname: o3k
@@ -37,12 +37,8 @@ services:
       - "9292:9292"    # Glance (Image)
       - "8775:8775"    # Metadata Service
     environment:
-      - O3K_DATABASE_URL=postgres://o3k:secret@postgres:5432/o3k?sslmode=disable
-      - O3K_KEYSTONE_JWT_SECRET=change-this-secret-in-production-12345
-      - O3K_NOVA_LIBVIRT_MODE=stub
-      - O3K_NEUTRON_NETWORKING_MODE=stub
-      - O3K_CINDER_STORAGE_MODE=local
-      - O3K_GLANCE_STORAGE_MODE=local
+      - O3K_DB_URL=postgres://o3k:secret@postgres:5432/o3k?sslmode=disable
+      - O3K_JWT_SECRET=change-this-secret-in-production-12345
     volumes:
       - o3k-data:/var/lib/o3k
       - o3k-images:/var/lib/o3k/images
