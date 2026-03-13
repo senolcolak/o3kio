@@ -8,7 +8,7 @@
             "perm": "0644"
         },
         {
-            "source": "/var/lib/kolla/config_files/horizon.conf",
+            "source": "/var/lib/kolla/config_files/horizon-nolist.conf",
             "dest": "/etc/apache2/sites-enabled/000-default.conf",
             "owner": "root",
             "perm": "0644"
