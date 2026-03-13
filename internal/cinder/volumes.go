@@ -43,6 +43,11 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 	// Limits endpoint without project_id (extracts from token)
 	r.GET("/v3/limits", svc.GetLimitsNoProject)
 
+	// Volume transfers without project_id (extracts from token)
+	// MUST be registered before v3/:project_id group to avoid route conflict
+	r.GET("/v3/os-volume-transfer", svc.ListVolumeTransfersNoProject)
+	r.GET("/v3/os-volume-transfer/detail", svc.ListVolumeTransfersNoProject)
+
 	v3 := r.Group("/v3/:project_id")
 	{
 		// Volumes
