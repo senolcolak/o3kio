@@ -48,11 +48,13 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 	r.GET("/v3/os-volume-transfer", svc.ListVolumeTransfersNoProject)
 	r.GET("/v3/os-volume-transfer/detail", svc.ListVolumeTransfersNoProject)
 
+	// Volumes list without project_id (extracts from token)
+	r.GET("/v3/volumes", svc.ListVolumes)
+	r.GET("/v3/volumes/detail", svc.ListVolumesDetail)
+
 	v3 := r.Group("/v3/:project_id")
 	{
-		// Volumes
-		v3.GET("/volumes", svc.ListVolumes)
-		v3.GET("/volumes/detail", svc.ListVolumesDetail)
+		// Volumes (create, get by ID, update, delete - need project_id in URL)
 		v3.POST("/volumes", svc.CreateVolume)
 		v3.GET("/volumes/:id", svc.GetVolume)
 		v3.PATCH("/volumes/:id", svc.UpdateVolume)
