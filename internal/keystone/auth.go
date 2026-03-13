@@ -2,6 +2,7 @@ package keystone
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -37,6 +38,48 @@ func NewAuthService(jwtSecret string, tokenTTL time.Duration) *AuthService {
 }
 
 // AuthRequest represents an authentication request
+// ScopeField handles both string ("unscoped") and object scope formats
+type ScopeField struct {
+	IsUnscoped bool
+	Project    *struct {
+		Name   string `json:"name"`
+		ID     string `json:"id"`
+		Domain *struct {
+			Name string `json:"name"`
+			ID   string `json:"id"`
+		} `json:"domain,omitempty"`
+	}
+}
+
+// UnmarshalJSON implements custom JSON unmarshaling for ScopeField
+func (s *ScopeField) UnmarshalJSON(data []byte) error {
+	// Try to unmarshal as string first
+	var str string
+	if err := json.Unmarshal(data, &str); err == nil {
+		s.IsUnscoped = (str == "unscoped")
+		return nil
+	}
+
+	// Otherwise unmarshal as object
+	type scopeAlias ScopeField
+	var temp struct {
+		Project *struct {
+			Name   string `json:"name"`
+			ID     string `json:"id"`
+			Domain *struct {
+				Name string `json:"name"`
+				ID   string `json:"id"`
+			} `json:"domain,omitempty"`
+		} `json:"project,omitempty"`
+	}
+	if err := json.Unmarshal(data, &temp); err != nil {
+		return err
+	}
+	s.Project = temp.Project
+	s.IsUnscoped = false
+	return nil
+}
+
 type AuthRequest struct {
 	Auth struct {
 		Identity struct {
@@ -54,16 +97,7 @@ type AuthRequest struct {
 				ID string `json:"id"`
 			} `json:"token,omitempty"`
 		} `json:"identity"`
-		Scope *struct {
-			Project *struct {
-				Name   string `json:"name"`
-				ID     string `json:"id"`
-				Domain *struct {
-					Name string `json:"name"`
-					ID   string `json:"id"`
-				} `json:"domain,omitempty"`
-			} `json:"project,omitempty"`
-		} `json:"scope,omitempty"`
+		Scope *ScopeField `json:"scope,omitempty"`
 	} `json:"auth"`
 }
 
@@ -151,7 +185,7 @@ func (s *AuthService) AuthenticatePassword(ctx context.Context, req *AuthRequest
 	var roles []string
 	var project *database.Project
 
-	if req.Auth.Scope != nil && req.Auth.Scope.Project != nil {
+	if req.Auth.Scope != nil && !req.Auth.Scope.IsUnscoped && req.Auth.Scope.Project != nil {
 		// Scoped authentication
 		projectName := req.Auth.Scope.Project.Name
 		projectIDParam := req.Auth.Scope.Project.ID
