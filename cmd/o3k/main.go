@@ -49,14 +49,36 @@ func main() {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
-	// Connect to database
+	// Connect to database with optimized pool settings
 	ctx := context.Background()
-	if err := database.Connect(ctx, cfg.Database.URL, cfg.Database.MaxConnections); err != nil {
+	poolConfig := &database.PoolConfig{
+		MaxConns:          int32(cfg.Database.MaxConnections),
+		MinConns:          int32(cfg.Database.MinConnections),
+		MaxConnLifetime:   cfg.Database.MaxConnLifetime,
+		MaxConnIdleTime:   cfg.Database.MaxConnIdleTime,
+		HealthCheckPeriod: cfg.Database.HealthCheckPeriod,
+	}
+
+	// Use defaults if not specified
+	if poolConfig.MinConns == 0 {
+		poolConfig.MinConns = 2
+	}
+	if poolConfig.MaxConnLifetime == 0 {
+		poolConfig.MaxConnLifetime = 1 * time.Hour
+	}
+	if poolConfig.MaxConnIdleTime == 0 {
+		poolConfig.MaxConnIdleTime = 15 * time.Minute
+	}
+	if poolConfig.HealthCheckPeriod == 0 {
+		poolConfig.HealthCheckPeriod = 1 * time.Minute
+	}
+
+	if err := database.Connect(ctx, cfg.Database.URL, poolConfig); err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
 	defer database.Close()
 
-	log.Println("Database connection established")
+	log.Printf("Database connection established (pool: max=%d, min=%d)", poolConfig.MaxConns, poolConfig.MinConns)
 
 	// Run migrations
 	log.Println("Running database migrations...")

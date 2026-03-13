@@ -20,8 +20,12 @@ type Config struct {
 }
 
 type DatabaseConfig struct {
-	URL            string `yaml:"url"`
-	MaxConnections int    `yaml:"max_connections"`
+	URL               string        `yaml:"url"`
+	MaxConnections    int           `yaml:"max_connections"`
+	MinConnections    int           `yaml:"min_connections"`
+	MaxConnLifetime   time.Duration `yaml:"max_conn_lifetime"`
+	MaxConnIdleTime   time.Duration `yaml:"max_conn_idle_time"`
+	HealthCheckPeriod time.Duration `yaml:"health_check_period"`
 }
 
 type ComputeConfig struct {
