@@ -11,7 +11,12 @@
     "permissions": [
         {
             "path": "/var/log/kolla/horizon",
-            "owner": "horizon:horizon",
+            "owner": "horizon:kolla",
+            "recurse": true
+        },
+        {
+            "path": "/var/log/apache2",
+            "owner": "horizon:kolla",
             "recurse": true
         },
         {
