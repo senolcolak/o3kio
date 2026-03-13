@@ -40,6 +40,9 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 	r.GET("/", svc.GetVersions)
 	r.GET("/v3", svc.GetVersionV3)
 
+	// Limits endpoint without project_id (extracts from token)
+	r.GET("/v3/limits", svc.GetLimitsNoProject)
+
 	v3 := r.Group("/v3/:project_id")
 	{
 		// Volumes
@@ -104,6 +107,7 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		// Volume transfers
 		v3.POST("/os-volume-transfer", svc.CreateVolumeTransfer)
 		v3.GET("/os-volume-transfer", svc.ListVolumeTransfers)
+		v3.GET("/os-volume-transfer/detail", svc.ListVolumeTransfers) // Detailed list (same as regular list)
 		v3.GET("/os-volume-transfer/:id", svc.GetVolumeTransfer)
 		v3.POST("/os-volume-transfer/:id/accept", svc.AcceptVolumeTransfer)
 		v3.DELETE("/os-volume-transfer/:id", svc.DeleteVolumeTransfer)
@@ -1533,6 +1537,44 @@ func (svc *Service) DeleteSnapshotMetadataKey(c *gin.Context) {
 // GetLimits returns volume service limits and quotas
 func (svc *Service) GetLimits(c *gin.Context) {
 	projectID := c.Param("project_id")
+
+	// Query current usage from database
+	var volumesUsed, snapshotsUsed, gigabytesUsed int
+
+	database.DB.QueryRow(c.Request.Context(),
+		"SELECT COUNT(*), COALESCE(SUM(size_gb), 0) FROM volumes WHERE project_id = $1 AND status != 'deleted'",
+		projectID,
+	).Scan(&volumesUsed, &gigabytesUsed)
+
+	database.DB.QueryRow(c.Request.Context(),
+		"SELECT COUNT(*) FROM snapshots WHERE project_id = $1 AND status != 'deleted'",
+		projectID,
+	).Scan(&snapshotsUsed)
+
+	// Return limits response
+	c.JSON(200, gin.H{
+		"limits": gin.H{
+			"rate": []gin.H{}, // No rate limiting
+			"absolute": gin.H{
+				"maxTotalVolumes":       1000,
+				"maxTotalSnapshots":     1000,
+				"maxTotalVolumeGigabytes": 10000,
+				"maxTotalBackups":       100,
+				"maxTotalBackupGigabytes": 5000,
+				"totalVolumesUsed":      volumesUsed,
+				"totalSnapshotsUsed":    snapshotsUsed,
+				"totalGigabytesUsed":    gigabytesUsed,
+				"totalBackupsUsed":      0,
+				"totalBackupGigabytesUsed": 0,
+			},
+		},
+	})
+}
+
+// GetLimitsNoProject returns volume service limits without project_id in URL (extracts from token)
+func (svc *Service) GetLimitsNoProject(c *gin.Context) {
+	// Extract project_id from JWT token (set by auth middleware)
+	projectID := c.GetString("project_id")
 
 	// Query current usage from database
 	var volumesUsed, snapshotsUsed, gigabytesUsed int
