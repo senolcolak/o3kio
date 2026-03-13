@@ -43,9 +43,9 @@ O3K uses single-project structure with Go packages:
 - [x] T004 Create database migration 048 if migrations table missing per data-model.md ✅ Not needed (migration 034 exists)
 - [x] T005 Create database migration 048 if server_security_groups table missing per data-model.md ✅ Not needed (migration 049 exists)
 - [x] T006 [P] Add bcrypt dependency to go.mod for password hashing ✅ Already present (golang.org/x/crypto v0.48.0)
-- [x] T007 [P] Verify Glance images table has properties JSONB column for backup metadata ✅ Migration 051 created
+- [x] T007 [P] Verify Glance images table has properties JSONB column for backup metadata ✅ Migration 051 created and applied
 
-**Checkpoint**: Foundation ready - user story implementation can now begin in parallel
+**Checkpoint**: Foundation ready - user story implementation can now begin in parallel ✅ COMPLETE
 
 ---
 
@@ -79,13 +79,13 @@ O3K uses single-project structure with Go packages:
 
 ### Tests for User Story 2 ⚠️ WRITE FIRST - MUST FAIL BEFORE IMPLEMENTATION
 
-- [x] T014 [P] [US2] Contract test for server migration in test/contract/nova/server_actions_test.go ✅ Complete
+- [x] T014 [P] [US2] Contract test for server migration in test/contract/nova/server_actions_test.go ✅ Complete - PASSED
 - [ ] T015 [P] [US2] Contract test for server evacuate in test/contract/nova/server_actions_test.go
-- [x] T016 [P] [US2] Contract test for changePassword in test/contract/nova/server_actions_test.go ✅ Complete
-- [x] T017 [P] [US2] Contract test for createBackup in test/contract/nova/server_actions_test.go ✅ Complete
+- [x] T016 [P] [US2] Contract test for changePassword in test/contract/nova/server_actions_test.go ✅ Complete - PASSED
+- [x] T017 [P] [US2] Contract test for createBackup in test/contract/nova/server_actions_test.go ✅ Complete - PASSED
 - [ ] T018 [P] [US2] Contract test for addSecurityGroup in test/contract/nova/server_actions_test.go
 - [ ] T019 [P] [US2] Contract test for removeSecurityGroup in test/contract/nova/server_actions_test.go
-- [x] T020 [P] [US2] Contract test for os-resetState (admin vs non-admin) in test/contract/nova/server_actions_test.go ✅ Complete (admin test only)
+- [x] T020 [P] [US2] Contract test for os-resetState (admin vs non-admin) in test/contract/nova/server_actions_test.go ✅ Complete - PASSED (admin test only)
 - [ ] T021 [US2] Integration test for full server lifecycle in test/horizon_server_lifecycle_test.sh
 
 ### Implementation for User Story 2 - Server Actions
