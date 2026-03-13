@@ -8,10 +8,10 @@ CREATE TABLE IF NOT EXISTS domains (
     updated_at TIMESTAMP DEFAULT NOW()
 );
 
--- Seed default domain
+-- Seed default domain (using well-known UUID for 'default')
 INSERT INTO domains (id, name, description, enabled, created_at, updated_at)
-VALUES ('default', 'default', 'Default domain', TRUE, NOW(), NOW())
+VALUES ('00000000-0000-0000-0000-000000000001', 'Default', 'Default domain', TRUE, NOW(), NOW())
 ON CONFLICT (name) DO NOTHING;
 
-CREATE INDEX idx_domains_name ON domains(name);
-CREATE INDEX idx_domains_enabled ON domains(enabled);
+CREATE INDEX IF NOT EXISTS idx_domains_name ON domains(name);
+CREATE INDEX IF NOT EXISTS idx_domains_enabled ON domains(enabled);
