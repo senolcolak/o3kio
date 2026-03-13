@@ -39,7 +39,7 @@ OPENSTACK_API_VERSIONS = {
     "identity": 3,      # Keystone v3
     "image": 2,         # Glance v2
     "volume": 3,        # Cinder v3
-    "compute": 2.1,     # Nova v2.1
+    "compute": 2,       # Nova v2.1 (Horizon expects integer 2, not 2.1)
 }
 
 # ==========================================

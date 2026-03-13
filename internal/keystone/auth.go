@@ -641,7 +641,14 @@ func buildHardcodedCatalog(projectID string) []CatalogEntry {
 			Type: "compute",
 			Name: "nova",
 			Endpoints: []Endpoint{
-				{Interface: "public", Region: "RegionOne", URL: fmt.Sprintf("%s:8774/v2.1", baseURL)},
+				{Interface: "public", Region: "RegionOne", URL: fmt.Sprintf("%s:8774/v2.1/%s", baseURL, projectID)},
+			},
+		},
+		{
+			Type: "placement",
+			Name: "placement",
+			Endpoints: []Endpoint{
+				{Interface: "public", Region: "RegionOne", URL: fmt.Sprintf("%s:8778", baseURL)},
 			},
 		},
 		{

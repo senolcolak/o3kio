@@ -22,6 +22,7 @@ import (
 	"github.com/cobaltcore-dev/o3k/internal/middleware"
 	"github.com/cobaltcore-dev/o3k/internal/neutron"
 	"github.com/cobaltcore-dev/o3k/internal/nova"
+	"github.com/cobaltcore-dev/o3k/internal/placement"
 	"github.com/cobaltcore-dev/o3k/pkg/networking"
 )
 
@@ -185,6 +186,10 @@ func main() {
 	metadataService := metadata.NewService("localhost:8775")
 	log.Println("Metadata service initialized")
 
+	// Initialize placement service
+	placementService := placement.NewService()
+	log.Println("Placement service initialized")
+
 	// Create HTTP servers for each service
 	servers := []*http.Server{
 		createKeystoneServer(cfg, keystoneService),
@@ -192,6 +197,7 @@ func main() {
 		createNeutronServer(cfg, neutronService, authService),
 		createCinderServer(cfg, cinderService, authService),
 		createGlanceServer(cfg, glanceService, authService),
+		createPlacementServer(cfg, placementService, authService),
 		createMetadataServer(metadataService),
 	}
 
@@ -212,6 +218,7 @@ func main() {
 	log.Println("  - Neutron (Network):      http://localhost:9696/v2.0")
 	log.Println("  - Cinder (Block Storage): http://localhost:8776/v3")
 	log.Println("  - Glance (Image):         http://localhost:9292/v2")
+	log.Println("  - Placement:              http://localhost:8778")
 	log.Println("  - Metadata Service:       http://localhost:8775")
 
 	// Wait for interrupt signal
@@ -338,6 +345,20 @@ func createGlanceServer(cfg *common.Config, svc *glance.Service, authService *ke
 
 	return &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.Glance.Port),
+		Handler: r,
+	}
+}
+
+func createPlacementServer(cfg *common.Config, svc *placement.Service, authService *keystone.AuthService) *http.Server {
+	r := gin.New()
+	r.Use(middleware.LoggingMiddleware())
+	r.Use(middleware.RecoveryMiddleware())
+	r.Use(middleware.AuthMiddleware(authService))
+
+	svc.RegisterRoutes(r.Group(""))
+
+	return &http.Server{
+		Addr:    ":8778",
 		Handler: r,
 	}
 }
