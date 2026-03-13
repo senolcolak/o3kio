@@ -116,6 +116,11 @@ func (svc *Service) ListVolumeTransfers(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"transfers": transfers})
 }
 
+// ListVolumeTransfersNoProject is an alias for routes without project_id in URL
+func (svc *Service) ListVolumeTransfersNoProject(c *gin.Context) {
+	svc.ListVolumeTransfers(c)
+}
+
 // GetVolumeTransfer handles GET /v3/:project_id/volume-transfers/:id
 func (svc *Service) GetVolumeTransfer(c *gin.Context) {
 	transferID := c.Param("id")
