@@ -370,6 +370,185 @@ func (s *AuthService) AuthenticatePassword(ctx context.Context, req *AuthRequest
 	return resp, tokenString, nil
 }
 
+// AuthenticateToken handles token-based authentication (re-scoping)
+func (s *AuthService) AuthenticateToken(ctx context.Context, req *AuthRequest) (*AuthResponse, string, error) {
+	if req.Auth.Identity.Token == nil || req.Auth.Identity.Token.ID == "" {
+		return nil, "", common.NewBadRequestError("token authentication required")
+	}
+
+	// Validate the provided token
+	claims, err := s.ValidateToken(req.Auth.Identity.Token.ID)
+	if err != nil {
+		return nil, "", err
+	}
+
+	// Fetch user from database
+	var user database.User
+	err = database.DB.QueryRow(ctx,
+		"SELECT id, name, password_hash, enabled, domain_id FROM users WHERE id = $1",
+		claims.UserID,
+	).Scan(&user.ID, &user.Name, &user.PasswordHash, &user.Enabled, &user.DomainID)
+
+	if err == pgx.ErrNoRows {
+		return nil, "", common.NewUnauthorizedError("user not found")
+	}
+	if err != nil {
+		return nil, "", fmt.Errorf("database error: %w", err)
+	}
+
+	if !user.Enabled {
+		return nil, "", common.NewUnauthorizedError("user is disabled")
+	}
+
+	// Handle scoping (same logic as password auth)
+	var projectID string
+	var roles []string
+	var project *database.Project
+
+	if req.Auth.Scope == nil || (req.Auth.Scope != nil && req.Auth.Scope.IsUnscoped) {
+		// Unscoped token - no project/roles
+		projectID = ""
+	} else if req.Auth.Scope != nil && req.Auth.Scope.Project != nil {
+		// Scoped authentication
+		projectName := req.Auth.Scope.Project.Name
+		projectIDParam := req.Auth.Scope.Project.ID
+
+		// Fetch project
+		var proj database.Project
+		var query string
+		var params []interface{}
+		if projectIDParam != "" {
+			query = "SELECT id, name, description, enabled, domain_id FROM projects WHERE id = $1 AND domain_id = $2"
+			params = []interface{}{projectIDParam, user.DomainID}
+		} else {
+			query = "SELECT id, name, description, enabled, domain_id FROM projects WHERE name = $1 AND domain_id = $2"
+			params = []interface{}{projectName, user.DomainID}
+		}
+
+		err := database.DB.QueryRow(ctx, query, params...).Scan(
+			&proj.ID, &proj.Name, &proj.Description, &proj.Enabled, &proj.DomainID,
+		)
+		if err == pgx.ErrNoRows {
+			return nil, "", common.NewUnauthorizedError("project not found")
+		}
+		if err != nil {
+			return nil, "", fmt.Errorf("database error: %w", err)
+		}
+
+		if !proj.Enabled {
+			return nil, "", common.NewUnauthorizedError("project is disabled")
+		}
+
+		projectID = proj.ID
+		project = &proj
+
+		// Fetch roles
+		rows, err := database.DB.Query(ctx, `
+			SELECT r.name
+			FROM role_assignments ra
+			JOIN roles r ON ra.role_id = r.id
+			WHERE ra.user_id = $1 AND ra.project_id = $2
+		`, user.ID, projectID)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to fetch roles: %w", err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var roleName string
+			if err := rows.Scan(&roleName); err != nil {
+				return nil, "", fmt.Errorf("failed to scan role: %w", err)
+			}
+			roles = append(roles, roleName)
+		}
+
+		if len(roles) == 0 {
+			return nil, "", common.NewForbiddenError("user has no roles on this project")
+		}
+	}
+
+	// Generate new JWT token
+	now := time.Now()
+	expiresAt := now.Add(s.tokenTTL)
+	tokenClaims := &TokenClaims{
+		UserID:    user.ID,
+		UserName:  user.Name,
+		ProjectID: projectID,
+		Roles:     roles,
+		RegisteredClaims: jwt.RegisteredClaims{
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(expiresAt),
+			Subject:   user.ID,
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, tokenClaims)
+	tokenString, err := token.SignedString(s.jwtSecret)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to sign token: %w", err)
+	}
+
+	// Build response
+	resp := &AuthResponse{}
+	resp.Token.ExpiresAt = expiresAt.Format(time.RFC3339)
+	resp.Token.IssuedAt = now.Format(time.RFC3339)
+	resp.Token.Methods = req.Auth.Identity.Methods
+
+	// Query user's domain name
+	var userDomainName string
+	err = database.DB.QueryRow(ctx,
+		"SELECT name FROM domains WHERE id = $1",
+		user.DomainID,
+	).Scan(&userDomainName)
+	if err != nil {
+		userDomainName = "Default" // fallback
+	}
+
+	resp.Token.User = map[string]interface{}{
+		"id":   user.ID,
+		"name": user.Name,
+		"domain": map[string]interface{}{
+			"id":   user.DomainID,
+			"name": userDomainName,
+		},
+	}
+
+	// Add project and catalog if scoped
+	if projectID != "" {
+		// Query project's domain name
+		var projectDomainName string
+		err = database.DB.QueryRow(ctx,
+			"SELECT name FROM domains WHERE id = $1",
+			project.DomainID,
+		).Scan(&projectDomainName)
+		if err != nil {
+			projectDomainName = "Default" // fallback
+		}
+
+		resp.Token.Project = &map[string]interface{}{
+			"id":   project.ID,
+			"name": project.Name,
+			"domain": map[string]interface{}{
+				"id":   project.DomainID,
+				"name": projectDomainName,
+			},
+		}
+
+		// Add roles
+		for _, roleName := range roles {
+			resp.Token.Roles = append(resp.Token.Roles, map[string]interface{}{
+				"id":   roleName,
+				"name": roleName,
+			})
+		}
+
+		// Add service catalog
+		resp.Token.Catalog = BuildServiceCatalog(projectID)
+	}
+
+	return resp, tokenString, nil
+}
+
 // ValidateToken validates and parses a JWT token
 func (s *AuthService) ValidateToken(tokenString string) (*TokenClaims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &TokenClaims{}, func(token *jwt.Token) (interface{}, error) {

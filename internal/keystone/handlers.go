@@ -156,8 +156,26 @@ func (svc *Service) AuthenticateToken(c *gin.Context) {
 		return
 	}
 
-	// Handle password authentication
-	resp, tokenString, err := svc.authService.AuthenticatePassword(c.Request.Context(), &req)
+	// Determine authentication method
+	var resp *AuthResponse
+	var tokenString string
+	var err error
+
+	if req.Auth.Identity.Token != nil && req.Auth.Identity.Token.ID != "" {
+		// Token-based authentication (re-scoping)
+		resp, tokenString, err = svc.authService.AuthenticateToken(c.Request.Context(), &req)
+	} else if req.Auth.Identity.Password != nil {
+		// Password-based authentication
+		resp, tokenString, err = svc.authService.AuthenticatePassword(c.Request.Context(), &req)
+	} else {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
+			"message": "password or token authentication required",
+			"code":    400,
+			"title":   "Bad Request",
+		}})
+		return
+	}
+
 	if err != nil {
 		if osErr, ok := err.(*common.OpenStackError); ok {
 			c.JSON(osErr.StatusCode, gin.H{"error": gin.H{
