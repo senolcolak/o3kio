@@ -185,51 +185,8 @@ func (s *AuthService) AuthenticatePassword(ctx context.Context, req *AuthRequest
 	var roles []string
 	var project *database.Project
 
-	// When scope is "unscoped" or missing, auto-scope to user's default project
-	// This allows Horizon to work without implementing token re-scoping
-	autoScope := (req.Auth.Scope == nil) || (req.Auth.Scope != nil && req.Auth.Scope.IsUnscoped)
-
-	if autoScope {
-		// Auto-scope to the first project the user has access to
-		var proj database.Project
-		err := database.DB.QueryRow(ctx, `
-			SELECT p.id, p.name, p.description, p.enabled, p.domain_id
-			FROM projects p
-			JOIN role_assignments ra ON ra.project_id = p.id
-			WHERE ra.user_id = $1 AND p.domain_id = $2 AND p.enabled = true
-			LIMIT 1
-		`, user.ID, domainID).Scan(
-			&proj.ID, &proj.Name, &proj.Description, &proj.Enabled, &proj.DomainID,
-		)
-		if err != nil && err != pgx.ErrNoRows {
-			return nil, "", fmt.Errorf("database error: %w", err)
-		}
-
-		if err == nil {
-			projectID = proj.ID
-			project = &proj
-
-			// Fetch roles for this project
-			rows, err := database.DB.Query(ctx, `
-				SELECT r.name
-				FROM role_assignments ra
-				JOIN roles r ON ra.role_id = r.id
-				WHERE ra.user_id = $1 AND ra.project_id = $2
-			`, user.ID, projectID)
-			if err != nil {
-				return nil, "", fmt.Errorf("failed to fetch roles: %w", err)
-			}
-			defer rows.Close()
-
-			for rows.Next() {
-				var roleName string
-				if err := rows.Scan(&roleName); err != nil {
-					return nil, "", fmt.Errorf("failed to scan role: %w", err)
-				}
-				roles = append(roles, roleName)
-			}
-		}
-	} else if req.Auth.Scope != nil && req.Auth.Scope.Project != nil {
+	// Check if scope is explicitly requested
+	if req.Auth.Scope != nil && !req.Auth.Scope.IsUnscoped && req.Auth.Scope.Project != nil {
 		// Scoped authentication
 		projectName := req.Auth.Scope.Project.Name
 		projectIDParam := req.Auth.Scope.Project.ID
@@ -287,6 +244,7 @@ func (s *AuthService) AuthenticatePassword(ctx context.Context, req *AuthRequest
 			return nil, "", common.NewForbiddenError("user has no roles on this project")
 		}
 	}
+	// Otherwise: unscoped token (no project, no roles)
 
 	// Generate JWT token
 	now := time.Now()
