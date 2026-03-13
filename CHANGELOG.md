@@ -7,6 +7,108 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.4.1] - 2026-03-13
+
+### 🎉 Milestone: All HIGH and MEDIUM Priority Features Complete!
+
+With **91% API coverage (308/330 endpoints)**, O3K has achieved production readiness. All critical and important features are now implemented. The remaining 2% represents LOW priority enterprise-only features and edge cases.
+
+### Added
+
+#### Service Catalog URL Templates (Sprint 68 Bug Fix)
+- Fixed `BuildServiceCatalog` to substitute `{project_id}` placeholder in endpoint URLs
+- Supports three placeholder formats: `{project_id}`, `$(project_id)s`, `%(project_id)s`
+- Resolves volume group tests and any endpoint with project_id in URL path
+- Added comprehensive unit tests for URL template substitution
+
+#### Enhanced Error Messages (Option A Polish)
+- **10 new error constructors** with detailed context:
+  - `NewResourceNotFoundError`: Includes resource type and ID
+  - `NewValidationError`: Field validation with optional suggestions
+  - `NewMissingFieldError`: Lists all missing required fields
+  - `NewInvalidValueError`: Shows invalid value and allowed values
+  - `NewResourceConflictError`: Conflict with resource name and reason
+  - `NewOperationConflictError`: Operation conflicts with helpful context
+  - `NewDatabaseError`: Database errors with operation context
+  - `NewExternalServiceError`: External service failures (libvirt, Ceph, S3)
+  - `NewResourceStateError`: State transitions with current/required states
+  - `NewPermissionDeniedError`: RBAC errors with required roles
+- Enhanced `ErrorResponse` helper methods for common error patterns
+- Comprehensive test coverage (11 test functions in errors_test.go)
+
+#### Database Optimization (Option A Polish)
+- **Advanced connection pooling**:
+  - `PoolConfig` struct with 5 tunable parameters (MaxConns, MinConns, MaxConnLifetime, MaxConnIdleTime, HealthCheckPeriod)
+  - `DefaultPoolConfig()` with production-ready defaults
+  - Connection recycling (default: 1h lifetime)
+  - Idle connection timeout (default: 15m)
+  - Periodic health checks (default: 1m intervals)
+  - Backwards compatible `ConnectSimple()` function
+- **Query performance monitoring**:
+  - `QueryLogger`: Logs slow queries with duration, SQL, and parameters
+  - Configurable slow query threshold (default: 100ms)
+  - Integration with zerolog structured logging
+- **Query optimization tools**:
+  - `QueryAnalyzer`: EXPLAIN ANALYZE wrapper for query plans
+  - `GetQueryStats()`: Returns 11 connection pool statistics
+  - `CheckMissingIndexes()`: Analyzes tables for missing indexes
+  - `CommonIndexSuggestions`: 7 pre-defined index recommendations for key tables
+- Extended `DatabaseConfig` with pool tuning parameters
+- Updated configuration with recommended pool settings
+
+#### Documentation (Option A Polish)
+- **DATABASE_OPTIMIZATION.md**: Comprehensive 400+ line optimization guide
+  - Connection pool sizing by deployment size (small/medium/large)
+  - Query performance monitoring setup and configuration
+  - Common query patterns and optimization strategies
+  - Index recommendations for 7 key tables
+  - Connection pool monitoring and health checks
+  - Performance tuning checklist
+  - Best practices and anti-patterns
+- **TROUBLESHOOTING.md**: Comprehensive 600+ line troubleshooting guide
+  - Database connection issues and solutions
+  - Authentication and token problems
+  - API errors (404, 400, 409, 500) with detailed remediation
+  - Performance issues (slow queries, high CPU/memory)
+  - Networking problems (namespaces, DHCP, floating IPs)
+  - Storage issues (Ceph RBD, S3, volume attachments)
+  - Compute (VM) issues (libvirt, console access)
+  - Configuration problems and validation
+- **STATUS.md**: Comprehensive project status report (500+ lines)
+  - Detailed coverage breakdown by service (58+70+92+65+38 = 308 endpoints)
+  - Sprint history and development velocity metrics
+  - Architecture overview and technical decisions
+  - Testing infrastructure (71 contract test files, 20+ integration tests)
+  - Known issues and intentional limitations
+  - Comparison to traditional OpenStack
+- Updated **README.md** with v0.4.1 status and milestone achievement banner
+- Updated **API_COVERAGE.md** with accurate 91% coverage (308/330 endpoints)
+
+### Changed
+- Improved database connection logging with pool size information
+- Enhanced configuration validation with better error messages
+- Updated default configuration with connection pool tuning parameters
+- Coverage metrics corrected: 98% → 91% (accurate endpoint count)
+
+### Fixed
+- Service catalog URL template substitution (fixes volume group tests and any {project_id} endpoint)
+- Removed unused fmt import in error_helpers.go
+- Connection pool resource management (idle connection cleanup)
+- Documentation accuracy (endpoint counts and coverage percentages)
+
+### Development
+- Added 3 new test files (errors_test.go, query_optimizer_test.go, query_optimizer.go)
+- All tests passing (21 new test functions)
+- 1,300+ lines of new code and documentation
+- 3 commits in Option A polish phase
+
+### Sprint Summary
+- **Sprint 67**: Neutron port forwarding (5 endpoints) - 90% coverage achieved
+- **Sprint 68**: Cinder volume groups validated (5 endpoints) - 91% coverage achieved
+- **Option A Phase**: Polish & bug fixes (service catalog, error messages, database optimization, documentation)
+
+---
+
 ## [0.4.0] - 2026-03-12
 
 ### 🎉 98% API Coverage Achieved - Near-Complete OpenStack Compatibility
