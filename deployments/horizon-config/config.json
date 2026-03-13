@@ -1,5 +1,5 @@
 {
-    "command": "/usr/sbin/apache2ctl -DFOREGROUND -D FOREGROUND",
+    "command": "rm -f /etc/apache2/sites-enabled/000-default.conf && /usr/sbin/apache2ctl -DFOREGROUND",
     "config_files": [
         {
             "source": "/var/lib/kolla/config_files/local_settings",
