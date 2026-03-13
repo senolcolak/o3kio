@@ -1,6 +1,6 @@
 # O3K - OpenStack Lightweight Cloud Platform
 
-**Status**: v0.4.1 - Production Ready | 91% API Coverage (308/330 endpoints)
+**Status**: v0.5.0 - Production Ready | 91% API Coverage (308/330 endpoints) | 100% Horizon Compatible
 **Last Updated**: March 13, 2026
 
 **O3K** (OpenStack 3 Kubernetes-style) is a lightweight, high-performance implementation of OpenStack APIs in pure Go, inspired by how K3s simplified Kubernetes.
@@ -131,6 +131,73 @@ openstack server create --flavor m1.small --image cirros --network my-net test-v
 **That's it!** You now have a fully functional OpenStack cloud running locally.
 
 See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the complete quick start guide.
+
+### 🖥️ Deploy Horizon Dashboard
+
+Deploy OpenStack Horizon dashboard with O3K as the backend (100% compatible):
+
+```bash
+# 1. Ensure O3K is running
+docker compose -f deployments/docker-compose.yml up -d
+
+# 2. Create Horizon configuration
+mkdir -p ~/o3k-horizon/config
+cd ~/o3k-horizon
+
+# 3. Create local_settings.py
+cat > config/local_settings.py <<'EOF'
+OPENSTACK_HOST = "o3k"
+OPENSTACK_KEYSTONE_URL = "http://%s:35357/v3" % OPENSTACK_HOST
+OPENSTACK_API_VERSIONS = {"identity": 3, "image": 2, "volume": 3, "compute": 2.1}
+OPENSTACK_KEYSTONE_MULTIDOMAIN_SUPPORT = True
+OPENSTACK_KEYSTONE_DEFAULT_DOMAIN = "Default"
+SESSION_TIMEOUT = 14400  # 4 hours
+CONSOLE_TYPE = 'novnc'
+SECRET_KEY = 'change-this-in-production'
+EOF
+
+# 4. Create docker-compose.yml
+cat > docker-compose.yml <<'EOF'
+version: '3.8'
+services:
+  horizon:
+    image: kolla/ubuntu-horizon:zed
+    ports: ["80:80"]
+    volumes:
+      - ./config/local_settings.py:/etc/openstack-dashboard/local_settings.py:ro
+    networks: [o3k-network]
+    depends_on: [novnc]
+
+  novnc:
+    image: novnc/noVNC:latest
+    ports: ["6080:6080"]
+    networks: [o3k-network]
+
+networks:
+  o3k-network:
+    external: true
+    name: o3k_default
+EOF
+
+# 5. Start Horizon
+docker compose up -d
+
+# 6. Access dashboard
+open http://localhost/dashboard
+# Login: Domain=Default, User=admin, Password=secret
+```
+
+**Features Available in Horizon:**
+- ✅ Instance lifecycle (launch, start, stop, delete, resize, rebuild)
+- ✅ VNC console access (integrated with noVNC proxy)
+- ✅ Network topology visualization
+- ✅ Volume management (create, attach, snapshot)
+- ✅ Image management (upload, download, launch)
+- ✅ Security groups and firewall rules
+- ✅ Floating IPs and port forwarding
+- ✅ Multi-project isolation and RBAC
+
+**Comprehensive Guide**: See [specs/002-horizon-full-compatibility/quickstart.md](specs/002-horizon-full-compatibility/quickstart.md) for complete 15-30 minute walkthrough.
 
 ### 📖 Installation Options
 
@@ -391,7 +458,7 @@ Apache License 2.0 - See [LICENSE](LICENSE)
 
 ---
 
-**Status**: ✅ v0.4.1 Production Ready | **Coverage**: 91% (308/330 endpoints)
+**Status**: ✅ v0.5.0 Production Ready | **Coverage**: 91% (308/330 endpoints) | **Horizon**: 100% Compatible
 **Build**: ✅ SUCCESS (35MB) | **Tests**: ✅ 71 Contract Test Files PASS
-**Milestone**: 🎉 All HIGH and MEDIUM Priority Features Complete!
+**Milestone**: 🎉 OpenStack Horizon 100% Compatibility Achieved (Flamingo 2025.2)
 **Updated**: March 13, 2026

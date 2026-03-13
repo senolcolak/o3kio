@@ -397,6 +397,25 @@ func (svc *Service) EvacuateInstance(c *gin.Context) {
 	instanceID := c.Param("id")
 	projectID := c.GetString("project_id")
 
+	// Admin-only operation - check roles
+	roles := c.GetStringSlice("roles")
+	isAdmin := false
+	for _, role := range roles {
+		if role == "admin" {
+			isAdmin = true
+			break
+		}
+	}
+	if !isAdmin {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": gin.H{
+				"code":    403,
+				"message": "Policy doesn't allow evacuate to be performed",
+			},
+		})
+		return
+	}
+
 	var status string
 	err := database.DB.QueryRow(c.Request.Context(),
 		"SELECT status FROM instances WHERE id = $1 AND project_id = $2",
