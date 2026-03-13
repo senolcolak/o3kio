@@ -1,8 +1,8 @@
 # Remaining Work for 100% OpenStack API Compliance
 
-**Current Status**: 89% complete (298/330 endpoints)
-**Remaining**: ~32 endpoints to reach 100%
-**Updated**: 2026-03-12 (Post Sprint 66)
+**Current Status**: 90% complete (303/330 endpoints)
+**Remaining**: ~27 endpoints to reach 100%
+**Updated**: 2026-03-13 (Post Sprint 67)
 
 ---
 
@@ -11,9 +11,9 @@
 | Priority | Count | Effort | Timeline |
 |----------|-------|--------|----------|
 | 🔴 **HIGH** | ~0 endpoints | 0 sprints | COMPLETE ✅ |
-| 🟡 **MEDIUM** | ~9 endpoints | 2-3 sprints | 4-6 weeks |
+| 🟡 **MEDIUM** | ~4 endpoints | 1-2 sprints | 2-4 weeks |
 | 🟢 **LOW** | ~23 endpoints | 3-5 sprints | 6-10 weeks |
-| **TOTAL** | **~32 endpoints** | **5-8 sprints** | **10-16 weeks** |
+| **TOTAL** | **~27 endpoints** | **4-7 sprints** | **8-14 weeks** |
 
 ---
 
@@ -119,16 +119,18 @@
 **Coverage**: All 5 credential endpoints functional
 **Tests**: 5 contract tests passing
 
-### 9. Neutron Floating IP Port Forwarding - 5 endpoints
+### 9. Neutron Floating IP Port Forwarding (Sprint 67) - 5 endpoints ✅ COMPLETE
+**Status**: ✅ ALL IMPLEMENTED
 ```
-❌ GET    /v2.0/floatingips/:fip_id/port_forwardings
-❌ POST   /v2.0/floatingips/:fip_id/port_forwardings
-❌ GET    /v2.0/floatingips/:fip_id/port_forwardings/:id
-❌ PUT    /v2.0/floatingips/:fip_id/port_forwardings/:id
-❌ DELETE /v2.0/floatingips/:fip_id/port_forwardings/:id
+✅ GET    /v2.0/floatingips/:fip_id/port_forwardings        - List port forwardings
+✅ POST   /v2.0/floatingips/:fip_id/port_forwardings        - Create port forwarding
+✅ GET    /v2.0/floatingips/:fip_id/port_forwardings/:id    - Get port forwarding
+✅ PUT    /v2.0/floatingips/:fip_id/port_forwardings/:id    - Update port forwarding
+✅ DELETE /v2.0/floatingips/:fip_id/port_forwardings/:id    - Delete port forwarding
 ```
-**Impact**: Modern networking feature for container/K8s workloads
-**Effort**: 1 sprint
+**Status**: Port-specific NAT forwarding for containers/K8s workloads
+**Coverage**: All 5 port forwarding endpoints functional
+**Tests**: 2 contract tests (lifecycle + validation)
 
 ### 10. Glance Image Import (Sprint 66) - 3 endpoints ✅ COMPLETE
 **Status**: ✅ ALL IMPLEMENTED
@@ -215,7 +217,7 @@
 **Goal**: 95% → 97% coverage
 
 - **Sprint 66**: Keystone Credential Management (5) + Glance Import (3) ✅ COMPLETE
-- **Sprint 67**: Neutron Floating IP Port Forwarding (5 endpoints)
+- **Sprint 67**: Neutron Floating IP Port Forwarding (5 endpoints) ✅ COMPLETE
 - **Sprint 68**: Cinder Volume Groups basics (6 endpoints)
 
 **Result**: 97% coverage, modern features implemented
@@ -255,7 +257,7 @@
 ### By Service
 - **Keystone**: ~14 endpoints remaining (3 sprints)
 - **Nova**: ~15 endpoints remaining (3 sprints)
-- **Neutron**: ~13 endpoints remaining (2 sprints)
+- **Neutron**: ~8 endpoints remaining (1-2 sprints)
 - **Cinder**: ~18 endpoints remaining (3 sprints)
 - **Glance**: ~0 endpoints remaining (COMPLETE ✅)
 
@@ -309,12 +311,12 @@
 
 ## Current Sprint Progress
 
-**Completed Sprints**: 47 sprints (Sprint 1-42, 44-55, 56-66)
-**Endpoints Added**: +197 endpoints (from 101 to 298)
-**Coverage Gain**: +56% (from 33% to 89%)
+**Completed Sprints**: 48 sprints (Sprint 1-42, 44-55, 56-67)
+**Endpoints Added**: +202 endpoints (from 101 to 303)
+**Coverage Gain**: +57% (from 33% to 90%)
 
-**Next Sprint**: Sprint 67 (Neutron Floating IP Port Forwarding - 5 endpoints)
-**After That**: Sprint 68 (Cinder Volume Groups basics - 6 endpoints)
+**Next Sprint**: Sprint 68 (Cinder Volume Groups basics - 6 endpoints)
+**After That**: Sprint 69 (Neutron advanced networking - 8 endpoints)
 
 ---
 
@@ -352,4 +354,4 @@ This achieves "consumer indistinguishable from OpenStack" goal without implement
 
 ---
 
-**Next Action**: Continue with Sprint 67 (Neutron Floating IP Port Forwarding - 5 endpoints).
+**Next Action**: Continue with Sprint 68 (Cinder Volume Groups basics - 6 endpoints).

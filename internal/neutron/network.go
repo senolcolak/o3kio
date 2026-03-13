@@ -111,6 +111,13 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		v2.PUT("/floatingips/:id", svc.UpdateFloatingIP)
 		v2.DELETE("/floatingips/:id", svc.DeleteFloatingIP)
 
+
+		// Port Forwarding (nested under floatingips)
+		v2.GET("/floatingips/:id/port_forwardings", svc.ListPortForwardings)
+		v2.POST("/floatingips/:id/port_forwardings", svc.CreatePortForwarding)
+		v2.GET("/floatingips/:id/port_forwardings/:pf_id", svc.GetPortForwarding)
+		v2.PUT("/floatingips/:id/port_forwardings/:pf_id", svc.UpdatePortForwarding)
+		v2.DELETE("/floatingips/:id/port_forwardings/:pf_id", svc.DeletePortForwarding)
 		// Quotas
 		v2.GET("/quotas/:id", svc.GetQuota)
 		v2.GET("/quotas/:id/details", svc.GetQuotaDetails)

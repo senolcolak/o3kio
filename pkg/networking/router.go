@@ -294,6 +294,59 @@ func (rm *RouterManager) RemoveFloatingIP(routerID, floatingIP, fixedIP, externa
 	return nil
 }
 
+// AddPortForwarding adds a DNAT rule for a specific port forwarding
+// External traffic to floatingIP:externalPort is forwarded to fixedIP:internalPort
+func (rm *RouterManager) AddPortForwarding(routerID, floatingIP string, externalPort int,
+	fixedIP string, internalPort int, protocol, externalInterface string) error {
+
+	if rm.mode == "stub" {
+		return nil // No-op in stub mode
+	}
+
+	nsName := rm.GetRouterNamespaceName(routerID)
+
+	// DNAT: Incoming traffic to floatingIP:externalPort -> fixedIP:internalPort
+	cmd := exec.Command("ip", "netns", "exec", nsName,
+		"iptables", "-t", "nat", "-A", "PREROUTING",
+		"-d", floatingIP,
+		"-i", externalInterface,
+		"-p", protocol,
+		"--dport", fmt.Sprintf("%d", externalPort),
+		"-j", "DNAT",
+		"--to-destination", fmt.Sprintf("%s:%d", fixedIP, internalPort))
+
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to add port forwarding DNAT rule: %w, output: %s", err, output)
+	}
+
+	return nil
+}
+
+// RemovePortForwarding removes a DNAT rule for a specific port forwarding
+func (rm *RouterManager) RemovePortForwarding(routerID, floatingIP string, externalPort int,
+	fixedIP string, internalPort int, protocol, externalInterface string) error {
+
+	if rm.mode == "stub" {
+		return nil
+	}
+
+	nsName := rm.GetRouterNamespaceName(routerID)
+
+	// Remove DNAT rule
+	cmd := exec.Command("ip", "netns", "exec", nsName,
+		"iptables", "-t", "nat", "-D", "PREROUTING",
+		"-d", floatingIP,
+		"-i", externalInterface,
+		"-p", protocol,
+		"--dport", fmt.Sprintf("%d", externalPort),
+		"-j", "DNAT",
+		"--to-destination", fmt.Sprintf("%s:%d", fixedIP, internalPort))
+
+	cmd.Run() // Ignore error (rule may not exist)
+
+	return nil
+}
+
 // Helper functions
 
 func (rm *RouterManager) namespaceExists(nsName string) bool {
