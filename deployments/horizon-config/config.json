@@ -1,5 +1,5 @@
 {
-    "command": "/usr/sbin/apache2ctl -DFOREGROUND",
+    "command": "/bin/sh -c 'a2dissite 000-default && a2ensite horizon && /usr/sbin/apache2ctl -DFOREGROUND'",
     "config_files": [
         {
             "source": "/var/lib/kolla/config_files/local_settings",
