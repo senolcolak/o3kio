@@ -36,6 +36,10 @@ func NewService(mode, cephPool, cephConf string) *Service {
 
 // RegisterRoutes registers Cinder routes
 func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
+	// Version discovery endpoint (no auth required)
+	r.GET("/", svc.GetVersions)
+	r.GET("/v3", svc.GetVersionV3)
+
 	v3 := r.Group("/v3/:project_id")
 	{
 		// Volumes
@@ -1597,6 +1601,58 @@ func (svc *Service) ListServices(c *gin.Context) {
 				"state":          "up",
 				"updated_at":     now,
 				"disabled_reason": nil,
+			},
+		},
+	})
+}
+
+// GetVersions returns the root version discovery response
+func (svc *Service) GetVersions(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"versions": []gin.H{
+			{
+				"id":      "v3.0",
+				"status":  "CURRENT",
+				"version": "3.70",
+				"min_version": "3.0",
+				"updated": "2021-04-07T00:00:00Z",
+				"links": []gin.H{
+					{
+						"rel":  "self",
+						"href": "http://o3k:8776/v3/",
+					},
+				},
+				"media-types": []gin.H{
+					{
+						"base": "application/json",
+						"type": "application/vnd.openstack.volume+json;version=3",
+					},
+				},
+			},
+		},
+	})
+}
+
+// GetVersionV3 returns the v3 version information
+func (svc *Service) GetVersionV3(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"version": gin.H{
+			"id":      "v3.0",
+			"status":  "CURRENT",
+			"version": "3.70",
+			"min_version": "3.0",
+			"updated": "2021-04-07T00:00:00Z",
+			"links": []gin.H{
+				{
+					"rel":  "self",
+					"href": "http://o3k:8776/v3/",
+				},
+			},
+			"media-types": []gin.H{
+				{
+					"base": "application/json",
+					"type": "application/vnd.openstack.volume+json;version=3",
+				},
 			},
 		},
 	})
