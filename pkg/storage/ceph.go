@@ -18,6 +18,8 @@ type CephClient struct {
 	mu       sync.Mutex
 	stubVolumes map[string]*stubVolume // For stub mode
 	localPath   string                 // For local mode
+	conn        interface{}            // Ceph RADOS connection (type depends on build tags)
+	ioctx       interface{}            // RADOS IO context for pool (type depends on build tags)
 }
 
 // stubVolume represents a simulated volume
@@ -47,8 +49,17 @@ func NewCephClient(mode, pool, confFile string) *CephClient {
 		os.MkdirAll(client.localPath, 0755)
 	}
 
+	// Initialize Ceph connection if RBD mode
+	if mode == "rbd" || mode == "local,rbd" {
+		if err := client.initCephConnection(); err != nil {
+			fmt.Printf("Warning: failed to initialize Ceph connection: %v\n", err)
+			// Continue in degraded mode (will fallback to local if available)
+		}
+	}
+
 	return client
 }
+
 
 // CreateVolume creates a storage volume
 func (c *CephClient) CreateVolume(ctx context.Context, volumeID string, sizeGB int) error {
@@ -120,22 +131,6 @@ func (c *CephClient) createVolumeLocal(ctx context.Context, volumeID string, siz
 	return nil
 }
 
-// createVolumeRBD creates an RBD volume
-func (c *CephClient) createVolumeRBD(ctx context.Context, volumeID string, sizeGB int) error {
-	ctx, cancel := context.WithTimeout(ctx, c.timeout)
-	defer cancel()
-
-	imageName := "volume-" + volumeID
-
-	// TODO: Use github.com/ceph/go-ceph/rbd for production
-	// For now, using rbd command-line tool
-	// cmd := exec.CommandContext(ctx, "rbd", "create", "--size", fmt.Sprintf("%dG", sizeGB),
-	//     "--pool", c.pool, imageName)
-	// return cmd.Run()
-
-	// For testing, return error if Ceph not available
-	return fmt.Errorf("Ceph cluster not configured (would create %s/%s with size %dG)", c.pool, imageName, sizeGB)
-}
 
 // deleteVolumeLocal deletes a local volume
 func (c *CephClient) deleteVolumeLocal(ctx context.Context, volumeID string) error {
@@ -178,50 +173,21 @@ func (c *CephClient) deleteVolumeStub(volumeID string) error {
 	return nil
 }
 
-// deleteVolumeRBD deletes an actual RBD volume
-func (c *CephClient) deleteVolumeRBD(ctx context.Context, volumeID string) error {
-	ctx, cancel := context.WithTimeout(ctx, c.timeout)
-	defer cancel()
-
-	imageName := "volume-" + volumeID
-
-	// TODO: Use github.com/ceph/go-ceph/rbd
-	// cmd := exec.CommandContext(ctx, "rbd", "rm", "--pool", c.pool, imageName)
-	// return cmd.Run()
-
-	return fmt.Errorf("Ceph cluster not configured (would delete %s/%s)", c.pool, imageName)
-}
 
 // CreateSnapshot creates a snapshot of a volume
 func (c *CephClient) CreateSnapshot(ctx context.Context, volumeID, snapshotID string) error {
-	ctx, cancel := context.WithTimeout(ctx, c.timeout)
-	defer cancel()
-
-	_ = "volume-" + volumeID // imageName (unused in stub)
-	_ = "snap-" + snapshotID // snapName (unused in stub)
-
-	// Stub implementation
-	// cmd := exec.CommandContext(ctx, "rbd", "snap", "create",
-	//     fmt.Sprintf("%s/%s@%s", c.pool, imageName, snapName))
-	// return cmd.Run()
-
-	return nil
+	if c.mode == "rbd" || c.mode == "local,rbd" {
+		return c.CreateSnapshotRBD(ctx, volumeID, snapshotID)
+	}
+	return nil // Stub behavior for non-RBD modes
 }
 
 // DeleteSnapshot deletes a snapshot
 func (c *CephClient) DeleteSnapshot(ctx context.Context, volumeID, snapshotID string) error {
-	ctx, cancel := context.WithTimeout(ctx, c.timeout)
-	defer cancel()
-
-	_ = "volume-" + volumeID // imageName (unused in stub)
-	_ = "snap-" + snapshotID // snapName (unused in stub)
-
-	// Stub implementation
-	// cmd := exec.CommandContext(ctx, "rbd", "snap", "rm",
-	//     fmt.Sprintf("%s/%s@%s", c.pool, imageName, snapName))
-	// return cmd.Run()
-
-	return nil
+	if c.mode == "rbd" || c.mode == "local,rbd" {
+		return c.DeleteSnapshotRBD(ctx, volumeID, snapshotID)
+	}
+	return nil // Stub behavior for non-RBD modes
 }
 
 // VolumeExists checks if a volume exists
@@ -260,28 +226,12 @@ func (c *CephClient) volumeExistsLocal(volumeID string) (bool, error) {
 	return false, err
 }
 
-// volumeExistsRBD checks if an actual RBD volume exists
-func (c *CephClient) volumeExistsRBD(ctx context.Context, volumeID string) (bool, error) {
-	ctx, cancel := context.WithTimeout(ctx, c.timeout)
-	defer cancel()
-
-	imageName := "volume-" + volumeID
-
-	// TODO: Use github.com/ceph/go-ceph/rbd
-	// cmd := exec.CommandContext(ctx, "rbd", "info", "--pool", c.pool, imageName)
-	// err := cmd.Run()
-	// return err == nil, nil
-
-	return false, fmt.Errorf("Ceph cluster not configured (would check %s/%s)", c.pool, imageName)
-}
-
 // GetVolumeSize gets the size of a volume
 func (c *CephClient) GetVolumeSize(ctx context.Context, volumeID string) (int, error) {
-	ctx, cancel := context.WithTimeout(ctx, c.timeout)
-	defer cancel()
-
-	// Stub implementation - would parse rbd info output
-	return 0, nil
+	if c.mode == "rbd" || c.mode == "local,rbd" {
+		return c.GetVolumeSizeRBD(ctx, volumeID)
+	}
+	return 0, nil // Stub behavior
 }
 
 // GetRBDPath returns the RBD path for a volume (for libvirt attachment)
@@ -291,12 +241,8 @@ func (c *CephClient) GetRBDPath(volumeID string) string {
 
 // Health checks if Ceph cluster is accessible
 func (c *CephClient) Health(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, c.timeout)
-	defer cancel()
-
-	// Stub implementation
-	// cmd := exec.CommandContext(ctx, "rbd", "ls", "--pool", c.pool)
-	// return cmd.Run()
-
-	return nil
+	if c.mode == "rbd" || c.mode == "local,rbd" {
+		return c.HealthRBD(ctx)
+	}
+	return nil // Stub behavior
 }
