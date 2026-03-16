@@ -64,3 +64,16 @@ glance:
 logging:
   level: info
   format: json
+
+cache:
+  enabled: false  # Set to true to enable Redis caching
+  redis_url: "redis://localhost:6379/0"
+  key_prefix: "o3k:"
+  default_ttl: 1h
+
+  # Per-resource TTL overrides (optional)
+  ttl:
+    flavors: 24h        # Flavors rarely change
+    images: 1h          # Images change occasionally
+    networks: 30m       # Networks change more frequently
+    service_catalog: 24h # Service catalog is static

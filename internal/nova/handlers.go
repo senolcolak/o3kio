@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/cobaltcore-dev/o3k/internal/middleware"
+	"github.com/cobaltcore-dev/o3k/pkg/cache"
 	"github.com/cobaltcore-dev/o3k/pkg/hypervisor"
 )
 
@@ -21,13 +22,15 @@ type Service struct {
 	libvirtURI  string
 	libvirtMode string
 	vmManager   *hypervisor.VMManager
+	cache       *cache.Cache
 }
 
 // NewService creates a new Nova service
-func NewService(libvirtURI, libvirtMode string) *Service {
+func NewService(libvirtURI, libvirtMode string, cacheInstance *cache.Cache) *Service {
 	return &Service{
 		libvirtURI:  libvirtURI,
 		libvirtMode: libvirtMode,
+		cache:       cacheInstance,
 	}
 }
 
@@ -894,13 +897,26 @@ func (svc *Service) ListFlavorsDetail(c *gin.Context) {
 // GetFlavor returns a single flavor
 func (svc *Service) GetFlavor(c *gin.Context) {
 	flavorID := c.Param("id")
+	ctx := c.Request.Context()
 
+	// Try cache first
+	if svc.cache != nil {
+		cacheKey := "flavor:" + flavorID
+		var cached gin.H
+		if err := svc.cache.Get(ctx, cacheKey, &cached); err == nil {
+			// Cache hit
+			c.JSON(http.StatusOK, gin.H{"flavor": cached})
+			return
+		}
+	}
+
+	// Cache miss - query database
 	var id, name string
 	var vcpus, ramMB, diskGB int
 	var isPublic bool
 
 	// Support lookup by UUID or name
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := database.DB.QueryRow(ctx,
 		"SELECT id, name, vcpus, ram_mb, disk_gb, is_public FROM flavors WHERE id::text = $1 OR name = $1 LIMIT 1",
 		flavorID,
 	).Scan(&id, &name, &vcpus, &ramMB, &diskGB, &isPublic)
@@ -918,20 +934,26 @@ func (svc *Service) GetFlavor(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"flavor": gin.H{
-			"id":                         id,
-			"name":                       name,
-			"vcpus":                      vcpus,
-			"ram":                        ramMB,
-			"disk":                       diskGB,
-			"OS-FLV-EXT-DATA:ephemeral":  0,
-			"OS-FLV-DISABLED:disabled":   false,
-			"os-flavor-access:is_public": isPublic,
-			"rxtx_factor":                1.0,
-			"swap":                       "",
-		},
-	})
+	flavor := gin.H{
+		"id":                         id,
+		"name":                       name,
+		"vcpus":                      vcpus,
+		"ram":                        ramMB,
+		"disk":                       diskGB,
+		"OS-FLV-EXT-DATA:ephemeral":  0,
+		"OS-FLV-DISABLED:disabled":   false,
+		"os-flavor-access:is_public": isPublic,
+		"rxtx_factor":                1.0,
+		"swap":                       "",
+	}
+
+	// Store in cache (24 hour TTL - flavors rarely change)
+	if svc.cache != nil {
+		cacheKey := "flavor:" + id
+		svc.cache.Set(ctx, cacheKey, flavor, 24*time.Hour)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"flavor": flavor})
 }
 
 // ListImages - stub (proxy to Glance)

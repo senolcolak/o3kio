@@ -2,6 +2,7 @@ package nova
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/gin-gonic/gin"
@@ -30,6 +31,7 @@ func (svc *Service) CreateFlavor(c *gin.Context) {
 	}
 
 	flavorID := uuid.New().String()
+	ctx := c.Request.Context()
 
 	// Default to public flavor if not specified
 	isPublic := true
@@ -37,7 +39,7 @@ func (svc *Service) CreateFlavor(c *gin.Context) {
 		isPublic = *req.Flavor.IsPublic
 	}
 
-	_, err := database.DB.Exec(c.Request.Context(),
+	_, err := database.DB.Exec(ctx,
 		`INSERT INTO flavors (id, name, vcpus, ram_mb, disk_gb, is_public)
 		 VALUES ($1, $2, $3, $4, $5, $6)`,
 		flavorID, req.Flavor.Name, req.Flavor.VCPUs, req.Flavor.RAM, req.Flavor.Disk, isPublic,
@@ -45,6 +47,11 @@ func (svc *Service) CreateFlavor(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+
+	// Invalidate flavors list cache
+	if svc.cache != nil {
+		svc.cache.DeletePattern(ctx, "flavors:*")
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -66,8 +73,9 @@ func (svc *Service) CreateFlavor(c *gin.Context) {
 // DeleteFlavor handles DELETE /v2.1/flavors/:id
 func (svc *Service) DeleteFlavor(c *gin.Context) {
 	flavorID := c.Param("id")
+	ctx := c.Request.Context()
 
-	result, err := database.DB.Exec(c.Request.Context(),
+	result, err := database.DB.Exec(ctx,
 		"DELETE FROM flavors WHERE id = $1",
 		flavorID,
 	)
@@ -83,6 +91,12 @@ func (svc *Service) DeleteFlavor(c *gin.Context) {
 			"code":    404,
 		}})
 		return
+	}
+
+	// Invalidate cache
+	if svc.cache != nil {
+		svc.cache.Delete(ctx, "flavor:"+flavorID)
+		svc.cache.DeletePattern(ctx, "flavors:*")
 	}
 
 	c.Status(http.StatusNoContent)

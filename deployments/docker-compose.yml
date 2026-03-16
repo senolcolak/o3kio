@@ -21,6 +21,24 @@ services:
     networks:
       - o3k-network
 
+  # Redis Cache (optional - for performance optimization)
+  redis:
+    image: redis:7-alpine
+    container_name: o3k-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - o3k-network
+    restart: unless-stopped
+
   # O3K OpenStack-Compatible Cloud
   o3k:
     build:
@@ -29,6 +47,8 @@ services:
     container_name: o3k
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     ports:
       - "35357:35357"  # Keystone (Identity)
@@ -39,6 +59,8 @@ services:
       - "8775:8775"    # Metadata Service
     environment:
       O3K_DB_URL: "postgres://lightstack:secret@postgres:5432/lightstack?sslmode=disable"
+      O3K_REDIS_URL: "redis://redis:6379/0"
+      O3K_CACHE_ENABLED: "true"
       O3K_JWT_SECRET: "${O3K_JWT_SECRET:-change-me-in-production}"
       O3K_LOG_LEVEL: "info"
       O3K_LOG_FORMAT: "json"
@@ -91,6 +113,8 @@ services:
 
 volumes:
   postgres_data:
+    driver: local
+  redis_data:
     driver: local
   horizon_static:
     driver: local
