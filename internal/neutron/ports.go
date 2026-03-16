@@ -147,11 +147,37 @@ func (svc *Service) CreatePort(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to associate security group: %v", err)})
 			return
 		}
-
-		// NOTE: Actual iptables rule enforcement for ports will be implemented
-		// when VM attaches to this port (device_id is set). For now, we just
-		// track the association in the database.
 	}
+
+	// Apply security group rules (iptables or eBPF based on mode)
+	if svc.sgManager != nil && svc.mode == "ebpf" && len(fixedIPs) > 0 {
+		// eBPF mode: Apply rules directly to port
+		rules, err := svc.fetchSecurityGroupRulesForPort(c.Request.Context(), securityGroups)
+		if err != nil {
+			fmt.Printf("Warning: failed to fetch security group rules: %v\n", err)
+		} else {
+			// Parse MAC address
+			mac, err := net.ParseMAC(macAddress)
+			if err != nil {
+				fmt.Printf("Warning: invalid MAC address %s: %v\n", macAddress, err)
+			} else {
+				if err := svc.sgManager.ApplySecurityGroupToPort(portID, mac, rules); err != nil {
+					fmt.Printf("Warning: failed to apply eBPF security group rules: %v\n", err)
+				} else {
+					fmt.Printf("Applied %d eBPF security group rules to port %s\n", len(rules), portID)
+
+					// Attach XDP program to TAP interface
+					if err := svc.sgManager.AttachToInterface(tapName); err != nil {
+						fmt.Printf("Warning: failed to attach XDP program to %s: %v\n", tapName, err)
+					} else {
+						fmt.Printf("Attached XDP security group filter to interface %s\n", tapName)
+					}
+				}
+			}
+		}
+	}
+	// Note: For iptables mode, rules are applied when security groups are created/updated
+	// via CreateSecurityGroupChain() and AddRule() methods
 
 	// Distribute FDB entry if VXLAN is enabled
 	if svc.vxlanCoordinator != nil {
@@ -327,6 +353,26 @@ func (svc *Service) DeletePort(c *gin.Context) {
 
 	tapName := "tap-" + portID[:8]
 	nsName := svc.nsManager.GetNamespaceName(projectID)
+
+	// Detach XDP program if eBPF mode
+	if svc.sgManager != nil && svc.mode == "ebpf" {
+		if err := svc.sgManager.DetachFromInterface(tapName); err != nil {
+			fmt.Printf("Warning: failed to detach XDP program from %s: %v\n", tapName, err)
+		}
+
+		// Remove port from eBPF maps (need MAC address)
+		var macAddress string
+		database.DB.QueryRow(c.Request.Context(),
+			"SELECT mac_address FROM ports WHERE id = $1",
+			portID,
+		).Scan(&macAddress)
+
+		if macAddress != "" {
+			if mac, err := net.ParseMAC(macAddress); err == nil {
+				svc.sgManager.RemoveSecurityGroupFromPort(portID, mac)
+			}
+		}
+	}
 
 	// Delete TAP device
 	svc.tapManager.DeleteTAPDevice(tapName, true, nsName)
@@ -1011,4 +1057,68 @@ func (svc *Service) AllocatePortForInstance(ctx context.Context, networkID, proj
 		IPAddress: allocatedIP,
 		SubnetID:  subnetID,
 	}, nil
+}
+
+// fetchSecurityGroupRulesForPort retrieves all security group rules for given security group IDs
+func (svc *Service) fetchSecurityGroupRulesForPort(ctx context.Context, securityGroupIDs []string) ([]networking.SecurityGroupRule, error) {
+	if len(securityGroupIDs) == 0 {
+		return []networking.SecurityGroupRule{}, nil
+	}
+
+	// Build query with IN clause for multiple security groups
+	query := `
+		SELECT id, security_group_id, direction, ethertype, protocol,
+		       port_range_min, port_range_max, remote_ip_prefix, remote_group_id
+		FROM security_group_rules
+		WHERE security_group_id = ANY($1)
+	`
+
+	rows, err := database.DB.Query(ctx, query, securityGroupIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query security group rules: %w", err)
+	}
+	defer rows.Close()
+
+	var rules []networking.SecurityGroupRule
+	for rows.Next() {
+		var rule networking.SecurityGroupRule
+		var sgID string // Not part of SecurityGroupRule struct, just for WHERE clause
+		var protocol, remoteIP, remoteGroup sql.NullString
+		var portMin, portMax sql.NullInt32
+
+		err := rows.Scan(
+			&rule.ID,
+			&sgID, // security_group_id (not stored in rule struct)
+			&rule.Direction,
+			&rule.EtherType,
+			&protocol,
+			&portMin,
+			&portMax,
+			&remoteIP,
+			&remoteGroup,
+		)
+		if err != nil {
+			continue
+		}
+
+		if protocol.Valid {
+			rule.Protocol = protocol.String
+		}
+		if portMin.Valid {
+			rule.PortRangeMin = int(portMin.Int32)
+		}
+		if portMax.Valid {
+			rule.PortRangeMax = int(portMax.Int32)
+		}
+		if remoteIP.Valid {
+			rule.RemoteIPPrefix = remoteIP.String
+		}
+		if remoteGroup.Valid {
+			rule.RemoteGroupID = remoteGroup.String
+		}
+
+		rules = append(rules, rule)
+	}
+
+	return rules, nil
 }

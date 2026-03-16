@@ -73,6 +73,32 @@ func (m *SecurityGroupManager) GetStatistics() (*ebpf.Statistics, error) {
 	return m.ebpfMgr.GetStatistics()
 }
 
+// AttachToInterface attaches the XDP program to a network interface (eBPF-specific)
+func (m *SecurityGroupManager) AttachToInterface(ifaceName string) error {
+	if m.mode != "ebpf" {
+		return fmt.Errorf("AttachToInterface only supported in eBPF mode")
+	}
+
+	if m.ebpfMgr == nil {
+		return fmt.Errorf("eBPF manager not initialized")
+	}
+
+	return m.ebpfMgr.AttachToInterface(ifaceName)
+}
+
+// DetachFromInterface detaches the XDP program from a network interface (eBPF-specific)
+func (m *SecurityGroupManager) DetachFromInterface(ifaceName string) error {
+	if m.mode != "ebpf" {
+		return fmt.Errorf("DetachFromInterface only supported in eBPF mode")
+	}
+
+	if m.ebpfMgr == nil {
+		return fmt.Errorf("eBPF manager not initialized")
+	}
+
+	return m.ebpfMgr.DetachFromInterface(ifaceName)
+}
+
 // Close releases all resources (eBPF-specific)
 func (m *SecurityGroupManager) Close() error {
 	if m.mode == "ebpf" && m.ebpfMgr != nil {
