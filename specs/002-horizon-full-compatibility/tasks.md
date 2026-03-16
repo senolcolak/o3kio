@@ -131,8 +131,8 @@ O3K uses single-project structure with Go packages:
 ### Tests for User Story 3 ⚠️ WRITE FIRST - MUST FAIL BEFORE IMPLEMENTATION
 
 - [x] T038 [P] [US3] Contract test for VNC console URL format in test/contract/nova/console_test.go ✅ Already exists - ALL 6 TESTS PASS
-- [ ] T039 [P] [US3] Contract test for network topology data in test/contract/neutron/topology_test.go
-- [ ] T040 [US3] Integration test for console access in test/console_access_test.sh
+- [x] T039 [P] [US3] Contract test for network topology data in test/contract/neutron/topology_test.go ✅ Complete - 6 tests (network, port, router, subnet data)
+- [x] T040 [US3] Integration test for console access in test/console_access_test.sh ✅ Complete - 8-step console validation (VNC, serial, output)
 
 ### Implementation for User Story 3
 
@@ -161,8 +161,8 @@ O3K uses single-project structure with Go packages:
 
 ### Tests for User Story 4 ⚠️ WRITE FIRST - MUST FAIL BEFORE IMPLEMENTATION
 
-- [ ] T048 [P] [US4] Contract test for admin-only endpoint access in test/contract/nova/rbac_test.go
-- [ ] T049 [US4] Integration test for multi-user isolation in test/multi_user_rbac_test.sh
+- [x] T048 [P] [US4] Contract test for admin-only endpoint access in test/contract/nova/rbac_test.go ✅ Complete - 5 tests (resetState, evacuate, quota, isolation, reader role)
+- [x] T049 [US4] Integration test for multi-user isolation in test/multi_user_rbac_test.sh ✅ Complete - 8-step RBAC validation (2 users, 2 projects)
 
 ### Implementation for User Story 4
 
