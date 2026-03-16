@@ -238,12 +238,48 @@ func (svc *Service) ListVolumes(c *gin.Context) {
 		projectID = c.GetString("project_id")
 	}
 
-	rows, err := database.DB.Query(c.Request.Context(), `
+	// Parse pagination parameters
+	limit := 1000
+	offset := 0
+	if limitParam := c.Query("limit"); limitParam != "" {
+		if parsedLimit, err := strconv.Atoi(limitParam); err == nil && parsedLimit > 0 {
+			limit = parsedLimit
+		}
+	}
+	if offsetParam := c.Query("offset"); offsetParam != "" {
+		if parsedOffset, err := strconv.Atoi(offsetParam); err == nil && parsedOffset >= 0 {
+			offset = parsedOffset
+		}
+	}
+
+	// Marker-based pagination
+	var markerCondition string
+	var queryArgs []interface{}
+	queryArgs = append(queryArgs, projectID)
+	argIdx := 2
+
+	if marker := c.Query("marker"); marker != "" {
+		var markerCreatedAt time.Time
+		err := database.DB.QueryRow(c.Request.Context(),
+			"SELECT created_at FROM volumes WHERE id = $1 AND project_id = $2",
+			marker, projectID,
+		).Scan(&markerCreatedAt)
+		if err == nil {
+			markerCondition = fmt.Sprintf(" AND created_at < $%d", argIdx)
+			queryArgs = append(queryArgs, markerCreatedAt)
+			argIdx++
+		}
+	}
+
+	queryArgs = append(queryArgs, limit, offset)
+
+	rows, err := database.DB.Query(c.Request.Context(), fmt.Sprintf(`
 		SELECT id, name, size_gb
 		FROM volumes
-		WHERE project_id = $1
+		WHERE project_id = $1%s
 		ORDER BY created_at DESC
-	`, projectID)
+		LIMIT $%d OFFSET $%d
+	`, markerCondition, argIdx, argIdx+1), queryArgs...)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -282,12 +318,48 @@ func (svc *Service) ListVolumesDetail(c *gin.Context) {
 		projectID = c.GetString("project_id")
 	}
 
-	rows, err := database.DB.Query(c.Request.Context(), `
+	// Parse pagination parameters
+	limit := 1000
+	offset := 0
+	if limitParam := c.Query("limit"); limitParam != "" {
+		if parsedLimit, err := strconv.Atoi(limitParam); err == nil && parsedLimit > 0 {
+			limit = parsedLimit
+		}
+	}
+	if offsetParam := c.Query("offset"); offsetParam != "" {
+		if parsedOffset, err := strconv.Atoi(offsetParam); err == nil && parsedOffset >= 0 {
+			offset = parsedOffset
+		}
+	}
+
+	// Marker-based pagination
+	var markerCondition string
+	var queryArgs []interface{}
+	queryArgs = append(queryArgs, projectID)
+	argIdx := 2
+
+	if marker := c.Query("marker"); marker != "" {
+		var markerCreatedAt time.Time
+		err := database.DB.QueryRow(c.Request.Context(),
+			"SELECT created_at FROM volumes WHERE id = $1 AND project_id = $2",
+			marker, projectID,
+		).Scan(&markerCreatedAt)
+		if err == nil {
+			markerCondition = fmt.Sprintf(" AND v.created_at < $%d", argIdx)
+			queryArgs = append(queryArgs, markerCreatedAt)
+			argIdx++
+		}
+	}
+
+	queryArgs = append(queryArgs, limit, offset)
+
+	rows, err := database.DB.Query(c.Request.Context(), fmt.Sprintf(`
 		SELECT v.id, v.name, v.size_gb, v.status, v.bootable, v.attached_to_instance_id, v.created_at, v.updated_at
 		FROM volumes v
-		WHERE v.project_id = $1
+		WHERE v.project_id = $1%s
 		ORDER BY v.created_at DESC
-	`, projectID)
+		LIMIT $%d OFFSET $%d
+	`, markerCondition, argIdx, argIdx+1), queryArgs...)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

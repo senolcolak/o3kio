@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -39,14 +40,50 @@ type UpdateFloatingIPRequest struct {
 func (svc *Service) ListFloatingIPs(c *gin.Context) {
 	projectID := c.GetString("project_id")
 
-	rows, err := database.DB.Query(c.Request.Context(), `
+	// Parse pagination parameters
+	limit := 1000
+	offset := 0
+	if limitParam := c.Query("limit"); limitParam != "" {
+		if parsedLimit, err := strconv.Atoi(limitParam); err == nil && parsedLimit > 0 {
+			limit = parsedLimit
+		}
+	}
+	if offsetParam := c.Query("offset"); offsetParam != "" {
+		if parsedOffset, err := strconv.Atoi(offsetParam); err == nil && parsedOffset >= 0 {
+			offset = parsedOffset
+		}
+	}
+
+	// Marker-based pagination
+	var markerCondition string
+	var queryArgs []interface{}
+	queryArgs = append(queryArgs, projectID)
+	argIdx := 2
+
+	if marker := c.Query("marker"); marker != "" {
+		var markerCreatedAt time.Time
+		err := database.DB.QueryRow(c.Request.Context(),
+			"SELECT created_at FROM floating_ips WHERE id = $1 AND project_id = $2",
+			marker, projectID,
+		).Scan(&markerCreatedAt)
+		if err == nil {
+			markerCondition = fmt.Sprintf(" AND created_at < $%d", argIdx)
+			queryArgs = append(queryArgs, markerCreatedAt)
+			argIdx++
+		}
+	}
+
+	queryArgs = append(queryArgs, limit, offset)
+
+	rows, err := database.DB.Query(c.Request.Context(), fmt.Sprintf(`
 		SELECT id, project_id, floating_network_id, floating_ip_address,
 		       fixed_ip_address, port_id, router_id, status, description,
 		       created_at, updated_at
 		FROM floating_ips
-		WHERE project_id = $1
+		WHERE project_id = $1%s
 		ORDER BY created_at DESC
-	`, projectID)
+		LIMIT $%d OFFSET $%d
+	`, markerCondition, argIdx, argIdx+1), queryArgs...)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

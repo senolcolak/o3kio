@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -482,9 +483,35 @@ func (svc *Service) CreateServer(c *gin.Context) {
 func (svc *Service) ListServers(c *gin.Context) {
 	projectID := c.GetString("project_id")
 
+	// Parse pagination parameters
+	limit := 1000 // Default limit
+	offset := 0
+	if limitParam := c.Query("limit"); limitParam != "" {
+		if parsedLimit, err := strconv.Atoi(limitParam); err == nil && parsedLimit > 0 {
+			limit = parsedLimit
+		}
+	}
+	if offsetParam := c.Query("offset"); offsetParam != "" {
+		if parsedOffset, err := strconv.Atoi(offsetParam); err == nil && parsedOffset >= 0 {
+			offset = parsedOffset
+		}
+	}
+	if markerParam := c.Query("marker"); markerParam != "" {
+		// Marker-based pagination: get offset of marker UUID
+		var markerOffset int
+		database.DB.QueryRow(c.Request.Context(),
+			`SELECT ROW_NUMBER() OVER (ORDER BY created_at DESC) - 1
+			 FROM instances WHERE project_id = $1 AND id = $2`,
+			projectID, markerParam,
+		).Scan(&markerOffset)
+		if markerOffset > 0 {
+			offset = markerOffset
+		}
+	}
+
 	rows, err := database.DB.Query(c.Request.Context(),
-		"SELECT id, name FROM instances WHERE project_id = $1 ORDER BY created_at DESC",
-		projectID,
+		"SELECT id, name FROM instances WHERE project_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+		projectID, limit, offset,
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -518,15 +545,51 @@ func (svc *Service) ListServers(c *gin.Context) {
 func (svc *Service) ListServersDetail(c *gin.Context) {
 	projectID := c.GetString("project_id")
 
-	rows, err := database.DB.Query(c.Request.Context(), `
+	// Parse pagination parameters
+	limit := 1000
+	offset := 0
+	if limitParam := c.Query("limit"); limitParam != "" {
+		if parsedLimit, err := strconv.Atoi(limitParam); err == nil && parsedLimit > 0 {
+			limit = parsedLimit
+		}
+	}
+	if offsetParam := c.Query("offset"); offsetParam != "" {
+		if parsedOffset, err := strconv.Atoi(offsetParam); err == nil && parsedOffset >= 0 {
+			offset = parsedOffset
+		}
+	}
+
+	// Marker-based pagination
+	var markerCondition string
+	var queryArgs []interface{}
+	queryArgs = append(queryArgs, projectID)
+	argIdx := 2
+
+	if marker := c.Query("marker"); marker != "" {
+		var markerCreatedAt time.Time
+		err := database.DB.QueryRow(c.Request.Context(),
+			"SELECT created_at FROM instances WHERE id = $1 AND project_id = $2",
+			marker, projectID,
+		).Scan(&markerCreatedAt)
+		if err == nil {
+			markerCondition = fmt.Sprintf(" AND i.created_at < $%d", argIdx)
+			queryArgs = append(queryArgs, markerCreatedAt)
+			argIdx++
+		}
+	}
+
+	queryArgs = append(queryArgs, limit, offset)
+
+	rows, err := database.DB.Query(c.Request.Context(), fmt.Sprintf(`
 		SELECT i.id, i.name, i.status, i.power_state, i.project_id, i.user_id,
 		       i.flavor_id, i.image_id, i.created_at, i.updated_at, i.launched_at,
 		       f.vcpus, f.ram_mb, f.disk_gb, f.name as flavor_name
 		FROM instances i
 		LEFT JOIN flavors f ON i.flavor_id = f.id
-		WHERE i.project_id = $1
+		WHERE i.project_id = $1%s
 		ORDER BY i.created_at DESC
-	`, projectID)
+		LIMIT $%d OFFSET $%d
+	`, markerCondition, argIdx, argIdx+1), queryArgs...)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

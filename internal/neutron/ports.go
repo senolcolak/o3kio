@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -210,13 +211,49 @@ func (svc *Service) CreatePort(c *gin.Context) {
 func (svc *Service) ListPorts(c *gin.Context) {
 	projectID := c.GetString("project_id")
 
-	rows, err := database.DB.Query(c.Request.Context(), `
+	// Parse pagination parameters
+	limit := 1000
+	offset := 0
+	if limitParam := c.Query("limit"); limitParam != "" {
+		if parsedLimit, err := strconv.Atoi(limitParam); err == nil && parsedLimit > 0 {
+			limit = parsedLimit
+		}
+	}
+	if offsetParam := c.Query("offset"); offsetParam != "" {
+		if parsedOffset, err := strconv.Atoi(offsetParam); err == nil && parsedOffset >= 0 {
+			offset = parsedOffset
+		}
+	}
+
+	// Marker-based pagination
+	var markerCondition string
+	var queryArgs []interface{}
+	queryArgs = append(queryArgs, projectID)
+	argIdx := 2
+
+	if marker := c.Query("marker"); marker != "" {
+		var markerCreatedAt time.Time
+		err := database.DB.QueryRow(c.Request.Context(),
+			"SELECT created_at FROM ports WHERE id = $1",
+			marker,
+		).Scan(&markerCreatedAt)
+		if err == nil {
+			markerCondition = fmt.Sprintf(" AND p.created_at < $%d", argIdx)
+			queryArgs = append(queryArgs, markerCreatedAt)
+			argIdx++
+		}
+	}
+
+	queryArgs = append(queryArgs, limit, offset)
+
+	rows, err := database.DB.Query(c.Request.Context(), fmt.Sprintf(`
 		SELECT p.id, p.name, p.network_id, p.device_id, p.device_owner, p.mac_address, p.admin_state_up, p.status, p.fixed_ips, p.created_at, p.updated_at
 		FROM ports p
 		JOIN networks n ON p.network_id = n.id
-		WHERE p.project_id = $1 OR n.shared = true
+		WHERE (p.project_id = $1 OR n.shared = true)%s
 		ORDER BY p.created_at DESC
-	`, projectID)
+		LIMIT $%d OFFSET $%d
+	`, markerCondition, argIdx, argIdx+1), queryArgs...)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
