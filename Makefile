@@ -1,4 +1,4 @@
-.PHONY: build run test clean install-deps migrate db-up db-down build-ebpf
+.PHONY: build run test clean install-deps migrate db-up db-down build-ebpf bench bench-quick
 
 # Build variables
 BINARY_NAME=o3k
@@ -88,6 +88,22 @@ test-all: test test-contract test-integration test-multi-tenant test-errors test
 clean:
 	@echo "Cleaning..."
 	rm -rf $(BUILD_DIR)
+
+# Run comprehensive performance benchmarks (Sprint 69)
+bench:
+	@echo "Running comprehensive performance benchmarks..."
+	@echo "Checking O3K is running..."
+	@curl -s http://localhost:35357/v3 > /dev/null || (echo "ERROR: O3K not running. Run 'docker compose -f deployments/docker-compose.yml up -d' first." && exit 1)
+	@bash test/benchmark/run_benchmarks.sh
+
+# Run quick benchmarks (Go only, no k6)
+bench-quick:
+	@echo "Running quick Go benchmarks..."
+	@echo "Cache benchmarks:"
+	@go test -bench=BenchmarkCache -benchmem -benchtime=5s ./test/benchmark/ || echo "Skipped (Redis not available)"
+	@echo ""
+	@echo "Database benchmarks:"
+	@go test -bench=BenchmarkDatabase -benchmem -benchtime=5s ./test/benchmark/ || echo "Skipped (PostgreSQL not available)"
 
 # Run database migrations manually
 migrate:
