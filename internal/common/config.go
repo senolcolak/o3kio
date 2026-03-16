@@ -17,6 +17,7 @@ type Config struct {
 	Cinder   CinderConfig   `yaml:"cinder"`
 	Glance   GlanceConfig   `yaml:"glance"`
 	Logging  LoggingConfig  `yaml:"logging"`
+	Cache    CacheConfig    `yaml:"cache"`
 }
 
 type DatabaseConfig struct {
@@ -82,6 +83,14 @@ type GlanceConfig struct {
 type LoggingConfig struct {
 	Level  string `yaml:"level"`
 	Format string `yaml:"format"`
+}
+
+type CacheConfig struct {
+	Enabled    bool                   `yaml:"enabled"`
+	RedisURL   string                 `yaml:"redis_url"`
+	KeyPrefix  string                 `yaml:"key_prefix"`
+	DefaultTTL time.Duration          `yaml:"default_ttl"`
+	TTL        map[string]time.Duration `yaml:"ttl"` // Per-resource TTL overrides
 }
 
 // LoadConfig loads configuration from file and applies environment variable overrides

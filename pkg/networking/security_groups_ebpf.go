@@ -1,3 +1,12 @@
+package networking
+
+import (
+	"fmt"
+	"net"
+
+	"github.com/cobaltcore-dev/o3k/pkg/networking/ebpf"
+)
+
 // ApplySecurityGroupToPort applies security group rules to a specific port (eBPF-specific)
 func (m *SecurityGroupManager) ApplySecurityGroupToPort(portID string, portMAC net.HardwareAddr, rules []SecurityGroupRule) error {
 	if m.mode != "ebpf" {

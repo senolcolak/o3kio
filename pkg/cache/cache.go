@@ -225,7 +225,7 @@ func (c *Cache) GetStats(ctx context.Context) (*Stats, error) {
 	}
 
 	// Get memory usage
-	info, err := c.client.Info(ctx, "memory").Result()
+	_, err = c.client.Info(ctx, "memory").Result()
 	if err == nil {
 		// Parse used_memory from info string
 		// Format: "used_memory:1234567\r\n..."
@@ -234,7 +234,7 @@ func (c *Cache) GetStats(ctx context.Context) (*Stats, error) {
 	}
 
 	// Get hit/miss rates
-	infoStats, err := c.client.Info(ctx, "stats").Result()
+	_, err = c.client.Info(ctx, "stats").Result()
 	if err == nil {
 		// Parse keyspace_hits and keyspace_misses
 		// Format: "keyspace_hits:123\r\nkeyspace_misses:456\r\n..."

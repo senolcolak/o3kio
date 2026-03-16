@@ -10,6 +10,7 @@ import (
 
 	"github.com/cobaltcore-dev/o3k/internal/common"
 	"github.com/cobaltcore-dev/o3k/internal/database"
+	"github.com/cobaltcore-dev/o3k/pkg/cache"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
@@ -17,12 +18,14 @@ import (
 // Service handles Keystone API endpoints
 type Service struct {
 	authService *AuthService
+	cache       *cache.Cache
 }
 
 // NewService creates a new Keystone service
-func NewService(authService *AuthService) *Service {
+func NewService(authService *AuthService, cacheInstance *cache.Cache) *Service {
 	return &Service{
 		authService: authService,
+		cache:       cacheInstance,
 	}
 }
 

@@ -23,6 +23,7 @@ import (
 	"github.com/cobaltcore-dev/o3k/internal/neutron"
 	"github.com/cobaltcore-dev/o3k/internal/nova"
 	"github.com/cobaltcore-dev/o3k/internal/placement"
+	"github.com/cobaltcore-dev/o3k/pkg/cache"
 	"github.com/cobaltcore-dev/o3k/pkg/networking"
 )
 
@@ -87,16 +88,33 @@ func main() {
 		log.Fatalf("Failed to run migrations: %v", err)
 	}
 
+	// Initialize cache
+	var cacheInstance *cache.Cache
+	if cfg.Cache.Enabled {
+		cacheInstance, err = cache.NewCache(cache.Config{
+			RedisURL:   cfg.Cache.RedisURL,
+			Enabled:    cfg.Cache.Enabled,
+			KeyPrefix:  cfg.Cache.KeyPrefix,
+			DefaultTTL: cfg.Cache.DefaultTTL,
+		})
+		if err != nil {
+			log.Fatalf("Failed to initialize cache: %v", err)
+		}
+		log.Printf("Redis cache enabled (prefix: %s, default TTL: %v)", cfg.Cache.KeyPrefix, cfg.Cache.DefaultTTL)
+	} else {
+		log.Println("Cache disabled")
+	}
+
 	// Initialize services
-	authService := keystone.NewAuthService(cfg.Keystone.JWTSecret, cfg.Keystone.TokenTTL)
-	keystoneService := keystone.NewService(authService)
+	authService := keystone.NewAuthService(cfg.Keystone.JWTSecret, cfg.Keystone.TokenTTL, cacheInstance)
+	keystoneService := keystone.NewService(authService, cacheInstance)
 
 	// Set default libvirt mode if not specified
 	libvirtMode := cfg.Nova.LibvirtMode
 	if libvirtMode == "" {
 		libvirtMode = "stub"
 	}
-	novaService := nova.NewService(cfg.Nova.LibvirtURI, libvirtMode)
+	novaService := nova.NewService(cfg.Nova.LibvirtURI, libvirtMode, cacheInstance)
 
 	// Initialize hypervisor
 	if err := novaService.InitHypervisor(); err != nil {
@@ -111,7 +129,7 @@ func main() {
 	if networkingMode == "" {
 		networkingMode = "stub"
 	}
-	neutronService := neutron.NewService(networkingMode)
+	neutronService := neutron.NewService(networkingMode, cacheInstance)
 	log.Printf("Neutron initialized in %s mode", networkingMode)
 
 	// Initialize VXLAN if enabled
@@ -179,6 +197,7 @@ func main() {
 		cfg.Glance.S3Bucket,
 		cfg.Glance.S3Region,
 		cfg.Glance.S3Endpoint,
+		cacheInstance,
 	)
 	log.Printf("Glance initialized in %s mode", glanceStorageMode)
 

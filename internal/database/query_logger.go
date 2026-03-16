@@ -51,17 +51,17 @@ func (ql *QueryLogger) QueryRow(ctx context.Context, sql string, args ...interfa
 }
 
 // Exec executes a command with timing
-func (ql *QueryLogger) Exec(ctx context.Context, sql string, args ...interface{}) (pgx.CommandTag, error) {
+func (ql *QueryLogger) Exec(ctx context.Context, sql string, args ...interface{}) error {
 	start := time.Now()
-	tag, err := ql.pool.Exec(ctx, sql, args...)
+	_, err := ql.pool.Exec(ctx, sql, args...)
 	duration := time.Since(start)
 
 	if duration > ql.slowQueryThreshold {
-		log.Printf("[SLOW QUERY] %s | Duration: %v | Rows affected: %d | Args: %v",
-			sql, duration, tag.RowsAffected(), args)
+		log.Printf("[SLOW QUERY] %s | Duration: %v | Args: %v",
+			sql, duration, args)
 	}
 
-	return tag, err
+	return err
 }
 
 // QueryStats holds query performance statistics

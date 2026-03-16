@@ -2,7 +2,6 @@ package networking
 
 import (
 	"fmt"
-	"net"
 	"sync"
 
 	"github.com/cobaltcore-dev/o3k/pkg/networking/ebpf"

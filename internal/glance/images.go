@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/cobaltcore-dev/o3k/internal/database"
+	"github.com/cobaltcore-dev/o3k/pkg/cache"
 	"github.com/cobaltcore-dev/o3k/pkg/storage"
 )
 
@@ -23,10 +24,11 @@ type Service struct {
 	s3Region    string
 	s3Endpoint  string
 	imageStore  *storage.ImageStore
+	cache       *cache.Cache
 }
 
 // NewService creates a new Glance service
-func NewService(mode, cephPool, cephConf, s3Bucket, s3Region, s3Endpoint string) *Service {
+func NewService(mode, cephPool, cephConf, s3Bucket, s3Region, s3Endpoint string, cacheInstance *cache.Cache) *Service {
 	return &Service{
 		mode:        mode,
 		storageMode: mode, // storageMode same as mode for backward compatibility
@@ -36,6 +38,7 @@ func NewService(mode, cephPool, cephConf, s3Bucket, s3Region, s3Endpoint string)
 		s3Region:    s3Region,
 		s3Endpoint:  s3Endpoint,
 		imageStore:  storage.NewImageStore(mode, cephPool, cephConf, s3Bucket, s3Region, s3Endpoint),
+		cache:       cacheInstance,
 	}
 }
 
@@ -278,7 +281,19 @@ func (svc *Service) ListImages(c *gin.Context) {
 func (svc *Service) GetImage(c *gin.Context) {
 	imageID := c.Param("id")
 	projectID := c.GetString("project_id")
+	ctx := c.Request.Context()
 
+	// Try cache first
+	if svc.cache != nil {
+		cacheKey := "image:" + imageID
+		var cached gin.H
+		if err := svc.cache.Get(ctx, cacheKey, &cached); err == nil {
+			c.JSON(http.StatusOK, cached)
+			return
+		}
+	}
+
+	// Cache miss - query database
 	var id, name, status, visibility, diskFormat, containerFormat string
 	var checksum sql.NullString
 	var sizeBytes sql.NullInt64
@@ -287,7 +302,7 @@ func (svc *Service) GetImage(c *gin.Context) {
 
 	// Try by UUID first, then by name if UUID parsing fails
 	// Use CAST to handle non-UUID strings gracefully
-	err := database.DB.QueryRow(c.Request.Context(), `
+	err := database.DB.QueryRow(ctx, `
 		SELECT id, name, status, visibility, size_bytes, disk_format, container_format, min_disk_gb, min_ram_mb, checksum, created_at, updated_at
 		FROM images
 		WHERE (id::text = $1 OR name = $1) AND (visibility = 'public' OR project_id = $2)
@@ -328,7 +343,7 @@ func (svc *Service) GetImage(c *gin.Context) {
 	}
 
 	// Load tags
-	rows, err := database.DB.Query(c.Request.Context(),
+	rows, err := database.DB.Query(ctx,
 		"SELECT tag FROM image_tags WHERE image_id = $1 ORDER BY tag",
 		id,
 	)
@@ -345,8 +360,11 @@ func (svc *Service) GetImage(c *gin.Context) {
 			tags = []string{}
 		}
 		image["tags"] = tags
-	} else {
-		image["tags"] = []string{}
+	}
+
+	// Store in cache (1h TTL per config)
+	if svc.cache != nil {
+		svc.cache.Set(ctx, "image:"+id, image, 1*time.Hour)
 	}
 
 	c.JSON(http.StatusOK, image)
@@ -356,21 +374,28 @@ func (svc *Service) GetImage(c *gin.Context) {
 func (svc *Service) DeleteImage(c *gin.Context) {
 	imageID := c.Param("id")
 	projectID := c.GetString("project_id")
+	ctx := c.Request.Context()
 
 	// Delete from storage
-	if err := svc.imageStore.DeleteImage(c.Request.Context(), imageID); err != nil {
+	if err := svc.imageStore.DeleteImage(ctx, imageID); err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": fmt.Sprintf("failed to delete image from storage: %v", err)})
 		return
 	}
 
 	// Delete from database
-	_, err := database.DB.Exec(c.Request.Context(),
+	_, err := database.DB.Exec(ctx,
 		"DELETE FROM images WHERE id = $1 AND (visibility = 'public' OR project_id = $2)",
 		imageID, projectID,
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+
+	// Invalidate cache
+	if svc.cache != nil {
+		svc.cache.Delete(ctx, "image:"+imageID)
+		svc.cache.DeletePattern(ctx, "images:*")
 	}
 
 	c.Status(http.StatusNoContent)

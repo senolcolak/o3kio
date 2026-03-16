@@ -217,9 +217,7 @@ func (m *SecurityGroupManager) Close() error {
 	}
 
 	// Close collection (also closes maps and programs)
-	if err := m.coll.Close(); err != nil {
-		return fmt.Errorf("failed to close eBPF collection: %w", err)
-	}
+	m.coll.Close() // Note: Close() doesn't return error in cilium/ebpf v0.12+
 
 	return nil
 }

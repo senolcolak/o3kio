@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/cobaltcore-dev/o3k/internal/database"
+	"github.com/cobaltcore-dev/o3k/pkg/cache"
 	"github.com/cobaltcore-dev/o3k/pkg/networking"
 )
 
@@ -24,11 +25,12 @@ type Service struct {
 	sgManager        *networking.SecurityGroupManager
 	routerManager    *networking.RouterManager
 	vxlanCoordinator *VXLANCoordinator
+	cache            *cache.Cache
 }
 
 // NewService creates a new Neutron service
-func NewService(mode string) *Service {
-	sgManager, _ := networking.NewSecurityGroupManager(mode) // Ignore error for now
+func NewService(mode string, cacheInstance *cache.Cache) *Service {
+	sgManager, _ := networking.NewSecurityGroupManager(mode, "") // Ignore error for now, empty path for stub/iptables
 	return &Service{
 		mode:          mode,
 		nsManager:     networking.NewNetworkNamespaceManager(mode),
@@ -37,6 +39,7 @@ func NewService(mode string) *Service {
 		dhcpManager:   networking.NewDHCPManager(mode),
 		sgManager:     sgManager,
 		routerManager: networking.NewRouterManager(mode),
+		cache:         cacheInstance,
 	}
 }
 
@@ -516,13 +519,25 @@ func (svc *Service) ListNetworks(c *gin.Context) {
 func (svc *Service) GetNetwork(c *gin.Context) {
 	networkID := c.Param("id")
 	projectID := c.GetString("project_id")
+	ctx := c.Request.Context()
 
+	// Try cache first
+	if svc.cache != nil {
+		cacheKey := "network:" + networkID
+		var cached gin.H
+		if err := svc.cache.Get(ctx, cacheKey, &cached); err == nil {
+			c.JSON(http.StatusOK, gin.H{"network": cached})
+			return
+		}
+	}
+
+	// Cache miss - query database
 	var id, name, status string
 	var adminStateUp, shared bool
 	var mtu int
 	var createdAt, updatedAt time.Time
 
-	err := database.DB.QueryRow(c.Request.Context(), `
+	err := database.DB.QueryRow(ctx, `
 		SELECT id, name, admin_state_up, status, shared, mtu, created_at, updated_at
 		FROM networks
 		WHERE (id::text = $1 OR name = $1) AND (project_id = $2 OR shared = true)
@@ -538,25 +553,31 @@ func (svc *Service) GetNetwork(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"network": gin.H{
-			"id":             id,
-			"name":           name,
-			"tenant_id":      projectID,
-			"admin_state_up": adminStateUp,
-			"status":         status,
-			"shared":         shared,
-			"mtu":            mtu,
-			"created_at":     createdAt.Format(time.RFC3339),
-			"updated_at":     updatedAt.Format(time.RFC3339),
-		},
-	})
+	network := gin.H{
+		"id":             id,
+		"name":           name,
+		"tenant_id":      projectID,
+		"admin_state_up": adminStateUp,
+		"status":         status,
+		"shared":         shared,
+		"mtu":            mtu,
+		"created_at":     createdAt.Format(time.RFC3339),
+		"updated_at":     updatedAt.Format(time.RFC3339),
+	}
+
+	// Store in cache (30min TTL per config)
+	if svc.cache != nil {
+		svc.cache.Set(ctx, "network:"+id, network, 30*time.Minute)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"network": network})
 }
 
 // DeleteNetwork deletes a network
 func (svc *Service) DeleteNetwork(c *gin.Context) {
 	networkID := c.Param("id")
 	projectID := c.GetString("project_id")
+	ctx := c.Request.Context()
 
 	bridgeName := "br-" + networkID[:8]
 	nsName := svc.nsManager.GetNamespaceName(projectID)
@@ -565,13 +586,19 @@ func (svc *Service) DeleteNetwork(c *gin.Context) {
 	svc.brManager.DeleteBridge(bridgeName, true, nsName)
 
 	// Delete from database
-	_, err := database.DB.Exec(c.Request.Context(),
+	_, err := database.DB.Exec(ctx,
 		"DELETE FROM networks WHERE id = $1 AND project_id = $2",
 		networkID, projectID,
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+
+	// Invalidate cache
+	if svc.cache != nil {
+		svc.cache.Delete(ctx, "network:"+networkID)
+		svc.cache.DeletePattern(ctx, "networks:*")
 	}
 
 	c.Status(http.StatusNoContent)

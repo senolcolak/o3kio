@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/cobaltcore-dev/o3k/internal/common"
 	"github.com/cobaltcore-dev/o3k/internal/database"
+	"github.com/cobaltcore-dev/o3k/pkg/cache"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -27,13 +28,15 @@ type TokenClaims struct {
 type AuthService struct {
 	jwtSecret []byte
 	tokenTTL  time.Duration
+	cache     *cache.Cache
 }
 
 // NewAuthService creates a new auth service
-func NewAuthService(jwtSecret string, tokenTTL time.Duration) *AuthService {
+func NewAuthService(jwtSecret string, tokenTTL time.Duration, cacheInstance *cache.Cache) *AuthService {
 	return &AuthService{
 		jwtSecret: []byte(jwtSecret),
 		tokenTTL:  tokenTTL,
+		cache:     cacheInstance,
 	}
 }
 
@@ -322,7 +325,7 @@ func (s *AuthService) AuthenticatePassword(ctx context.Context, req *AuthRequest
 		}
 
 		// Add service catalog
-		resp.Token.Catalog = BuildServiceCatalog(projectID)
+		resp.Token.Catalog = BuildServiceCatalog(projectID, s.cache)
 	}
 
 	return resp, tokenString, nil
@@ -501,7 +504,7 @@ func (s *AuthService) AuthenticateToken(ctx context.Context, req *AuthRequest) (
 		}
 
 		// Add service catalog
-		resp.Token.Catalog = BuildServiceCatalog(projectID)
+		resp.Token.Catalog = BuildServiceCatalog(projectID, s.cache)
 	}
 
 	return resp, tokenString, nil
@@ -539,11 +542,22 @@ func (s *AuthService) CheckPassword(password, hash string) bool {
 }
 
 // BuildServiceCatalog builds the OpenStack service catalog from database
-func BuildServiceCatalog(projectID string) []CatalogEntry {
+func BuildServiceCatalog(projectID string, cacheInstance *cache.Cache) []CatalogEntry {
+	ctx := context.Background()
+
+	// Try cache first (service catalog is immutable, 24h TTL)
+	if cacheInstance != nil {
+		cacheKey := "service_catalog:" + projectID
+		var cached []CatalogEntry
+		if err := cacheInstance.Get(ctx, cacheKey, &cached); err == nil {
+			return cached
+		}
+	}
+
 	catalog := []CatalogEntry{}
 
 	// Query services and their endpoints from database
-	rows, err := database.DB.Query(context.Background(), `
+	rows, err := database.DB.Query(ctx, `
 		SELECT s.id, s.type, s.name, e.id, e.interface, e.url, e.region
 		FROM services s
 		LEFT JOIN endpoints e ON s.id = e.service_id
@@ -606,6 +620,11 @@ func BuildServiceCatalog(projectID string) []CatalogEntry {
 	// Fall back to hardcoded if query returned nothing
 	if len(catalog) == 0 {
 		return buildHardcodedCatalog(projectID)
+	}
+
+	// Store in cache (24h TTL per config)
+	if cacheInstance != nil {
+		cacheInstance.Set(ctx, "service_catalog:"+projectID, catalog, 24*time.Hour)
 	}
 
 	return catalog
