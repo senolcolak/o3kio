@@ -19,6 +19,7 @@ Just as **K3s** is to Kubernetes, **O3K** is to OpenStack:
 - **Simple**: One process, one database, zero message queues
 - **Compatible**: 91% OpenStack API compatible (308/330 endpoints)
 - **Production Ready**: All HIGH and MEDIUM priority features complete
+- **Modern**: Supports OpenStack Flamingo (2025.2) and later versions only
 
 ## 📦 What's Included
 
@@ -162,9 +163,9 @@ See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the complete quick start guide.
 
 ### 🖥️ Horizon Dashboard Features
 
-### 🖥️ Horizon Dashboard Features
+**IMPORTANT**: Horizon dashboard integration is **extended functionality** (not core O3K feature). Horizon requires independent setup and configuration to work with O3K. See setup guides below for detailed integration steps.
 
-O3K provides 100% API compatibility with OpenStack Horizon dashboard (Flamingo 2025.2). All Horizon features work seamlessly with O3K as the backend.
+O3K provides 100% API compatibility with OpenStack Horizon dashboard (Flamingo 2025.2 and later). All Horizon features work seamlessly with O3K as the backend.
 
 **Features**:
 - ✅ Instance lifecycle (launch, start, stop, delete, resize, rebuild)
@@ -180,6 +181,12 @@ O3K provides 100% API compatibility with OpenStack Horizon dashboard (Flamingo 2
 - **Unified Deployment** (Recommended): [docs/UNIFIED_DEPLOYMENT.md](docs/UNIFIED_DEPLOYMENT.md) - O3K + Horizon in one docker-compose file
 - **Separate Horizon**: [docs/HORIZON_DEPLOYMENT.md](docs/HORIZON_DEPLOYMENT.md) - Deploy Horizon separately to existing O3K
 - **Quick Reference**: [docs/QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md) - Command cheat sheet
+- **Integration Details**: [docs/HORIZON_INTEGRATION.md](docs/HORIZON_INTEGRATION.md) - Architecture and troubleshooting
+
+**Version Requirements**:
+- O3K supports OpenStack **Flamingo (2025.2) and later versions only**
+- Earlier OpenStack releases (Zed, Yoga, etc.) are **not supported**
+- Use Horizon Flamingo image: `quay.io/openstack.kolla/horizon:2025.2-ubuntu-noble`
 
 **Configuration**:
 
