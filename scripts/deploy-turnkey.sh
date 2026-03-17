@@ -281,7 +281,8 @@ create_storage() {
 generate_config() {
     log_info "Generating O3K configuration..."
 
-    mkdir -p "$CONFIG_DIR/kolla"
+    REPO_DIR="/root/o3k"
+    mkdir -p "$CONFIG_DIR"
 
     # O3K main configuration
     cat > "$CONFIG_DIR/o3k.yaml" <<EOF
@@ -332,70 +333,15 @@ compute:
   tunnel_ip: "$HOST_IP"
 EOF
 
-    # Kolla configuration for Horizon
-    cat > "$CONFIG_DIR/kolla/config.json" <<'EOF'
-{
-    "command": "/usr/sbin/apache2ctl -DFOREGROUND",
-    "config_files": []
-}
-EOF
+    # Copy Horizon configuration from repo (includes proper Kolla config)
+    if [ ! -d "$REPO_DIR/deployments/horizon-config" ]; then
+        log_error "Horizon config not found in repository at $REPO_DIR/deployments/horizon-config"
+        exit 1
+    fi
 
-    # Horizon local_settings
-    cat > "$CONFIG_DIR/local_settings.py" <<EOF
-import os
-from horizon.utils import secret_key
-
-SECRET_KEY = secret_key.generate_or_read_from_file('/var/lib/openstack-dashboard/.secret_key_store')
-DEBUG = False
-ALLOWED_HOSTS = ['*']
-
-OPENSTACK_KEYSTONE_URL = os.environ.get("KEYSTONE_URL", "http://$HOST_IP:35357/v3")
-OPENSTACK_KEYSTONE_MULTIDOMAIN_SUPPORT = True
-OPENSTACK_KEYSTONE_DEFAULT_DOMAIN = "Default"
-
-OPENSTACK_API_VERSIONS = {
-    "identity": 3,
-    "compute": 2,
-    "volume": 3,
-    "network": 2,
-}
-
-OPENSTACK_KEYSTONE_DEFAULT_ROLE = "member"
-OPENSTACK_ENDPOINT_TYPE = "publicURL"
-
-CACHES = {
-    'default': {
-        'BACKEND': 'django.core.cache.backends.memcached.PyMemcacheCache',
-        'LOCATION': 'localhost:11211',
-    }
-}
-
-SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
-SESSION_COOKIE_HTTPONLY = True
-CSRF_COOKIE_HTTPONLY = True
-
-TIME_ZONE = "UTC"
-LOGGING = {
-    'version': 1,
-    'disable_existing_loggers': False,
-    'handlers': {
-        'console': {
-            'level': 'INFO',
-            'class': 'logging.StreamHandler',
-        },
-    },
-    'loggers': {
-        'horizon': {
-            'handlers': ['console'],
-            'level': 'INFO',
-        },
-        'openstack_dashboard': {
-            'handlers': ['console'],
-            'level': 'INFO',
-        },
-    }
-}
-EOF
+    # Use the complete horizon-config directory from the repo
+    log_info "Using Horizon configuration from repository..."
+    # No need to copy - will mount directly from repo in Docker Compose
 
     log_success "Configuration generated at $CONFIG_DIR"
 }
@@ -457,7 +403,7 @@ services:
       timeout: 5s
       retries: 3
 
-  # OpenStack Horizon Dashboard
+  # OpenStack Horizon Dashboard (using working config from repo)
   horizon:
     image: quay.io/openstack.kolla/horizon:2025.2-ubuntu-noble
     container_name: o3k-horizon
@@ -470,12 +416,26 @@ services:
     ports:
       - "8080:80"
     environment:
-      KOLLA_SERVICE_NAME: horizon
-      KOLLA_CONFIG_STRATEGY: COPY_ALWAYS
+      - KOLLA_INSTALL_TYPE=source
+      - KOLLA_CONFIG_STRATEGY=COPY_ALWAYS
     volumes:
-      - $CONFIG_DIR/kolla/config.json:/var/lib/kolla/config_files/config.json:ro
-      - $CONFIG_DIR/local_settings.py:/etc/openstack-dashboard/local_settings.py:ro
+      - ./horizon-config/config.json:/var/lib/kolla/config_files/config.json:ro
+      - ./horizon-config/local_settings:/var/lib/kolla/config_files/local_settings:ro
+      - ./horizon-config/apache/ports.conf:/var/lib/kolla/config_files/ports.conf:ro
+      - ./horizon-config/apache/horizon-nolist.conf:/var/lib/kolla/config_files/horizon-nolist.conf:ro
+      - horizon-static:/var/lib/kolla/venv/lib/python3.12/site-packages/static:rw
+      - horizon-logs:/var/log/kolla/horizon:rw
     restart: unless-stopped
+    healthcheck:
+      test: [CMD, curl, -f, "http://localhost/dashboard/auth/login/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+volumes:
+  horizon-static:
+  horizon-logs:
 EOF
 
     log_success "Docker Compose configuration created"
