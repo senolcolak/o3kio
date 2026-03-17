@@ -371,7 +371,7 @@ services:
     container_name: o3k-memcached
     hostname: memcached
     network_mode: host
-    command: memcached -m 64 -l 127.0.0.1
+    command: memcached -m 64 -l 0.0.0.0
     restart: unless-stopped
 
   # O3K OpenStack Services with KVM
