@@ -3,6 +3,7 @@ package nova
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -630,6 +631,9 @@ func (svc *Service) ListServersDetail(c *gin.Context) {
 			continue
 		}
 
+		// Get addresses for this instance
+		addresses := svc.getInstanceAddresses(c.Request.Context(), id, projectID)
+
 		servers = append(servers, gin.H{
 			"id":         id,
 			"name":       name,
@@ -638,6 +642,7 @@ func (svc *Service) ListServersDetail(c *gin.Context) {
 			"user_id":    userID,
 			"created":    createdAt.Format(time.RFC3339),
 			"updated":    updatedAt.Format(time.RFC3339),
+			"addresses":  addresses,
 			"OS-EXT-STS:power_state": powerState,
 			"OS-SRV-USG:launched_at": launchedAt.Format(time.RFC3339),
 			"flavor": gin.H{
@@ -655,6 +660,57 @@ func (svc *Service) ListServersDetail(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"servers": servers})
+}
+
+// getInstanceAddresses retrieves network addresses for an instance from ports
+func (svc *Service) getInstanceAddresses(ctx context.Context, instanceID, projectID string) gin.H {
+	addresses := gin.H{}
+
+	// Query ports for this instance
+	rows, err := database.DB.Query(ctx, `
+		SELECT p.network_id, p.fixed_ips, n.name
+		FROM ports p
+		JOIN networks n ON p.network_id = n.id
+		WHERE p.device_id = $1 AND p.project_id = $2
+	`, instanceID, projectID)
+
+	if err != nil {
+		return addresses // Return empty dict on error
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var networkID, networkName string
+		var fixedIPsJSON []byte
+
+		if err := rows.Scan(&networkID, &fixedIPsJSON, &networkName); err != nil {
+			continue
+		}
+
+		// Parse fixed IPs
+		var fixedIPs []map[string]interface{}
+		if err := json.Unmarshal(fixedIPsJSON, &fixedIPs); err != nil {
+			continue
+		}
+
+		// Build address list for this network
+		var addressList []gin.H
+		for _, ipInfo := range fixedIPs {
+			if ipAddr, ok := ipInfo["ip_address"].(string); ok {
+				addressList = append(addressList, gin.H{
+					"addr":    ipAddr,
+					"version": 4,
+					"OS-EXT-IPS:type": "fixed",
+				})
+			}
+		}
+
+		if len(addressList) > 0 {
+			addresses[networkName] = addressList
+		}
+	}
+
+	return addresses
 }
 
 // GetServer returns details for a single server
@@ -686,6 +742,9 @@ func (svc *Service) GetServer(c *gin.Context) {
 		return
 	}
 
+	// Get addresses from ports
+	addresses := svc.getInstanceAddresses(c.Request.Context(), id, projectID)
+
 	// Build response with nullable fields
 	response := gin.H{
 		"id":                     id,
@@ -694,6 +753,7 @@ func (svc *Service) GetServer(c *gin.Context) {
 		"tenant_id":              projID,
 		"created":                createdAt.Format(time.RFC3339),
 		"updated":                updatedAt.Format(time.RFC3339),
+		"addresses":              addresses,
 		"OS-EXT-STS:power_state": powerState,
 	}
 
