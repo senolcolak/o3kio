@@ -419,15 +419,8 @@ func (svc *Service) CreateNetwork(c *gin.Context) {
 		shared = *req.Network.Shared
 	}
 
-	// Create namespace for project if it doesn't exist
-	if err := svc.nsManager.CreateNamespace(projectID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to create namespace: %v", err)})
-		return
-	}
-
-	// Create bridge in namespace
-	nsName := svc.nsManager.GetNamespaceName(projectID)
-	if err := svc.brManager.CreateBridge(bridgeName, true, nsName); err != nil {
+	// Create bridge in default namespace (not project namespace) for libvirt access
+	if err := svc.brManager.CreateBridge(bridgeName, false, ""); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to create bridge: %v", err)})
 		return
 	}

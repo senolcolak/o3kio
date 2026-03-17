@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"strconv"
@@ -1011,7 +1012,6 @@ type PortInfo struct {
 // AllocatePortForInstance creates a port for a VM instance (called from Nova)
 func (svc *Service) AllocatePortForInstance(ctx context.Context, networkID, projectID, instanceID string) (interface{}, error) {
 	portID := uuid.New().String()
-	tapName := "tap-" + portID[:8]
 	macAddress := generateMAC()
 
 	// Get network and subnet info to allocate IP
@@ -1053,22 +1053,24 @@ func (svc *Service) AllocatePortForInstance(ctx context.Context, networkID, proj
 	}
 	fixedIPsJSON, _ := json.Marshal(fixedIPs)
 
-	// Create TAP device in namespace (skip in stub mode)
+	// Create TAP device in default namespace (not project namespace) for libvirt access
 	if svc.mode != "stub" {
-		nsName := svc.nsManager.GetNamespaceName(projectID)
+		tapName := "tap-" + portID[:8]
 
-		// Ensure namespace exists (it may have been lost on restart)
-		if err := svc.nsManager.EnsureNamespaceExists(projectID); err != nil {
-			return nil, fmt.Errorf("failed to ensure namespace exists: %w", err)
-		}
-
-		if err := svc.tapManager.CreateTAPDevice(tapName, true, nsName); err != nil {
+		// Create TAP device in default namespace
+		if err := svc.tapManager.CreateTAPDevice(tapName, false, ""); err != nil {
 			return nil, fmt.Errorf("failed to create TAP device: %w", err)
 		}
 
-		// Attach TAP to bridge
+		// Ensure bridge exists in default namespace
 		bridgeName := "br-" + networkID[:8]
-		if err := svc.brManager.AttachToBridge(tapName, bridgeName, true, nsName); err != nil {
+		if err := svc.brManager.CreateBridge(bridgeName, false, ""); err != nil {
+			// Bridge might already exist, log but don't fail
+			log.Printf("DEBUG: Bridge creation returned error (may already exist): %v", err)
+		}
+
+		// Attach TAP to bridge in default namespace
+		if err := svc.brManager.AttachToBridge(tapName, bridgeName, false, ""); err != nil {
 			return nil, fmt.Errorf("failed to attach TAP to bridge: %w", err)
 		}
 	}

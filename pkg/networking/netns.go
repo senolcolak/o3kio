@@ -118,16 +118,20 @@ func (m *NetworkNamespaceManager) NamespaceExists(nsName string) bool {
 	cmd := exec.Command("ip", "netns", "list")
 	output, err := cmd.Output()
 	if err != nil {
+		log.Printf("DEBUG: NamespaceExists check failed for %s, error running 'ip netns list': %v", nsName, err)
 		return false
 	}
 
+	log.Printf("DEBUG: Checking if namespace %s exists, output: %q", nsName, string(output))
 	namespaces := strings.Split(string(output), "\n")
 	for _, ns := range namespaces {
 		if strings.HasPrefix(ns, nsName) {
+			log.Printf("DEBUG: Namespace %s found in list", nsName)
 			return true
 		}
 	}
 
+	log.Printf("DEBUG: Namespace %s not found in list", nsName)
 	return false
 }
 
@@ -147,13 +151,23 @@ func (m *NetworkNamespaceManager) EnsureNamespaceExists(projectID string) error 
 		return nil
 	}
 
+	log.Printf("DEBUG: EnsureNamespaceExists called for project %s, namespace %s", projectID, nsName)
+
 	// Check if namespace exists
 	if m.NamespaceExists(nsName) {
+		log.Printf("DEBUG: Namespace %s already exists", nsName)
 		return nil
 	}
 
+	log.Printf("DEBUG: Namespace %s does not exist, creating it", nsName)
 	// Create namespace if it doesn't exist
-	return m.CreateNamespace(projectID)
+	err := m.CreateNamespace(projectID)
+	if err != nil {
+		log.Printf("ERROR: Failed to create namespace %s: %v", nsName, err)
+		return err
+	}
+	log.Printf("DEBUG: Successfully created namespace %s", nsName)
+	return nil
 }
 
 // ExecInNamespace executes a command in a namespace
@@ -284,7 +298,11 @@ func (m *BridgeManager) AttachToBridge(ifName, bridgeName string, inNamespace bo
 
 	if inNamespace {
 		cmd := exec.Command("ip", "netns", "exec", nsName, "ip", "link", "set", ifName, "master", bridgeName)
-		return cmd.Run()
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("failed to attach %s to bridge %s in namespace %s: %w, output: %s", ifName, bridgeName, nsName, err, string(output))
+		}
+		return nil
 	}
 
 	iface, err := netlink.LinkByName(ifName)
@@ -327,13 +345,18 @@ func (m *TAPDeviceManager) CreateTAPDevice(tapName string, inNamespace bool, nsN
 	// Both iptables and eBPF use real TAP devices
 	if inNamespace {
 		cmd := exec.Command("ip", "netns", "exec", nsName, "ip", "tuntap", "add", tapName, "mode", "tap")
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to create TAP device %s: %w", tapName, err)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("failed to create TAP device %s in namespace %s: %w, output: %s", tapName, nsName, err, string(output))
 		}
 
 		// Bring TAP device up
 		cmd = exec.Command("ip", "netns", "exec", nsName, "ip", "link", "set", tapName, "up")
-		return cmd.Run()
+		output, err = cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("failed to bring up TAP device %s in namespace %s: %w, output: %s", tapName, nsName, err, string(output))
+		}
+		return nil
 	}
 
 	// Create TAP device in default namespace
