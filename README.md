@@ -122,9 +122,34 @@ Just as K3s removed heavyweight components from Kubernetes:
 
 ## Quick Start
 
-### 🚀 Complete Setup with Web UI (Recommended)
+### 🚀 Automated Single-Node Deployment (Recommended for Production Demos)
 
-**Deploy O3K + Horizon Dashboard in one command**:
+**Deploy O3K + KVM Hypervisor on a single Linux host with one command**:
+
+```bash
+# Download and run interactive deployment script
+wget https://raw.githubusercontent.com/cobaltcore-dev/o3k/main/scripts/deploy-single-node.sh
+chmod +x deploy-single-node.sh
+sudo ./deploy-single-node.sh
+```
+
+**What you get** (in 15-20 minutes):
+- ✅ Full O3K installation with real KVM virtualization
+- ✅ PostgreSQL database configured
+- ✅ Network bridge for external connectivity
+- ✅ Horizon dashboard + noVNC console
+- ✅ OpenStack CLI tools ready to use
+- ✅ Systemd service for automatic startup
+
+**Requirements**: Ubuntu 24.04/22.04 or Debian 12, 16GB+ RAM, CPU with VT-x/AMD-V
+
+**Documentation**: [scripts/README.md](scripts/README.md) | [docs/SINGLE_NODE_DEPLOYMENT.md](docs/SINGLE_NODE_DEPLOYMENT.md)
+
+---
+
+### ⚡ Quick Evaluation with Docker (Recommended for Testing)
+
+**Deploy O3K + Horizon Dashboard in Docker Compose**:
 
 ```bash
 # 1. Clone repository
@@ -146,7 +171,7 @@ open http://localhost/dashboard
 - noVNC console proxy
 - Complete web UI for cloud management
 
-**Full Documentation**: [docs/UNIFIED_DEPLOYMENT.md](docs/UNIFIED_DEPLOYMENT.md) | **Quick Reference**: [docs/QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md)
+**Documentation**: [docs/UNIFIED_DEPLOYMENT.md](docs/UNIFIED_DEPLOYMENT.md) | [docs/QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md)
 
 ---
 
@@ -238,18 +263,26 @@ CONSOLE_TYPE = 'novnc'
 - See [docs/UNIFIED_DEPLOYMENT.md](docs/UNIFIED_DEPLOYMENT.md) - O3K + Horizon in one command
 - Works on ARM64 (Apple Silicon) and AMD64 (Intel/AMD)
 
-**Single-Node Deployment (For Demos with Real KVM)**:
-- See [docs/SINGLE_NODE_DEPLOYMENT.md](docs/SINGLE_NODE_DEPLOYMENT.md)
-- Deploy O3K on single Linux host with KVM hypervisor
-- Real virtualization for demonstrating OpenStack capabilities
-- Includes Horizon dashboard and noVNC console access
+**Automated Single-Node Deployment (For Demos with Real KVM)** ⭐ NEW:
+- Interactive script: [scripts/deploy-single-node.sh](scripts/deploy-single-node.sh)
+- One command deployment on Linux with KVM hypervisor
+- Includes Horizon dashboard and noVNC console
+- 15-20 minute automated installation
+- See [scripts/README.md](scripts/README.md) for usage
 
-**Production Multi-Node Deployment (For Scaling)**:
+**Production Multi-Node Deployment (For Scaling)** ⭐ NEW:
 - See [docs/SCALING.md](docs/SCALING.md)
 - Scale from 3-node HA cluster to 10+ node production
 - High availability with HAProxy + Keepalived + Patroni
 - Shared storage with Ceph, VXLAN multi-node networking
 - Load balancing, monitoring, backup, disaster recovery
+
+**Upgrading O3K** ⭐ NEW:
+- Automated upgrade script: [scripts/upgrade-o3k.sh](scripts/upgrade-o3k.sh)
+- Safe upgrade with automatic backup and rollback
+- Supports version pinning and force rebuild
+- 2-5 minute upgrade process
+- See [scripts/README.md](scripts/README.md) for usage
 
 ## Configuration
 

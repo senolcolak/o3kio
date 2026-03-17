@@ -260,6 +260,13 @@ configure_networking() {
     cp /etc/netplan/*.yaml /etc/netplan/backup/ 2>/dev/null || true
 
     # Create bridge configuration
+    # Parse DNS servers into proper YAML array format
+    DNS_ARRAY=""
+    IFS=',' read -ra DNS_LIST <<< "$DNS_SERVERS"
+    for dns in "${DNS_LIST[@]}"; do
+        DNS_ARRAY="$DNS_ARRAY        - ${dns// /}\n"
+    done
+
     cat > /etc/netplan/01-o3k-bridge.yaml <<EOF
 network:
   version: 2
@@ -277,13 +284,16 @@ network:
         - to: default
           via: $GATEWAY
       nameservers:
-        addresses: [$(echo $DNS_SERVERS | tr ',' ' ')]
-      dhcp4: no
+        addresses:
+$(echo -e "$DNS_ARRAY")      dhcp4: no
       dhcp6: no
       parameters:
         stp: false
         forward-delay: 0
 EOF
+
+    # Set proper permissions
+    chmod 600 /etc/netplan/01-o3k-bridge.yaml
 
     # Apply netplan
     log_warning "Applying network configuration. SSH connection may be interrupted briefly..."
