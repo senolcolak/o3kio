@@ -2,6 +2,7 @@ package neutron
 
 import (
 	"fmt"
+	"log"
 	"math/rand"
 	"net"
 	"net/http"
@@ -50,6 +51,25 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 	r.GET("/v2.0", svc.GetVersion)
 
 	v2 := r.Group("/v2.0")
+
+	// Add request logging middleware for debugging
+	v2.Use(func(c *gin.Context) {
+		path := c.Request.URL.Path
+		method := c.Request.Method
+
+		// Log incoming request
+		c.Set("neutron_request_start", time.Now())
+		log.Printf("NEUTRON-DEBUG: Incoming %s %s (project=%s, query=%s)",
+			method, path, c.GetString("project_id"), c.Request.URL.RawQuery)
+
+		c.Next()
+
+		// Log response
+		status := c.Writer.Status()
+		duration := time.Since(c.GetTime("neutron_request_start"))
+		log.Printf("NEUTRON-DEBUG: Response %d for %s %s (duration=%v)",
+			status, method, path, duration)
+	})
 	{
 		// Extensions
 		v2.GET("/extensions", svc.ListExtensions)
