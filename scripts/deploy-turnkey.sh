@@ -339,19 +339,20 @@ EOF
         exit 1
     fi
 
-    # Create modified local_settings for host networking (memcached on localhost)
+    # Create modified local_settings for host networking (memcached on HOST_IP)
     log_info "Creating Horizon configuration for host networking..."
     mkdir -p "$CONFIG_DIR/horizon-config"
 
     # Copy local_settings and change memcached location for host networking
-    sed 's/memcached:11211/localhost:11211/g' \
+    # Use HOST_IP instead of localhost since containers have separate network namespaces
+    sed "s/memcached:11211/$HOST_IP:11211/g" \
         "$REPO_DIR/deployments/horizon-config/local_settings" > "$CONFIG_DIR/horizon-config/local_settings"
 
-    # Also fix OPENSTACK_HOST to use localhost instead of docker service name
-    sed -i 's/OPENSTACK_HOST = "o3k"/OPENSTACK_HOST = "localhost"/g' "$CONFIG_DIR/horizon-config/local_settings"
+    # Also fix OPENSTACK_HOST to use HOST_IP for host networking
+    sed -i "s/OPENSTACK_HOST = \"o3k\"/OPENSTACK_HOST = \"$HOST_IP\"/g" "$CONFIG_DIR/horizon-config/local_settings"
 
-    # Fix noVNC URL to use localhost
-    sed -i 's/novnc:6080/localhost:6080/g' "$CONFIG_DIR/horizon-config/local_settings"
+    # Fix noVNC URL to use HOST_IP
+    sed -i "s/novnc:6080/$HOST_IP:6080/g" "$CONFIG_DIR/horizon-config/local_settings"
 
     log_success "Configuration generated at $CONFIG_DIR"
 }
