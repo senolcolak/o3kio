@@ -364,18 +364,36 @@ NETPLAN_EOF
         exit 1
     fi
 
-    # Enable IP forwarding
+    # Enable IP forwarding and bridge netfilter
+    log_info "Enabling IP forwarding and bridge netfilter..."
+
+    # Load bridge netfilter module and persist at boot
+    if modprobe br_netfilter 2>/dev/null; then
+        echo "br_netfilter" > /etc/modules-load.d/o3k.conf
+        log_success "Bridge netfilter module loaded"
+    else
+        log_warning "Could not load br_netfilter module (may not be needed)"
+    fi
+
+    # Add sysctl configuration
     cat >> /etc/sysctl.conf <<EOF
 
 # O3K networking
 net.ipv4.ip_forward=1
 net.ipv4.conf.all.forwarding=1
 net.ipv6.conf.all.forwarding=1
+EOF
+
+    # Add bridge netfilter settings only if module loaded
+    if [ -f /proc/sys/net/bridge/bridge-nf-call-iptables ]; then
+        cat >> /etc/sysctl.conf <<EOF
 net.bridge.bridge-nf-call-iptables=1
 net.bridge.bridge-nf-call-ip6tables=1
 EOF
+    fi
 
-    sysctl -p > /dev/null
+    # Apply sysctl settings (ignore errors for bridge settings if module not loaded)
+    sysctl -p 2>&1 | grep -v "cannot stat /proc/sys/net/bridge" || true
     log_success "IP forwarding enabled"
 }
 
