@@ -333,15 +333,22 @@ compute:
   tunnel_ip: "$HOST_IP"
 EOF
 
-    # Copy Horizon configuration from repo (includes proper Kolla config)
+    # Copy Horizon configuration from repo and modify for host networking
     if [ ! -d "$REPO_DIR/deployments/horizon-config" ]; then
         log_error "Horizon config not found in repository at $REPO_DIR/deployments/horizon-config"
         exit 1
     fi
 
-    # Use the complete horizon-config directory from the repo
-    log_info "Using Horizon configuration from repository..."
-    # No need to copy - will mount directly from repo in Docker Compose
+    # Create modified local_settings for host networking (memcached on localhost)
+    log_info "Creating Horizon configuration for host networking..."
+    mkdir -p "$CONFIG_DIR/horizon-config"
+
+    # Copy local_settings and change memcached location for host networking
+    sed 's/memcached:11211/localhost:11211/g' \
+        "$REPO_DIR/deployments/horizon-config/local_settings" > "$CONFIG_DIR/horizon-config/local_settings"
+
+    # Also fix OPENSTACK_HOST to use localhost instead of docker service name
+    sed -i 's/OPENSTACK_HOST = "o3k"/OPENSTACK_HOST = "localhost"/g' "$CONFIG_DIR/horizon-config/local_settings"
 
     log_success "Configuration generated at $CONFIG_DIR"
 }
@@ -420,7 +427,7 @@ services:
       - KOLLA_CONFIG_STRATEGY=COPY_ALWAYS
     volumes:
       - ./horizon-config/config.json:/var/lib/kolla/config_files/config.json:ro
-      - ./horizon-config/local_settings:/var/lib/kolla/config_files/local_settings:ro
+      - $CONFIG_DIR/horizon-config/local_settings:/var/lib/kolla/config_files/local_settings:ro
       - ./horizon-config/apache/ports.conf:/var/lib/kolla/config_files/ports.conf:ro
       - ./horizon-config/apache/horizon-nolist.conf:/var/lib/kolla/config_files/horizon-nolist.conf:ro
       - horizon-static:/var/lib/kolla/venv/lib/python3.12/site-packages/static:rw
