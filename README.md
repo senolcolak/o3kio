@@ -211,17 +211,25 @@ CONSOLE_TYPE = 'novnc'
 
 **Login Credentials**: Domain=Default, User=admin, Password=secret
 
-### 📖 Installation Options
+### 📖 Installation & Deployment
 
-**Docker Compose (Recommended):**
-- See [docs/INSTALLATION.md](docs/INSTALLATION.md#docker-compose-recommended)
-- Includes PostgreSQL, all services, health checks
+**Quick Start - Docker Compose (Recommended for Development)**:
+- See [docs/QUICKSTART.md](docs/QUICKSTART.md) - Get running in 5 minutes
+- See [docs/UNIFIED_DEPLOYMENT.md](docs/UNIFIED_DEPLOYMENT.md) - O3K + Horizon in one command
 - Works on ARM64 (Apple Silicon) and AMD64 (Intel/AMD)
 
-**Binary Installation:**
-- See [docs/INSTALLATION.md](docs/INSTALLATION.md#binary-installation)
-- For advanced users who want direct control
-- Requires manual PostgreSQL setup
+**Single-Node Deployment (For Demos with Real KVM)**:
+- See [docs/SINGLE_NODE_DEPLOYMENT.md](docs/SINGLE_NODE_DEPLOYMENT.md)
+- Deploy O3K on single Linux host with KVM hypervisor
+- Real virtualization for demonstrating OpenStack capabilities
+- Includes Horizon dashboard and noVNC console access
+
+**Production Multi-Node Deployment (For Scaling)**:
+- See [docs/SCALING.md](docs/SCALING.md)
+- Scale from 3-node HA cluster to 10+ node production
+- High availability with HAProxy + Keepalived + Patroni
+- Shared storage with Ceph, VXLAN multi-node networking
+- Load balancing, monitoring, backup, disaster recovery
 
 ## Configuration
 
