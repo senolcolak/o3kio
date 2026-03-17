@@ -33,9 +33,12 @@ FROM alpine:3.19
 RUN apk add --no-cache \
     ca-certificates \
     curl \
-    tzdata
+    tzdata \
+    iproute2 \
+    iptables \
+    ipset
 
-# Create non-root user
+# Create non-root user (but will run as root in privileged mode for networking)
 RUN addgroup -g 1000 o3k && \
     adduser -D -u 1000 -G o3k o3k
 
@@ -59,8 +62,8 @@ RUN mkdir -p /var/lib/o3k/images /var/lib/o3k/volumes && \
 # Change ownership
 RUN chown -R o3k:o3k /app
 
-# Switch to non-root user
-USER o3k
+# Note: Running as root for network namespace operations in privileged mode
+# The container must be run with privileged: true for real networking mode
 
 # Expose ports
 EXPOSE 5000 8774 9696 8776 9292 8775
