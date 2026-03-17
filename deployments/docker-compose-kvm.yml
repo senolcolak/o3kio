@@ -1,0 +1,21 @@
+services:
+  o3k:
+    build:
+      context: ..
+      dockerfile: build/package/Dockerfile
+    container_name: o3k
+    privileged: true
+    network_mode: host
+    volumes:
+      - /var/run/libvirt/libvirt-sock:/var/run/libvirt/libvirt-sock
+      - /var/lib/o3k/volumes:/var/lib/o3k/volumes
+      - /var/lib/o3k/images:/var/lib/o3k/images
+      - /var/lib/o3k/instances:/var/lib/o3k/instances
+      - /opt/o3k/config:/opt/o3k/config:ro
+    command: [/app/o3k, -config, /opt/o3k/config/o3k.yaml]
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD-SHELL, "curl -f http://localhost:35357/v3 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
