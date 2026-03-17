@@ -259,52 +259,90 @@ configure_networking() {
     mkdir -p /etc/netplan/backup
     cp /etc/netplan/*.yaml /etc/netplan/backup/ 2>/dev/null || true
 
-    # Create bridge configuration
-    # Parse DNS servers into proper YAML array format
-    DNS_ARRAY=""
+    # Parse DNS servers into array
     IFS=',' read -ra DNS_LIST <<< "$DNS_SERVERS"
-    for dns in "${DNS_LIST[@]}"; do
-        DNS_ARRAY="$DNS_ARRAY        - ${dns// /}\n"
-    done
 
-    cat > /etc/netplan/01-o3k-bridge.yaml <<EOF
+    # Create bridge configuration with proper YAML formatting
+    cat > /etc/netplan/01-o3k-bridge.yaml <<'NETPLAN_EOF'
 network:
   version: 2
   renderer: networkd
   ethernets:
-    $NETWORK_IFACE:
+    NETWORK_IFACE_PLACEHOLDER:
       dhcp4: no
       dhcp6: no
   bridges:
     br-ext:
-      interfaces: [$NETWORK_IFACE]
+      interfaces: [NETWORK_IFACE_PLACEHOLDER]
       addresses:
-        - $HOST_IP/24
+        - HOST_IP_PLACEHOLDER/24
       routes:
         - to: default
-          via: $GATEWAY
+          via: GATEWAY_PLACEHOLDER
       nameservers:
         addresses:
-$(echo -e "$DNS_ARRAY")      dhcp4: no
+DNS_SERVERS_PLACEHOLDER
+      dhcp4: no
       dhcp6: no
       parameters:
         stp: false
         forward-delay: 0
-EOF
+NETPLAN_EOF
+
+    # Replace placeholders with actual values
+    sed -i "s/NETWORK_IFACE_PLACEHOLDER/$NETWORK_IFACE/g" /etc/netplan/01-o3k-bridge.yaml
+    sed -i "s|HOST_IP_PLACEHOLDER|$HOST_IP|g" /etc/netplan/01-o3k-bridge.yaml
+    sed -i "s/GATEWAY_PLACEHOLDER/$GATEWAY/g" /etc/netplan/01-o3k-bridge.yaml
+
+    # Insert DNS servers with proper indentation
+    DNS_LINES=""
+    for dns in "${DNS_LIST[@]}"; do
+        DNS_LINES="${DNS_LINES}          - ${dns}\n"
+    done
+    # Remove trailing newline and insert
+    DNS_LINES=$(echo -e "$DNS_LINES" | sed '$ s/\\n$//')
+    sed -i "/DNS_SERVERS_PLACEHOLDER/c\\${DNS_LINES}" /etc/netplan/01-o3k-bridge.yaml
 
     # Set proper permissions
     chmod 600 /etc/netplan/01-o3k-bridge.yaml
 
+    # Validate netplan configuration
+    log_info "Validating netplan configuration..."
+    if ! netplan generate 2>/tmp/netplan-error.log; then
+        log_error "Invalid netplan configuration:"
+        cat /tmp/netplan-error.log
+        log_error "Restoring previous configuration..."
+        rm /etc/netplan/01-o3k-bridge.yaml
+        cp /etc/netplan/backup/*.yaml /etc/netplan/ 2>/dev/null || true
+        exit 1
+    fi
+
+    # Show generated config for verification
+    log_info "Generated netplan configuration:"
+    cat /etc/netplan/01-o3k-bridge.yaml
+
     # Apply netplan
     log_warning "Applying network configuration. SSH connection may be interrupted briefly..."
-    netplan apply
+    if ! netplan apply 2>/tmp/netplan-apply.log; then
+        log_error "Failed to apply netplan configuration:"
+        cat /tmp/netplan-apply.log
+        log_error "Restoring previous configuration..."
+        rm /etc/netplan/01-o3k-bridge.yaml
+        cp /etc/netplan/backup/*.yaml /etc/netplan/
+        netplan apply
+        exit 1
+    fi
 
     # Verify bridge
-    sleep 2
+    sleep 5
     if ip addr show br-ext > /dev/null 2>&1; then
         log_success "Bridge br-ext created successfully"
     else
         log_error "Failed to create bridge br-ext"
+        log_error "Restoring previous configuration..."
+        rm /etc/netplan/01-o3k-bridge.yaml
+        cp /etc/netplan/backup/*.yaml /etc/netplan/
+        netplan apply
         exit 1
     fi
 
