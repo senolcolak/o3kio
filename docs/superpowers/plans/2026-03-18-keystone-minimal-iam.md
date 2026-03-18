@@ -1799,6 +1799,301 @@ git commit -m "feat(keystone): implement policy engine with deterministic cache"
 
 ---
 
+### Task 8.5: Policy Engine Integration (All Services)
+
+⚠️ **CRITICAL**: This task integrates policy checks into Nova, Neutron, Cinder, and Glance to meet spec Week 2 Exit Criteria: "All 5 services enforce policies"
+
+**Files:**
+- Create: `/Users/I761222/git/o3k/internal/common/policy_middleware.go` - Shared policy enforcement middleware
+- Modify: `/Users/I761222/git/o3k/internal/nova/handlers.go` - Add policy checks
+- Modify: `/Users/I761222/git/o3k/internal/neutron/handlers.go` - Add policy checks
+- Modify: `/Users/I761222/git/o3k/internal/cinder/handlers.go` - Add policy checks
+- Modify: `/Users/I761222/git/o3k/internal/glance/handlers.go` - Add policy checks
+
+- [ ] **Step 1: Create shared policy enforcement middleware**
+
+```go
+// /Users/I761222/git/o3k/internal/common/policy_middleware.go
+package common
+
+import (
+	"net/http"
+
+	"github.com/cobaltcore-dev/o3k/internal/keystone"
+	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
+)
+
+// PolicyMiddleware creates a middleware that enforces policy for a given action
+func PolicyMiddleware(policyEngine *keystone.PolicyEngine, action string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Extract claims from JWT token (set by auth middleware)
+		tokenVal, exists := c.Get("token")
+		if !exists {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "No token in context"})
+			c.Abort()
+			return
+		}
+
+		token, ok := tokenVal.(*jwt.Token)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token type"})
+			c.Abort()
+			return
+		}
+
+		claims, ok := token.Claims.(jwt.MapClaims)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token claims"})
+			c.Abort()
+			return
+		}
+
+		// Build policy context
+		userID, _ := claims["user_id"].(string)
+		projectID, _ := claims["project_id"].(string)
+		roles := claims["roles"]
+
+		context := map[string]interface{}{
+			"user_id":    userID,
+			"project_id": projectID,
+			"roles":      roles,
+			"target":     map[string]interface{}{},
+		}
+
+		// Add target resource context from URL params
+		// Example: /v2.1/servers/:id → target.server_id = :id
+		if serverID := c.Param("id"); serverID != "" {
+			targetMap := context["target"].(map[string]interface{})
+			targetMap["server_id"] = serverID
+			targetMap["user_id"] = userID     // For ownership checks
+			targetMap["project_id"] = projectID
+		}
+
+		// Enforce policy
+		allowed, err := policyEngine.Enforce(action, context)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Policy evaluation failed"})
+			c.Abort()
+			return
+		}
+
+		if !allowed {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Policy denied: " + action})
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
+```
+
+- [ ] **Step 2: Wire policy engine into Nova**
+
+Modify `/Users/I761222/git/o3k/internal/nova/handlers.go`:
+
+```go
+// At top of file, add field to Service struct
+type Service struct {
+	// ... existing fields ...
+	policyEngine *keystone.PolicyEngine // NEW
+}
+
+// In route registration (around RegisterRoutes function)
+// Add policy middleware to sensitive operations
+
+novaGroup.POST("/servers",
+	common.PolicyMiddleware(svc.policyEngine, "compute:create"),
+	svc.CreateServer)
+
+novaGroup.DELETE("/servers/:id",
+	common.PolicyMiddleware(svc.policyEngine, "compute:delete"),
+	svc.DeleteServer)
+
+novaGroup.POST("/servers/:id/action",
+	common.PolicyMiddleware(svc.policyEngine, "compute:action"),
+	svc.ServerAction)
+
+novaGroup.GET("/servers",
+	common.PolicyMiddleware(svc.policyEngine, "compute:get_all"),
+	svc.ListServers)
+
+novaGroup.GET("/servers/:id",
+	common.PolicyMiddleware(svc.policyEngine, "compute:get"),
+	svc.GetServer)
+```
+
+- [ ] **Step 3: Wire policy engine into Neutron**
+
+Modify `/Users/I761222/git/o3k/internal/neutron/handlers.go`:
+
+```go
+// Add field to Service struct
+type Service struct {
+	// ... existing fields ...
+	policyEngine *keystone.PolicyEngine // NEW
+}
+
+// Add policy middleware to routes
+neutronGroup.POST("/v2.0/networks",
+	common.PolicyMiddleware(svc.policyEngine, "network:create_network"),
+	svc.CreateNetwork)
+
+neutronGroup.DELETE("/v2.0/networks/:id",
+	common.PolicyMiddleware(svc.policyEngine, "network:delete_network"),
+	svc.DeleteNetwork)
+
+neutronGroup.POST("/v2.0/ports",
+	common.PolicyMiddleware(svc.policyEngine, "network:create_port"),
+	svc.CreatePort)
+
+neutronGroup.DELETE("/v2.0/ports/:id",
+	common.PolicyMiddleware(svc.policyEngine, "network:delete_port"),
+	svc.DeletePort)
+```
+
+- [ ] **Step 4: Wire policy engine into Cinder**
+
+Modify `/Users/I761222/git/o3k/internal/cinder/handlers.go`:
+
+```go
+// Add field to Service struct
+type Service struct {
+	// ... existing fields ...
+	policyEngine *keystone.PolicyEngine // NEW
+}
+
+// Add policy middleware to routes
+cinderGroup.POST("/volumes",
+	common.PolicyMiddleware(svc.policyEngine, "volume:create"),
+	svc.CreateVolume)
+
+cinderGroup.DELETE("/volumes/:id",
+	common.PolicyMiddleware(svc.policyEngine, "volume:delete"),
+	svc.DeleteVolume)
+
+cinderGroup.POST("/volumes/:id/action",
+	common.PolicyMiddleware(svc.policyEngine, "volume:attach"),
+	svc.VolumeAction)
+```
+
+- [ ] **Step 5: Wire policy engine into Glance**
+
+Modify `/Users/I761222/git/o3k/internal/glance/handlers.go`:
+
+```go
+// Add field to Service struct
+type Service struct {
+	// ... existing fields ...
+	policyEngine *keystone.PolicyEngine // NEW
+}
+
+// Add policy middleware to routes
+glanceGroup.POST("/v2/images",
+	common.PolicyMiddleware(svc.policyEngine, "image:add_image"),
+	svc.CreateImage)
+
+glanceGroup.DELETE("/v2/images/:id",
+	common.PolicyMiddleware(svc.policyEngine, "image:delete_image"),
+	svc.DeleteImage)
+
+glanceGroup.PUT("/v2/images/:id/file",
+	common.PolicyMiddleware(svc.policyEngine, "image:upload_image"),
+	svc.UploadImage)
+```
+
+- [ ] **Step 6: Update main.go to pass policy engine to services**
+
+Modify `/Users/I761222/git/o3k/cmd/o3k/main.go`:
+
+```go
+// Initialize policy engine (after Keystone service)
+policyEngine := keystoneSvc.GetPolicyEngine()
+
+// Load default policies from database
+policyEngine.LoadPoliciesFromDatabase(db)
+
+// Pass policy engine to other services
+novaSvc := nova.NewService(cfg.Nova, policyEngine)
+neutronSvc := neutron.NewService(cfg.Neutron, policyEngine)
+cinderSvc := cinder.NewService(cfg.Cinder, policyEngine)
+glanceSvc := glance.NewService(cfg.Glance, policyEngine)
+```
+
+- [ ] **Step 7: Test policy enforcement across services**
+
+Run: `cd /Users/I761222/git/o3k/test/contract && go test -v ./... -run "Policy"`
+Expected: All policy contract tests pass across all services
+
+- [ ] **Step 8: Add performance benchmark test**
+
+Create: `/Users/I761222/git/o3k/internal/keystone/policy_bench_test.go`
+
+```go
+package keystone_test
+
+import (
+	"testing"
+
+	"github.com/cobaltcore-dev/o3k/internal/keystone"
+)
+
+func BenchmarkPolicyCache(b *testing.B) {
+	engine := keystone.NewPolicyEngine()
+	engine.LoadRules(`{"compute:create": "role:admin"}`)
+
+	context := map[string]interface{}{
+		"user_id":    "user-123",
+		"project_id": "project-456",
+		"roles": []map[string]interface{}{
+			{"name": "admin"},
+		},
+	}
+
+	// First call to populate cache
+	engine.Enforce("compute:create", context)
+
+	// Benchmark cached lookups
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		engine.Enforce("compute:create", context)
+	}
+}
+
+func BenchmarkPolicyUncached(b *testing.B) {
+	context := map[string]interface{}{
+		"user_id":    "user-123",
+		"project_id": "project-456",
+		"roles": []map[string]interface{}{
+			{"name": "admin"},
+		},
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// Create fresh engine each time (no cache)
+		engine := keystone.NewPolicyEngine()
+		engine.LoadRules(`{"compute:create": "role:admin"}`)
+		engine.Enforce("compute:create", context)
+	}
+}
+```
+
+Run: `go test -bench=BenchmarkPolicy -benchmem ./internal/keystone/`
+Expected:
+- Cached: < 1ms per operation
+- Uncached: < 5ms per operation
+
+- [ ] **Step 9: Commit policy integration**
+
+```bash
+git add internal/common/policy_middleware.go internal/nova/handlers.go internal/neutron/handlers.go internal/cinder/handlers.go internal/glance/handlers.go cmd/o3k/main.go internal/keystone/policy_bench_test.go
+git commit -m "feat(all): integrate policy engine across all five services"
+```
+
+---
+
 ## Week 3: Integration, Testing, Documentation
 
 ### Task 9: Integration Testing
@@ -2387,8 +2682,8 @@ git commit -m "docs(keystone): add application credentials and policy engine doc
 ### Task 11: Release Preparation
 
 **Files:**
-- Modify: `README.md`
-- Create: `CHANGELOG.md` entry
+- Modify: `/Users/I761222/git/o3k/README.md`
+- Modify: `/Users/I761222/git/o3k/CHANGELOG.md`
 
 - [ ] **Step 1: Update README.md**
 
@@ -2475,12 +2770,12 @@ git push origin v0.6.0
 **Plan complete!** Saved to `docs/superpowers/plans/2026-03-18-keystone-minimal-iam.md`.
 
 **Summary:**
-- 11 tasks covering 3 weeks of TDD implementation
+- 12 tasks covering 3 weeks of TDD implementation
 - Week 1: Test infrastructure, app credentials with bcrypt, access rules
-- Week 2: Policy engine with deterministic cache
-- Week 3: Integration testing, documentation, release
-- 4 database migrations (056-059)
-- 8 new files, 5 modified files
+- Week 2: Policy engine with deterministic cache, integration across all 5 services
+- Week 3: Integration testing, performance benchmarks, documentation, release
+- 3 database migrations (056-058)
+- 10 new files, 9 modified files
 - Security fix for existing insecure credentials
 - All tests written BEFORE implementation (TDD compliance)
 
