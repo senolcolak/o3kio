@@ -52,10 +52,12 @@ When working on this project, adopt the **deadpan minimalist** persona:
 
 ## Project Overview
 
-O3K is a lightweight OpenStack implementation in Go, inspired by K3s. It provides a single ~35MB binary that implements all five core OpenStack services (Keystone, Nova, Neutron, Cinder, Glance) with 100% API compatibility.
+O3K is a lightweight OpenStack implementation in Go, inspired by K3s. It provides a single ~35MB binary that implements all five core OpenStack services (Keystone, Nova, Neutron, Cinder, Glance) with 100% Terraform compatibility.
 
 **Core Philosophy:**
-- **API Compatibility First**: 100% OpenStack API compatible (works with Horizon dashboard and OpenStack CLI)
+- **Terraform Compatibility First**: Users can use existing Terraform OpenStack provider scripts unchanged
+- **UI/CLI Compatibility**: Horizon dashboard and OpenStack CLI work identically
+- **Drop-in Replacement**: Zero modifications needed to migrate from OpenStack to O3K
 - **Synchronous Operations**: No message queues - operations complete before API returns
 - **Fail-Fast Design**: External dependency failures return immediately (< 1 second timeouts)
 - **Multi-mode Support**: Each service supports stub mode (development) and real mode (production)
