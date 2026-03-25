@@ -409,6 +409,31 @@ Total Timeline: ~56 weeks (~13 months)
 - OWASP Top 10 mitigations
 - Compliance documentation (SOC 2, ISO 27001)
 
+#### M4.4: CI/CD & E2E Testing (Weeks 43-44)
+
+**Objective**: Automated testing and continuous integration
+
+**Deliverables**:
+- [ ] GitHub Actions CI pipeline (8 stages: Build → Release)
+- [ ] Contract test automation (191 tests, target 90%+ passing)
+- [ ] E2E test scenarios (Priority 1: VM lifecycle, volume attach, network isolation)
+- [ ] Terraform stack validation tests
+- [ ] Horizon UI testing (Selenium-based)
+- [ ] Nightly full test suite
+- [ ] Performance benchmarks automation
+- [ ] Test result reporting and dashboards
+
+**Validation Gates**:
+- CI pipeline runs on all PRs
+- Contract tests: 90%+ passing (current: 82%)
+- 8 E2E scenarios operational
+- Fast E2E suite < 5 minutes
+- Full E2E suite < 15 minutes
+- Zero false positives in gates
+- Test coverage metrics tracked
+
+**Reference**: See `E2E_CI_TESTING_STRATEGY.md` for detailed implementation plan
+
 ### Phase 4 Success Criteria
 
 - [x] Prometheus metrics exported
@@ -417,6 +442,9 @@ Total Timeline: ~56 weeks (~13 months)
 - [x] Security audit passes
 - [x] Zero downtime rolling updates
 - [x] Disaster recovery procedures documented
+- [x] CI/CD pipeline operational
+- [x] E2E test coverage 90%+
+- [x] Automated test gates enforced
 
 ---
 
@@ -534,7 +562,10 @@ services:
 | Horizon UI Compatibility | 100% | 100% | 100% | 100% |
 | OpenStack CLI Compatibility | 100% | 100% | 100% | 100% |
 | API Coverage | 104% | 104% | 110%+ | 115%+ |
-| Test Coverage | 70% | 85% | 90% | 95% |
+| Test Coverage | 82% | 85% | 90% | 95% |
+| **Contract Tests Passing** | **82%** | **85%** | **90%** | **95%** |
+| **E2E Scenarios** | **0** | **3** | **8** | **15** |
+| **CI Automation** | **0%** | **50%** | **100%** | **100%** |
 | Response Time (p95) | 200ms | 250ms | 300ms | 250ms |
 | Fail-Early Timeout | 1s | 1s | 1s | 1s |
 
@@ -595,8 +626,8 @@ services:
 
 ### Infrastructure
 
-- **CI/CD**: GitHub Actions, test runners
-- **Testing**: 5 VMs for integration tests
+- **CI/CD**: GitHub Actions (8-stage pipeline: Build → Unit → Contract → Integration → E2E Fast → E2E Full → Deploy → Release)
+- **Testing**: Docker Compose test environment, 191 contract tests, 15 E2E scenarios (staged rollout)
 - **Monitoring**: Prometheus, Grafana stack
 - **Documentation**: GitHub Pages, readthedocs
 
@@ -611,6 +642,7 @@ services:
 - [ ] Deployment guides (Docker, Kubernetes, bare metal)
 - [ ] Migration guides (monolithic → modular)
 - [ ] Troubleshooting guides per service
+- [ ] Testing strategy and CI/CD setup (see `E2E_CI_TESTING_STRATEGY.md`)
 
 ### Community
 
