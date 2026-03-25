@@ -1,0 +1,2 @@
+/Users/I761222/git/o3k/test/contract/nova/flavors_test.go
+/private/tmp/claude-501/-Users-I761222-git-o3k/44c189f6-0ad5-4ab8-8019-1177eb956913/tasks/b32jd0h3h.output

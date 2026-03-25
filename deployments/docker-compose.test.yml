@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  test-runner:
+    image: golang:1.26
+    container_name: o3k-test-runner
+    working_dir: /workspace
+    volumes:
+      - ../:/workspace
+    networks:
+      - o3k-network
+    environment:
+      OS_AUTH_URL: "http://o3k:35357/v3"
+      OS_USERNAME: "admin"
+      OS_PASSWORD: "secret"
+      OS_PROJECT_NAME: "default"
+      OS_USER_DOMAIN_NAME: "Default"
+      OS_PROJECT_DOMAIN_NAME: "Default"
+    command: >
+      bash -c "
+      echo '=========================================' &&
+      echo 'Running Nova contract tests...' &&
+      cd /workspace/test/contract/nova &&
+      go test -v -run 'TestNovaServerCreate_Contract$$' -count=1 -timeout=2m &&
+      go test -v -run 'TestNovaServerList_Contract$$' -count=1 -timeout=2m &&
+      go test -v -run 'TestNovaServerGet_Contract$$' -count=1 -timeout=2m &&
+      go test -v -run 'TestNovaServerDelete_Contract$$' -count=1 -timeout=2m &&
+      go test -v -run 'TestNovaServerReboot_Contract$$' -count=1 -timeout=2m &&
+      go test -v -run 'TestNovaServerUpdate_Contract$$' -count=1 -timeout=2m &&
+      go test -v -run 'TestNovaServerLifecycle_Contract$$' -count=1 -timeout=3m &&
+      echo '=========================================' &&
+      echo 'Running Neutron contract tests...' &&
+      cd /workspace/test/contract/neutron &&
+      go test -v -run 'TestNeutronNetworkCreate_Contract$$' -count=1 -timeout=2m &&
+      go test -v -run 'TestNeutronSubnetCreate_Contract$$' -count=1 -timeout=2m &&
+      go test -v -run 'TestNeutronPortCreate_Contract$$' -count=1 -timeout=2m &&
+      go test -v -run 'TestNeutronNetworkLifecycle_Contract$$' -count=1 -timeout=3m &&
+      echo '=========================================' &&
+      echo 'Running Cinder contract tests...' &&
+      cd /workspace/test/contract/cinder &&
+      go test -v -run 'TestCinderVolumeCreate_Contract$$' -count=1 -timeout=2m &&
+      go test -v -run 'TestCinderVolumeList_Contract$$' -count=1 -timeout=2m &&
+      go test -v -run 'TestCinderVolumeAttach_Contract$$' -count=1 -timeout=2m &&
+      go test -v -run 'TestCinderSnapshotCreate_Contract$$' -count=1 -timeout=2m &&
+      go test -v -run 'TestCinderVolumeLifecycle_Contract$$' -count=1 -timeout=3m &&
+      echo '=========================================' &&
+      echo 'Running Glance contract tests...' &&
+      cd /workspace/test/contract/glance &&
+      go test -v -run 'TestGlanceImageCreate_Contract$$' -count=1 -timeout=2m &&
+      go test -v -run 'TestGlanceImageUpload_Contract$$' -count=1 -timeout=2m &&
+      go test -v -run 'TestGlanceImageDownload_Contract$$' -count=1 -timeout=2m &&
+      go test -v -run 'TestGlanceImageList_Contract$$' -count=1 -timeout=2m &&
+      go test -v -run 'TestGlanceImageUpdate_Contract$$' -count=1 -timeout=2m &&
+      go test -v -run 'TestGlanceImageDelete_Contract$$' -count=1 -timeout=2m &&
+      go test -v -run 'TestGlanceImageLifecycle_Contract$$' -count=1 -timeout=3m &&
+      echo '=========================================' &&
+      echo 'All contract tests completed!'
+      "
+
+networks:
+  o3k-network:
+    external: true
+    name: deployments_o3k-network

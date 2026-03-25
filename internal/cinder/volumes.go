@@ -48,13 +48,24 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 	r.GET("/v3/os-volume-transfer", svc.ListVolumeTransfersNoProject)
 	r.GET("/v3/os-volume-transfer/detail", svc.ListVolumeTransfersNoProject)
 
-	// Volumes list without project_id (extracts from token)
+	// Volumes operations without project_id (extracts from token)
+	r.POST("/v3/volumes", svc.CreateVolume)
 	r.GET("/v3/volumes", svc.ListVolumes)
 	r.GET("/v3/volumes/detail", svc.ListVolumesDetail)
+	r.GET("/v3/volumes/:id", svc.GetVolume)
+	r.PATCH("/v3/volumes/:id", svc.UpdateVolume)
+	r.PUT("/v3/volumes/:id", svc.UpdateVolume)
+	r.DELETE("/v3/volumes/:id", svc.DeleteVolume)
+	r.POST("/v3/volumes/:id/action", svc.VolumeAction)
 
 	// Snapshots list without project_id (extracts from token)
 	r.GET("/v3/snapshots", svc.ListSnapshots)
 	r.GET("/v3/snapshots/detail", svc.ListSnapshotsDetail)
+	r.POST("/v3/snapshots", svc.CreateSnapshot)
+	r.GET("/v3/snapshots/:id", svc.GetSnapshot)
+	r.PUT("/v3/snapshots/:id", svc.UpdateSnapshot)
+	r.PATCH("/v3/snapshots/:id", svc.UpdateSnapshot)
+	r.DELETE("/v3/snapshots/:id", svc.DeleteSnapshot)
 
 	// Volume types without project_id (extracts from token)
 	r.GET("/v3/types", svc.ListVolumeTypes)
@@ -175,7 +186,11 @@ func (svc *Service) CreateVolume(c *gin.Context) {
 		return
 	}
 
+	// Try to get project_id from URL param first, then from token context
 	projectID := c.Param("project_id")
+	if projectID == "" {
+		projectID = c.GetString("project_id")
+	}
 	userID := c.GetString("user_id")
 	volumeID := uuid.New().String()
 
@@ -222,8 +237,8 @@ func (svc *Service) CreateVolume(c *gin.Context) {
 			"size":        req.Volume.Size,
 			"status":      "creating",
 			"bootable":    "false",
-			"created_at":  now.Format(time.RFC3339),
-			"updated_at":  now.Format(time.RFC3339),
+			"created_at":  now.Format("2006-01-02T15:04:05.000000"),
+			"updated_at":  now.Format("2006-01-02T15:04:05.000000"),
 			"metadata":    gin.H{},
 			"attachments": []interface{}{},
 		},
@@ -394,8 +409,8 @@ func (svc *Service) ListVolumesDetail(c *gin.Context) {
 			"size":        size,
 			"status":      status,
 			"bootable":    fmt.Sprintf("%t", bootable),
-			"created_at":  createdAt.Format(time.RFC3339),
-			"updated_at":  updatedAt.Format(time.RFC3339),
+			"created_at":  createdAt.Format("2006-01-02T15:04:05.000000"),
+			"updated_at":  updatedAt.Format("2006-01-02T15:04:05.000000"),
 			"attachments": attachments,
 		})
 	}
@@ -410,7 +425,11 @@ func (svc *Service) ListVolumesDetail(c *gin.Context) {
 // GetVolume returns a single volume
 func (svc *Service) GetVolume(c *gin.Context) {
 	volumeID := c.Param("id")
+	// Try to get project_id from URL param first, then from token context
 	projectID := c.Param("project_id")
+	if projectID == "" {
+		projectID = c.GetString("project_id")
+	}
 
 	var id, name, status string
 	var size int
@@ -450,8 +469,8 @@ func (svc *Service) GetVolume(c *gin.Context) {
 			"size":        size,
 			"status":      status,
 			"bootable":    fmt.Sprintf("%t", bootable),
-			"created_at":  createdAt.Format(time.RFC3339),
-			"updated_at":  updatedAt.Format(time.RFC3339),
+			"created_at":  createdAt.Format("2006-01-02T15:04:05.000000"),
+			"updated_at":  updatedAt.Format("2006-01-02T15:04:05.000000"),
 			"attachments": attachments,
 		},
 	})
@@ -460,7 +479,11 @@ func (svc *Service) GetVolume(c *gin.Context) {
 // DeleteVolume deletes a volume
 func (svc *Service) DeleteVolume(c *gin.Context) {
 	volumeID := c.Param("id")
+	// Try to get project_id from URL param first, then from token context
 	projectID := c.Param("project_id")
+	if projectID == "" {
+		projectID = c.GetString("project_id")
+	}
 
 	// Check if volume is attached (support lookup by ID or name)
 	var attachedTo sql.NullString
@@ -501,7 +524,11 @@ func (svc *Service) DeleteVolume(c *gin.Context) {
 // VolumeAction performs an action on a volume
 func (svc *Service) VolumeAction(c *gin.Context) {
 	volumeID := c.Param("id")
+	// Try to get project_id from URL param first, then from token context
 	projectID := c.Param("project_id")
+	if projectID == "" {
+		projectID = c.GetString("project_id")
+	}
 
 	var req map[string]interface{}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -845,7 +872,11 @@ func (svc *Service) CreateSnapshot(c *gin.Context) {
 		return
 	}
 
+	// Try to get project_id from URL param first, then from token context
 	projectID := c.Param("project_id")
+	if projectID == "" {
+		projectID = c.GetString("project_id")
+	}
 	snapshotID := uuid.New().String()
 
 	// Get volume info
@@ -895,7 +926,7 @@ func (svc *Service) CreateSnapshot(c *gin.Context) {
 			"volume_id":  volumeID,
 			"size":       size,
 			"status":     "creating",
-			"created_at": now.Format(time.RFC3339),
+			"created_at": now.Format("2006-01-02T15:04:05.000000"),
 		},
 	})
 }
@@ -937,7 +968,7 @@ func (svc *Service) ListSnapshotsDetail(c *gin.Context) {
 			"volume_id":  volumeID,
 			"size":       size,
 			"status":     status,
-			"created_at": createdAt.Format(time.RFC3339),
+			"created_at": createdAt.Format("2006-01-02T15:04:05.000000"),
 		})
 	}
 
@@ -998,7 +1029,7 @@ func (svc *Service) ListSnapshots(c *gin.Context) {
 			"volume_id":  volumeID,
 			"size":       size,
 			"status":     status,
-			"created_at": createdAt.Format(time.RFC3339),
+			"created_at": createdAt.Format("2006-01-02T15:04:05.000000"),
 		})
 	}
 
@@ -1012,7 +1043,11 @@ func (svc *Service) ListSnapshots(c *gin.Context) {
 // GetSnapshot returns a single snapshot
 func (svc *Service) GetSnapshot(c *gin.Context) {
 	snapshotID := c.Param("id")
+	// Try to get project_id from URL param first, then from token context
 	projectID := c.Param("project_id")
+	if projectID == "" {
+		projectID = c.GetString("project_id")
+	}
 
 	var id, name, volumeID, status string
 	var size int
@@ -1040,7 +1075,7 @@ func (svc *Service) GetSnapshot(c *gin.Context) {
 			"volume_id":  volumeID,
 			"size":       size,
 			"status":     status,
-			"created_at": createdAt.Format(time.RFC3339),
+			"created_at": createdAt.Format("2006-01-02T15:04:05.000000"),
 		},
 	})
 }
@@ -1048,7 +1083,11 @@ func (svc *Service) GetSnapshot(c *gin.Context) {
 // DeleteSnapshot deletes a snapshot
 func (svc *Service) DeleteSnapshot(c *gin.Context) {
 	snapshotID := c.Param("id")
+	// Try to get project_id from URL param first, then from token context
 	projectID := c.Param("project_id")
+	if projectID == "" {
+		projectID = c.GetString("project_id")
+	}
 
 	// Get volume ID
 	var volumeID string
@@ -1214,8 +1253,8 @@ func (svc *Service) UpdateVolume(c *gin.Context) {
 			"description": currentDesc,
 			"size":        sizeGB,
 			"status":      status,
-			"created_at":  createdAt.Format(time.RFC3339),
-			"updated_at":  now.Format(time.RFC3339),
+			"created_at":  createdAt.Format("2006-01-02T15:04:05.000000"),
+			"updated_at":  now.Format("2006-01-02T15:04:05.000000"),
 		},
 	})
 }
@@ -1281,7 +1320,7 @@ func (svc *Service) UpdateSnapshot(c *gin.Context) {
 			"volume_id":   volumeID,
 			"size":        sizeGB,
 			"status":      status,
-			"created_at":  createdAt.Format(time.RFC3339),
+			"created_at":  createdAt.Format("2006-01-02T15:04:05.000000"),
 		},
 	})
 }
