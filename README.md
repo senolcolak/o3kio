@@ -1,5 +1,7 @@
 # O3K - OpenStack Lightweight Cloud Platform
 
+[![CI Pipeline](https://github.com/cobaltcore-dev/o3k/actions/workflows/ci.yml/badge.svg)](https://github.com/cobaltcore-dev/o3k/actions/workflows/ci.yml)
+
 **Status**: v0.5.0 - Production Ready | 104% API Coverage (342/330 endpoints) | 100% Terraform Compatible
 **Last Updated**: March 19, 2026
 
