@@ -360,8 +360,8 @@ func createGlanceServer(cfg *common.Config, svc *glance.Service, authService *ke
 	root.GET("/", svc.GetVersions)
 	root.GET("/v2", svc.GetVersionV2)
 
-	// All other routes require authentication
-	authGroup := r.Group("")
+	// All other routes require authentication and are under /v2
+	authGroup := r.Group("/v2")
 	authGroup.Use(middleware.AuthMiddleware(authService))
 	svc.RegisterRoutes(authGroup)
 

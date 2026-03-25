@@ -38,5 +38,5 @@ INSERT INTO endpoints (service_id, interface, url, region) VALUES
     ('00000000-0000-0000-0000-000000000011', 'public', 'http://localhost:8774/v2.1', 'RegionOne'),
     ('00000000-0000-0000-0000-000000000012', 'public', 'http://localhost:9696/v2.0', 'RegionOne'),
     ('00000000-0000-0000-0000-000000000013', 'public', 'http://localhost:8776/v3', 'RegionOne'),
-    ('00000000-0000-0000-0000-000000000014', 'public', 'http://localhost:9292/v2', 'RegionOne')
+    ('00000000-0000-0000-0000-000000000014', 'public', 'http://localhost:9292', 'RegionOne')
 ON CONFLICT DO NOTHING;

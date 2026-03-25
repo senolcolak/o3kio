@@ -47,69 +47,69 @@ func NewService(mode, cephPool, cephConf, s3Bucket, s3Region, s3Endpoint string,
 func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 	// Note: Version discovery (GET / and GET /v2) are registered separately
 	// in main.go without auth middleware to comply with OpenStack spec
+	//
+	// gophercloud's NewImageServiceV2() ALWAYS appends /v2 to the catalog endpoint,
+	// so we register routes WITHOUT /v2 prefix to avoid /v2/v2 doubling
 
-	v2 := r.Group("/v2")
-	{
-		// Images
-		v2.GET("/images", svc.ListImages)
-		v2.POST("/images", svc.CreateImage)
-		v2.GET("/images/:id", svc.GetImage)
-		v2.DELETE("/images/:id", svc.DeleteImage)
-		v2.PATCH("/images/:id", svc.UpdateImage)
+	// Images
+	r.GET("/images", svc.ListImages)
+	r.POST("/images", svc.CreateImage)
+	r.GET("/images/:id", svc.GetImage)
+	r.DELETE("/images/:id", svc.DeleteImage)
+	r.PATCH("/images/:id", svc.UpdateImage)
 
-		// Image data
-		v2.PUT("/images/:id/file", svc.UploadImageData)
-		v2.GET("/images/:id/file", svc.DownloadImageData)
+	// Image data
+	r.PUT("/images/:id/file", svc.UploadImageData)
+	r.GET("/images/:id/file", svc.DownloadImageData)
 
-		// Image import
-		v2.POST("/images/:id/stage", svc.StageImageData)
-		v2.POST("/images/:id/import", svc.ImportImage)
-		v2.GET("/images/:id/import", svc.GetImageImportInfo)
+	// Image import
+	r.POST("/images/:id/stage", svc.StageImageData)
+	r.POST("/images/:id/import", svc.ImportImage)
+	r.GET("/images/:id/import", svc.GetImageImportInfo)
 
-		// Image members (sharing)
-		v2.POST("/images/:id/members", svc.CreateImageMember)
-		v2.GET("/images/:id/members", svc.ListImageMembers)
-		v2.GET("/images/:id/members/:member_id", svc.GetImageMember)
-		v2.PUT("/images/:id/members/:member_id", svc.UpdateImageMember)
-		v2.DELETE("/images/:id/members/:member_id", svc.DeleteImageMember)
+	// Image members (sharing)
+	r.POST("/images/:id/members", svc.CreateImageMember)
+	r.GET("/images/:id/members", svc.ListImageMembers)
+	r.GET("/images/:id/members/:member_id", svc.GetImageMember)
+	r.PUT("/images/:id/members/:member_id", svc.UpdateImageMember)
+	r.DELETE("/images/:id/members/:member_id", svc.DeleteImageMember)
 
-		// Image tags
-		v2.PUT("/images/:id/tags/:tag", svc.AddImageTag)
-		v2.DELETE("/images/:id/tags/:tag", svc.DeleteImageTag)
+	// Image tags
+	r.PUT("/images/:id/tags/:tag", svc.AddImageTag)
+	r.DELETE("/images/:id/tags/:tag", svc.DeleteImageTag)
 
-		// Image actions
-		v2.POST("/images/:id/actions/deactivate", svc.DeactivateImage)
-		v2.POST("/images/:id/actions/reactivate", svc.ReactivateImage)
+	// Image actions
+	r.POST("/images/:id/actions/deactivate", svc.DeactivateImage)
+	r.POST("/images/:id/actions/reactivate", svc.ReactivateImage)
 
-		// Schemas
-		v2.GET("/schemas/image", svc.GetImageSchema)
-		v2.GET("/schemas/images", svc.GetImagesSchema)
-		v2.GET("/schemas/member", svc.GetMemberSchema)
-		v2.GET("/schemas/members", svc.GetMembersSchema)
+	// Schemas
+	r.GET("/schemas/image", svc.GetImageSchema)
+	r.GET("/schemas/images", svc.GetImagesSchema)
+	r.GET("/schemas/member", svc.GetMemberSchema)
+	r.GET("/schemas/members", svc.GetMembersSchema)
 
-		// Tasks and import
-		v2.POST("/tasks", svc.CreateTask)
-		v2.GET("/tasks", svc.ListTasks)
-		v2.GET("/tasks/:id", svc.GetTask)
+	// Tasks and import
+	r.POST("/tasks", svc.CreateTask)
+	r.GET("/tasks", svc.ListTasks)
+	r.GET("/tasks/:id", svc.GetTask)
 
-		// Stores
-		v2.GET("/stores", svc.ListStores)
-		v2.GET("/stores/info", svc.GetStoresInfo)
+	// Stores
+	r.GET("/stores", svc.ListStores)
+	r.GET("/stores/info", svc.GetStoresInfo)
 
-		// Metadefs
-		v2.GET("/metadefs/namespaces", svc.ListMetadefNamespaces)
-		v2.POST("/metadefs/namespaces", svc.CreateMetadefNamespace)
-		v2.GET("/metadefs/namespaces/:namespace", svc.GetMetadefNamespace)
-		v2.PUT("/metadefs/namespaces/:namespace", svc.UpdateMetadefNamespace)
-		v2.DELETE("/metadefs/namespaces/:namespace", svc.DeleteMetadefNamespace)
-		v2.GET("/metadefs/resource_types", svc.ListMetadefResourceTypes)
+	// Metadefs
+	r.GET("/metadefs/namespaces", svc.ListMetadefNamespaces)
+	r.POST("/metadefs/namespaces", svc.CreateMetadefNamespace)
+	r.GET("/metadefs/namespaces/:namespace", svc.GetMetadefNamespace)
+	r.PUT("/metadefs/namespaces/:namespace", svc.UpdateMetadefNamespace)
+	r.DELETE("/metadefs/namespaces/:namespace", svc.DeleteMetadefNamespace)
+	r.GET("/metadefs/resource_types", svc.ListMetadefResourceTypes)
 
-		// Cache management
-		v2.GET("/cache/images", svc.ListCachedImages)
-		v2.DELETE("/cache/images", svc.ClearCache)
-		v2.PUT("/cache/images/:id", svc.PrefetchImage)
-		v2.DELETE("/cache/images/:id", svc.DeleteCachedImage)
-	}
+	// Cache management
+	r.GET("/cache/images", svc.ListCachedImages)
+	r.DELETE("/cache/images", svc.ClearCache)
+	r.PUT("/cache/images/:id", svc.PrefetchImage)
+	r.DELETE("/cache/images/:id", svc.DeleteCachedImage)
 }
 
 // CreateImageRequest represents an image creation request
@@ -134,7 +134,7 @@ func (svc *Service) GetVersions(c *gin.Context) {
 				"links": []gin.H{
 					{
 						"rel":  "self",
-						"href": "http://localhost:9292/v2/",
+						"href": "http://localhost:9292/",
 					},
 				},
 			},
@@ -151,7 +151,7 @@ func (svc *Service) GetVersionV2(c *gin.Context) {
 			"links": []gin.H{
 				{
 					"rel":  "self",
-					"href": "http://localhost:9292/v2/",
+					"href": "http://localhost:9292/",
 				},
 			},
 		},
