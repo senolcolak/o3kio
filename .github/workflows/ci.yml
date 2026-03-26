@@ -43,6 +43,11 @@ jobs:
           fi
           echo "✅ Binary size OK: ${SIZE_MB}MB"
 
+      - name: Install linter
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.61.0
+          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+
       - name: Run linters
         run: |
           if [ -f Makefile ] && grep -q "^lint:" Makefile; then
