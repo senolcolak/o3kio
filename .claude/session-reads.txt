@@ -49,3 +49,6 @@
 /Users/I761222/git/o3k/pkg/networking/security_groups.go
 /Users/I761222/git/o3k/pkg/networking/vxlan.go
 /Users/I761222/git/o3k/test/benchmark/cache_bench_test.go
+/Users/I761222/git/o3k/.golangci.yml
+/Users/I761222/git/o3k/.github/workflows/ci.yml
+/Users/I761222/git/o3k/internal/common/errors_test.go

@@ -134,9 +134,9 @@ jobs:
 
       - name: Start O3K services
         run: |
-          docker compose up -d
+          docker compose -f deployments/docker-compose.yml up -d
           sleep 15
-          docker compose ps
+          docker compose -f deployments/docker-compose.yml ps
 
       - name: Wait for O3K to be ready
         run: |
@@ -158,7 +158,7 @@ jobs:
       - name: Collect logs on failure
         if: failure()
         run: |
-          docker compose logs > ci-logs.txt
+          docker compose -f deployments/docker-compose.yml logs > ci-logs.txt
           cat ci-logs.txt
 
       - name: Upload logs
@@ -171,7 +171,7 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: docker compose down -v
+        run: docker compose -f deployments/docker-compose.yml down -v
 
   integration-tests:
     name: Integration Tests
@@ -214,7 +214,7 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: docker compose down -v
+        run: docker compose -f deployments/docker-compose.yml down -v
 
   e2e-fast:
     name: E2E Tests (Fast)
@@ -244,7 +244,7 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: docker compose down -v
+        run: docker compose -f deployments/docker-compose.yml down -v
 
   e2e-full:
     name: E2E Tests (Full)
@@ -274,7 +274,7 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: docker compose down -v
+        run: docker compose -f deployments/docker-compose.yml down -v
 
   status-check:
     name: CI Status

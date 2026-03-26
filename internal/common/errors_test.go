@@ -229,7 +229,7 @@ func TestOpenStackErrorToJSON(t *testing.T) {
 		t.Error("Expected 'itemNotFound' key in JSON")
 	}
 
-	errorBody := json["itemNotFound"].(map[string]interface{})
+	errorBody := json["itemNotFound"].(gin.H)
 	if errorBody["message"] == "" {
 		t.Error("Expected message in error body")
 	}
