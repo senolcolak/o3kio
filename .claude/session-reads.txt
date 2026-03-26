@@ -23,3 +23,15 @@
 /Users/I761222/git/o3k/internal/cinder/volumes.go
 /Users/I761222/git/o3k/test/contract/glance/image_data_test.go
 /Users/I761222/git/o3k/test/contract/glance/members_test.go
+/Users/I761222/git/o3k/internal/glance/images.go
+/Users/I761222/git/o3k/migrations/040_keystone_catalog.up.sql
+/Users/I761222/git/o3k/migrations/056_fix_glance_endpoint.up.sql
+/Users/I761222/git/o3k/CONTRACT_TESTS_FINAL_REPORT.md
+/Users/I761222/git/o3k/task_plan.md
+/Users/I761222/git/o3k/ROADMAP.md
+/Users/I761222/git/o3k/README.md
+/Users/I761222/git/o3k/E2E_CI_TESTING_STRATEGY.md
+/Users/I761222/.claude/projects/-Users-I761222-git-o3k/44c189f6-0ad5-4ab8-8019-1177eb956913/tool-results/bdvblxdlr.txt
+/Users/I761222/git/o3k/Makefile
+/Users/I761222/git/o3k/internal/database/query_optimizer_test.go
+/Users/I761222/git/o3k/internal/database/query_logger.go
