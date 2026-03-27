@@ -151,23 +151,31 @@ jobs:
             exit 1
           fi
 
-          # Start O3K - direct background without script
-          nohup ./bin/o3k serve </dev/null >/tmp/o3k.log 2>&1 &
+          # Start O3K with fully detached file descriptors
+          # Close stdin, stdout, stderr and reopen to /tmp/o3k.log
+          ./bin/o3k serve >/tmp/o3k.log 2>&1 </dev/null &
           O3K_PID=$!
+
+          # Immediately detach from job control
+          disown
+
+          # Save PID
           echo "$O3K_PID" > /tmp/o3k.pid
-          disown -h
 
-          # Wait for startup
-          sleep 3
+          # Brief wait for startup
+          sleep 2
 
-          # Verify still running
+          # Verify process started
           if ! kill -0 "$O3K_PID" 2>/dev/null; then
             echo "❌ O3K died (PID: $O3K_PID)"
             tail -30 /tmp/o3k.log
             exit 1
           fi
 
-          echo "✅ O3K running (PID: $O3K_PID)"
+          echo "✅ O3K started (PID: $O3K_PID)"
+          echo "Note: Readiness check in next step"
+
+          # Exit cleanly - let next step handle readiness
           exit 0
         env:
           O3K_DB_URL: "postgres://postgres:postgres@localhost:5432/o3k?sslmode=disable"
