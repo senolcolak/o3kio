@@ -2,10 +2,12 @@ package nova
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // CreateFlavor handles POST /v2.1/flavors
@@ -29,6 +31,29 @@ func (svc *Service) CreateFlavor(c *gin.Context) {
 		return
 	}
 
+	// Validate input ranges
+	if req.Flavor.RAM < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"badRequest": gin.H{
+			"message": "RAM must be non-negative",
+			"code":    400,
+		}})
+		return
+	}
+	if req.Flavor.VCPUs < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"badRequest": gin.H{
+			"message": "VCPUs must be non-negative",
+			"code":    400,
+		}})
+		return
+	}
+	if req.Flavor.Disk < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"badRequest": gin.H{
+			"message": "Disk must be non-negative",
+			"code":    400,
+		}})
+		return
+	}
+
 	flavorID := uuid.New().String()
 	ctx := c.Request.Context()
 
@@ -44,6 +69,14 @@ func (svc *Service) CreateFlavor(c *gin.Context) {
 		flavorID, req.Flavor.Name, req.Flavor.VCPUs, req.Flavor.RAM, req.Flavor.Disk, isPublic,
 	)
 	if err != nil {
+		// Check for unique constraint violation (duplicate name)
+		if pgErr, ok := err.(*pgconn.PgError); ok && pgErr.Code == "23505" {
+			c.JSON(http.StatusConflict, gin.H{"conflictingRequest": gin.H{
+				"message": "Flavor with name '" + req.Flavor.Name + "' already exists",
+				"code":    409,
+			}})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
