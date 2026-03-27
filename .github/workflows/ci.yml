@@ -133,28 +133,42 @@ jobs:
             ${{ runner.os }}-go-
 
       - name: Start O3K services
+        shell: bash
         run: |
+          set +e  # Disable exit-on-error for this step
+
           # Build O3K binary
           make build
-
-          # Run migrations
-          ./bin/o3k migrate up
-
-          # Start O3K in background using helper script
-          bash scripts/start-o3k-background.sh
-
-          # Give it a moment to start
-          sleep 5
-
-          # Check if process is still running
-          O3K_PID=$(cat /tmp/o3k.pid)
-          if ! kill -0 $O3K_PID 2>/dev/null; then
-            echo "❌ O3K process died immediately"
-            cat /tmp/o3k.log
+          if [ $? -ne 0 ]; then
+            echo "❌ Build failed"
             exit 1
           fi
 
-          echo "✅ O3K verified running"
+          # Run migrations
+          ./bin/o3k migrate up
+          if [ $? -ne 0 ]; then
+            echo "❌ Migrations failed"
+            exit 1
+          fi
+
+          # Start O3K - direct background without script
+          nohup ./bin/o3k serve </dev/null >/tmp/o3k.log 2>&1 &
+          O3K_PID=$!
+          echo "$O3K_PID" > /tmp/o3k.pid
+          disown -h
+
+          # Wait for startup
+          sleep 3
+
+          # Verify still running
+          if ! kill -0 "$O3K_PID" 2>/dev/null; then
+            echo "❌ O3K died (PID: $O3K_PID)"
+            tail -30 /tmp/o3k.log
+            exit 1
+          fi
+
+          echo "✅ O3K running (PID: $O3K_PID)"
+          exit 0
         env:
           O3K_DB_URL: "postgres://postgres:postgres@localhost:5432/o3k?sslmode=disable"
           O3K_JWT_SECRET: "test-secret-key-for-ci"
