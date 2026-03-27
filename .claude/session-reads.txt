@@ -76,3 +76,4 @@
 /private/tmp/claude-501/-Users-I761222-git-o3k/44c189f6-0ad5-4ab8-8019-1177eb956913/tasks/beywa3sal.output
 /Users/I761222/git/o3k/test/contract/glance/cache_test.go
 /Users/I761222/git/o3k/test/contract/cinder/groups_test.go
+/private/tmp/claude-501/-Users-I761222-git-o3k/44c189f6-0ad5-4ab8-8019-1177eb956913/tasks/b6x152t41.output
