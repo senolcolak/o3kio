@@ -642,6 +642,17 @@ func substituteURLTemplates(url, projectID string) string {
 	// Also handle plain %s format (legacy)
 	url = strings.Replace(url, "%s", projectID, -1)
 
+	// Replace hostname based on O3K_ENDPOINT_HOST environment variable
+	// This allows using 'localhost' in CI and 'o3k' in docker-compose
+	baseHost := os.Getenv("O3K_ENDPOINT_HOST")
+	if baseHost == "" {
+		baseHost = "localhost"
+	}
+	// Replace http://o3k: with the configured host
+	url = strings.Replace(url, "http://o3k:", "http://"+baseHost+":", -1)
+	// Also handle https://o3k: for future SSL support
+	url = strings.Replace(url, "https://o3k:", "https://"+baseHost+":", -1)
+
 	return url
 }
 
