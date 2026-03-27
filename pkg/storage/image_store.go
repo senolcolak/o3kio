@@ -424,10 +424,7 @@ func (s *ImageStore) deleteImageStub(imageID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, exists := s.stubImages[imageID]; !exists {
-		return fmt.Errorf("image %s not found", imageID)
-	}
-
+	// Delete if exists (idempotent - no error if not found)
 	delete(s.stubImages, imageID)
 	return nil
 }

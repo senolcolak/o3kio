@@ -49,6 +49,7 @@ services:
     environment:
       - O3K_DB_URL=postgres://o3k:secret@postgres:5432/o3k?sslmode=disable
       - O3K_JWT_SECRET=change-this-secret-in-production-12345
+      - O3K_ENDPOINT_HOST=o3k
     volumes:
       - o3k-data:/var/lib/o3k
       - o3k-images:/var/lib/o3k/images
