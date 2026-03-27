@@ -100,21 +100,6 @@ jobs:
     needs: build
     timeout-minutes: 15
 
-    services:
-      postgres:
-        image: postgres:18-alpine
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: o3k
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -134,58 +119,40 @@ jobs:
 
       - name: Start O3K services
         run: |
-          # Build O3K binary
-          make build
-
-          # Run migrations
-          ./bin/o3k migrate up
-
-          # Start O3K in background - use timeout to force detachment
-          timeout 5s bash -c '
-            ./bin/o3k serve >/tmp/o3k.log 2>&1 </dev/null &
-            echo $! > /tmp/o3k.pid
-            echo "O3K started (PID: $(cat /tmp/o3k.pid))"
-            sleep 3
-          ' || true  # timeout exits 124, we ignore it
-
-          # Verify process is running
-          if [ -f /tmp/o3k.pid ]; then
-            O3K_PID=$(cat /tmp/o3k.pid)
-            if kill -0 "$O3K_PID" 2>/dev/null; then
-              echo "✅ O3K running (PID: $O3K_PID)"
-            else
-              echo "❌ O3K not running"
-              tail -30 /tmp/o3k.log
-              exit 1
-            fi
-          else
-            echo "❌ PID file not created"
-            exit 1
-          fi
-        env:
-          O3K_DB_URL: "postgres://postgres:postgres@localhost:5432/o3k?sslmode=disable"
-          O3K_JWT_SECRET: "test-secret-key-for-ci"
-          O3K_LOG_LEVEL: "info"
+          docker compose -f deployments/docker-compose.yml up -d
+          sleep 10
+          docker compose -f deployments/docker-compose.yml ps
 
       - name: Wait for O3K to be ready
         run: |
-          echo "Waiting for O3K to be ready..."
-          for i in {1..30}; do
-            if curl -sf http://localhost:35357/v3 > /dev/null 2>&1; then
-              echo "✅ O3K is ready (attempt $i)"
-              exit 0
+          echo "Checking if O3K services are available on their ports..."
+
+          PORTS="35357 8774 9696 8776 9292"
+          ALL_UP=true
+
+          for port in $PORTS; do
+            if curl -sf "http://localhost:$port" > /dev/null 2>&1; then
+              echo "✅ Port $port is responding"
+            else
+              echo "⏳ Port $port not ready yet, waiting..."
+              ALL_UP=false
             fi
-            echo "Attempt $i: Not ready yet, waiting..."
-            sleep 2
           done
 
-          echo "❌ O3K failed to become ready after 60 seconds"
-          echo "O3K logs:"
-          cat /tmp/o3k.log || echo "No log file found"
-          echo ""
-          echo "Process status:"
-          ps aux | grep o3k || echo "No o3k process running"
-          exit 1
+          if [ "$ALL_UP" = false ]; then
+            echo "Waiting for all services to be ready (max 60s)..."
+            timeout 60 bash -c '
+              until curl -sf http://localhost:35357/v3 > /dev/null 2>&1 && \
+                    curl -sf http://localhost:8774 > /dev/null 2>&1 && \
+                    curl -sf http://localhost:9696 > /dev/null 2>&1 && \
+                    curl -sf http://localhost:8776 > /dev/null 2>&1 && \
+                    curl -sf http://localhost:9292 > /dev/null 2>&1; do
+                sleep 2
+              done
+            '
+          fi
+
+          echo "✅ All O3K services are ready"
 
       - name: Run contract tests
         run: |
@@ -206,32 +173,9 @@ jobs:
           echo "ℹ️  Current status: 157/191 passing (82%)"
           echo "ℹ️  Target for CI pass: Tests execute without errors"
 
-      - name: Collect logs on failure
-        if: failure()
-        run: |
-          echo "=== O3K Logs ==="
-          cat /tmp/o3k.log || echo "No log file found"
-          echo ""
-          echo "=== Process Status ==="
-          ps aux | grep o3k || true
-          echo ""
-          echo "=== Port Status ==="
-          netstat -tlnp 2>/dev/null | grep -E ':(35357|8774|9696|8776|9292)' || ss -tlnp 2>/dev/null | grep -E ':(35357|8774|9696|8776|9292)' || echo "netstat/ss not available"
-
-      - name: Upload logs
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: contract-test-logs
-          path: /tmp/o3k.log
-          retention-days: 7
-
       - name: Cleanup
         if: always()
-        run: |
-          if [ -f /tmp/o3k.pid ]; then
-            kill $(cat /tmp/o3k.pid) || true
-          fi
+        run: docker compose -f deployments/docker-compose.yml down -v
 
   integration-tests:
     name: Integration Tests
