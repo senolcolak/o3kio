@@ -1117,6 +1117,15 @@ func (svc *Service) GetFlavor(c *gin.Context) {
 	flavorID := c.Param("id")
 	ctx := c.Request.Context()
 
+	// Validate ID is not empty
+	if flavorID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"badRequest": gin.H{
+			"message": "Flavor ID cannot be empty",
+			"code":    400,
+		}})
+		return
+	}
+
 	// Try cache first
 	if svc.cache != nil {
 		cacheKey := "flavor:" + flavorID
