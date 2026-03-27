@@ -646,7 +646,12 @@ func substituteURLTemplates(url, projectID string) string {
 
 // buildHardcodedCatalog provides fallback catalog (previous implementation)
 func buildHardcodedCatalog(projectID string) []CatalogEntry {
-	baseURL := "http://o3k"
+	// Use O3K_ENDPOINT_HOST env var, default to "localhost" for CI compatibility
+	baseHost := os.Getenv("O3K_ENDPOINT_HOST")
+	if baseHost == "" {
+		baseHost = "localhost"
+	}
+	baseURL := "http://" + baseHost
 
 	return []CatalogEntry{
 		{

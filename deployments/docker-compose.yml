@@ -64,6 +64,7 @@ services:
       O3K_JWT_SECRET: "${O3K_JWT_SECRET:-change-me-in-production}"
       O3K_LOG_LEVEL: "info"
       O3K_LOG_FORMAT: "json"
+      O3K_ENDPOINT_HOST: "o3k"  # Service name for docker-compose network
     networks:
       - o3k-network
     restart: unless-stopped

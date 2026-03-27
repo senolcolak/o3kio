@@ -70,3 +70,9 @@
 /private/tmp/claude-501/-Users-I761222-git-o3k/44c189f6-0ad5-4ab8-8019-1177eb956913/tasks/byvg6ur6x.output
 /private/tmp/claude-501/-Users-I761222-git-o3k/44c189f6-0ad5-4ab8-8019-1177eb956913/tasks/b12926d0y.output
 /private/tmp/claude-501/-Users-I761222-git-o3k/44c189f6-0ad5-4ab8-8019-1177eb956913/tasks/bpm7ppklq.output
+/private/tmp/claude-501/-Users-I761222-git-o3k/44c189f6-0ad5-4ab8-8019-1177eb956913/tasks/bhrv6vina.output
+/private/tmp/claude-501/-Users-I761222-git-o3k/44c189f6-0ad5-4ab8-8019-1177eb956913/tasks/bsg930o93.output
+/private/tmp/claude-501/-Users-I761222-git-o3k/44c189f6-0ad5-4ab8-8019-1177eb956913/tasks/bvxmlxe5g.output
+/private/tmp/claude-501/-Users-I761222-git-o3k/44c189f6-0ad5-4ab8-8019-1177eb956913/tasks/beywa3sal.output
+/Users/I761222/git/o3k/test/contract/glance/cache_test.go
+/Users/I761222/git/o3k/test/contract/cinder/groups_test.go
