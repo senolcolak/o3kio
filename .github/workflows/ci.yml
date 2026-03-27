@@ -133,50 +133,35 @@ jobs:
             ${{ runner.os }}-go-
 
       - name: Start O3K services
-        shell: bash
         run: |
-          set +e  # Disable exit-on-error for this step
-
           # Build O3K binary
           make build
-          if [ $? -ne 0 ]; then
-            echo "❌ Build failed"
-            exit 1
-          fi
 
           # Run migrations
           ./bin/o3k migrate up
-          if [ $? -ne 0 ]; then
-            echo "❌ Migrations failed"
+
+          # Start O3K in background - use timeout to force detachment
+          timeout 5s bash -c '
+            ./bin/o3k serve >/tmp/o3k.log 2>&1 </dev/null &
+            echo $! > /tmp/o3k.pid
+            echo "O3K started (PID: $(cat /tmp/o3k.pid))"
+            sleep 3
+          ' || true  # timeout exits 124, we ignore it
+
+          # Verify process is running
+          if [ -f /tmp/o3k.pid ]; then
+            O3K_PID=$(cat /tmp/o3k.pid)
+            if kill -0 "$O3K_PID" 2>/dev/null; then
+              echo "✅ O3K running (PID: $O3K_PID)"
+            else
+              echo "❌ O3K not running"
+              tail -30 /tmp/o3k.log
+              exit 1
+            fi
+          else
+            echo "❌ PID file not created"
             exit 1
           fi
-
-          # Start O3K with fully detached file descriptors
-          # Close stdin, stdout, stderr and reopen to /tmp/o3k.log
-          ./bin/o3k serve >/tmp/o3k.log 2>&1 </dev/null &
-          O3K_PID=$!
-
-          # Immediately detach from job control
-          disown
-
-          # Save PID
-          echo "$O3K_PID" > /tmp/o3k.pid
-
-          # Brief wait for startup
-          sleep 2
-
-          # Verify process started
-          if ! kill -0 "$O3K_PID" 2>/dev/null; then
-            echo "❌ O3K died (PID: $O3K_PID)"
-            tail -30 /tmp/o3k.log
-            exit 1
-          fi
-
-          echo "✅ O3K started (PID: $O3K_PID)"
-          echo "Note: Readiness check in next step"
-
-          # Exit cleanly - let next step handle readiness
-          exit 0
         env:
           O3K_DB_URL: "postgres://postgres:postgres@localhost:5432/o3k?sslmode=disable"
           O3K_JWT_SECRET: "test-secret-key-for-ci"
