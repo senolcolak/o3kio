@@ -141,7 +141,8 @@ jobs:
           ./bin/o3k migrate up
 
           # Start O3K in background with output redirected to log file
-          ./bin/o3k serve > /tmp/o3k.log 2>&1 &
+          # Use nohup to fully detach from the shell
+          nohup ./bin/o3k serve > /tmp/o3k.log 2>&1 &
           O3K_PID=$!
           echo $O3K_PID > /tmp/o3k.pid
 
