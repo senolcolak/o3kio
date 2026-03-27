@@ -2,7 +2,6 @@ package nova
 
 import (
 	"net/http"
-	"strings"
 
 	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/gin-gonic/gin"
