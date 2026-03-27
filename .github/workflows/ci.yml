@@ -127,13 +127,13 @@ jobs:
         run: |
           echo "Waiting for all O3K services to be ready..."
 
-          # Give services 2 minutes to start
+          # Check with proper API version paths
           timeout 120 bash -c '
             until curl -sf http://localhost:35357/v3 > /dev/null 2>&1 && \
-                  curl -sf http://localhost:8774 > /dev/null 2>&1 && \
-                  curl -sf http://localhost:9696 > /dev/null 2>&1 && \
-                  curl -sf http://localhost:8776 > /dev/null 2>&1 && \
-                  curl -sf http://localhost:9292 > /dev/null 2>&1; do
+                  curl -sf http://localhost:8774/v2.1 > /dev/null 2>&1 && \
+                  curl -sf http://localhost:9696/v2.0 > /dev/null 2>&1 && \
+                  curl -sf http://localhost:8776/v3 > /dev/null 2>&1 && \
+                  curl -sf http://localhost:9292/v2 > /dev/null 2>&1; do
               echo "⏳ Services not ready, retrying... ($(date +%H:%M:%S))"
               sleep 3
             done
