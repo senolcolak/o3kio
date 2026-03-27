@@ -600,11 +600,7 @@ func BuildServiceCatalog(projectID string, cacheInstance *cache.Cache) []Catalog
 		// Add endpoint if present
 		if endpointID != nil && iface != nil && url != nil {
 			// Substitute URL templates
-			originalURL := *url
 			substitutedURL := substituteURLTemplates(*url, projectID)
-			if originalURL != substitutedURL {
-				fmt.Printf("[DEBUG] Substituted endpoint: %s -> %s\n", originalURL, substitutedURL)
-			}
 
 			endpoint := Endpoint{
 				Interface: *iface,

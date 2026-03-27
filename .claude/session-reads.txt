@@ -80,3 +80,4 @@
 /private/tmp/claude-501/-Users-I761222-git-o3k/44c189f6-0ad5-4ab8-8019-1177eb956913/tasks/bzaa6k84c.output
 /Users/I761222/git/o3k/migrations/052_fix_endpoint_hostnames.up.sql
 /private/tmp/claude-501/-Users-I761222-git-o3k/44c189f6-0ad5-4ab8-8019-1177eb956913/tasks/b76oln2ne.output
+/private/tmp/claude-501/-Users-I761222-git-o3k/44c189f6-0ad5-4ab8-8019-1177eb956913/tasks/b8rssnc09.output
