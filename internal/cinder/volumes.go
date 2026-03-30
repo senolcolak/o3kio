@@ -71,6 +71,13 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 	r.GET("/v3/types", svc.ListVolumeTypes)
 	r.GET("/v3/types/default", svc.GetDefaultVolumeType)
 
+	// Volume groups without project_id (extracts from token)
+	r.GET("/v3/groups", svc.ListGroups)
+	r.POST("/v3/groups", svc.CreateGroup)
+	r.GET("/v3/groups/:id", svc.GetGroup)
+	r.PUT("/v3/groups/:id", svc.UpdateGroup)
+	r.DELETE("/v3/groups/:id", svc.DeleteGroup)
+
 	v3 := r.Group("/v3/:project_id")
 	{
 		// Volumes (create, get by ID, update, delete - need project_id in URL)
@@ -135,13 +142,6 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		v3.GET("/os-volume-transfer/:id", svc.GetVolumeTransfer)
 		v3.POST("/os-volume-transfer/:id/accept", svc.AcceptVolumeTransfer)
 		v3.DELETE("/os-volume-transfer/:id", svc.DeleteVolumeTransfer)
-
-		// Volume groups (consistency groups)
-		v3.GET("/groups", svc.ListGroups)
-		v3.POST("/groups", svc.CreateGroup)
-		v3.GET("/groups/:id", svc.GetGroup)
-		v3.PUT("/groups/:id", svc.UpdateGroup)
-		v3.DELETE("/groups/:id", svc.DeleteGroup)
 
 		// Volume/Snapshot management
 		v3.POST("/os-volume-manage", svc.ManageVolume)

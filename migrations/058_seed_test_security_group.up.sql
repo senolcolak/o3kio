@@ -10,7 +10,7 @@ INSERT INTO security_groups (
     '00000000-0000-0000-0000-000000000099',
     'test-sg',
     'Test security group for contract tests',
-    '00000000-0000-0000-0000-000000000001',  -- Default project
+    '00000000-0000-0000-0000-000000000002',  -- Default project
     NOW(),
     NOW()
 ) ON CONFLICT (id) DO NOTHING;
