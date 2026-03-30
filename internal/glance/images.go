@@ -413,14 +413,23 @@ func (svc *Service) DeleteImage(c *gin.Context) {
 	projectID := c.GetString("project_id")
 	ctx := c.Request.Context()
 
-	// Delete from storage
-	if err := svc.imageStore.DeleteImage(ctx, imageID); err != nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": fmt.Sprintf("failed to delete image from storage: %v", err)})
+	// Check if image exists in database (and user has access)
+	var exists bool
+	err := database.DB.QueryRow(ctx,
+		"SELECT EXISTS(SELECT 1 FROM images WHERE id = $1 AND (visibility = 'public' OR project_id = $2))",
+		imageID, projectID,
+	).Scan(&exists)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Image not found"})
 		return
 	}
 
-	// Delete from database
-	_, err := database.DB.Exec(ctx,
+	// Delete from database first
+	_, err = database.DB.Exec(ctx,
 		"DELETE FROM images WHERE id = $1 AND (visibility = 'public' OR project_id = $2)",
 		imageID, projectID,
 	)
@@ -428,6 +437,9 @@ func (svc *Service) DeleteImage(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	// Delete from storage (best effort - image metadata gone is success)
+	_ = svc.imageStore.DeleteImage(ctx, imageID)
 
 	// Invalidate cache
 	if svc.cache != nil {

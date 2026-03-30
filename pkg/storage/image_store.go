@@ -432,7 +432,12 @@ func (s *ImageStore) deleteImageStub(imageID string) error {
 // deleteImageLocal deletes from local storage
 func (s *ImageStore) deleteImageLocal(ctx context.Context, imageID string) error {
 	imagePath := filepath.Join(s.localPath, "image-"+imageID+".raw")
-	return os.Remove(imagePath)
+	err := os.Remove(imagePath)
+	if err != nil && os.IsNotExist(err) {
+		// Idempotent delete - not found is success
+		return nil
+	}
+	return err
 }
 
 // deleteImageRBD deletes from RBD

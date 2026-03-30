@@ -1,0 +1,19 @@
+=============================
+O3K API Contract Test Suite
+=============================
+Auth URL: http://localhost:35357/v3
+
+Checking O3K availability...
+[0;32m✓ O3K is running[0m
+
+Testing authentication...
+[0;32m✓ Authentication successful[0m
+
+=============================
+Testing keystone
+=============================
+[0;32m✓ All 55 tests passed[0m
+
+=============================
+Testing cinder
+=============================
