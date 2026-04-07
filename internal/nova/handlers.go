@@ -1401,11 +1401,12 @@ func (svc *Service) ListAvailabilityZonesDetail(c *gin.Context) {
 
 // GetLimits returns compute limits and quota information
 func (svc *Service) GetLimits(c *gin.Context) {
+	ctx := c.Request.Context()
 	projectID := c.GetString("project_id")
 
 	// Query current usage from database
 	var instancesUsed, coresUsed, ramUsed int
-	database.DB.QueryRow(c.Request.Context(),
+	if err := database.DB.QueryRow(ctx,
 		`SELECT
 			COUNT(*),
 			COALESCE(SUM(vcpus), 0),
@@ -1413,35 +1414,68 @@ func (svc *Service) GetLimits(c *gin.Context) {
 		FROM instances
 		WHERE project_id = $1 AND status != 'DELETED'`,
 		projectID,
-	).Scan(&instancesUsed, &coresUsed, &ramUsed)
+	).Scan(&instancesUsed, &coresUsed, &ramUsed); err != nil {
+		instancesUsed, coresUsed, ramUsed = 0, 0, 0
+	}
+
+	// Query project quotas from the quotas table (row-per-resource schema).
+	// Defaults are used for any resource not explicitly configured.
+	quotaDefaults := map[string]int{
+		"instances":           100,
+		"cores":               200,
+		"ram":                 512000,
+		"keypairs":            100,
+		"server_groups":       10,
+		"server_group_members": 10,
+		"floating_ips":        10,
+		"security_groups":     50,
+		"security_group_rules": 100,
+	}
+	quotas := make(map[string]int)
+	for k, v := range quotaDefaults {
+		quotas[k] = v
+	}
+
+	quotaRows, err := database.DB.Query(ctx,
+		`SELECT resource, hard_limit FROM quotas WHERE project_id = $1`, projectID)
+	if err == nil {
+		defer quotaRows.Close()
+		for quotaRows.Next() {
+			var resource string
+			var hardLimit int
+			if scanErr := quotaRows.Scan(&resource, &hardLimit); scanErr == nil {
+				quotas[resource] = hardLimit
+			}
+		}
+	}
 
 	// Return limits response
 	c.JSON(200, gin.H{
 		"limits": gin.H{
 			"rate": []gin.H{}, // No rate limiting implemented
 			"absolute": gin.H{
-				// Quota limits (hardcoded for now, should come from quota table)
-				"maxTotalInstances":       100,
-				"maxTotalCores":           200,
-				"maxTotalRAMSize":         512000, // 500GB in MB
-				"maxTotalKeypairs":        100,
-				"maxServerMeta":           128,
-				"maxPersonality":          5,
-				"maxPersonalitySize":      10240,
-				"maxServerGroups":         10,
-				"maxServerGroupMembers":   10,
-				"maxTotalFloatingIps":     10,
-				"maxSecurityGroups":       50,
-				"maxSecurityGroupRules":   100,
-				"maxImageMeta":            128,
+				// Quota limits from the quotas table (with defaults)
+				"maxTotalInstances":     quotas["instances"],
+				"maxTotalCores":         quotas["cores"],
+				"maxTotalRAMSize":       quotas["ram"],
+				"maxTotalKeypairs":      quotas["keypairs"],
+				"maxServerMeta":         128,
+				"maxPersonality":        5,
+				"maxPersonalitySize":    10240,
+				"maxServerGroups":       quotas["server_groups"],
+				"maxServerGroupMembers": quotas["server_group_members"],
+				"maxTotalFloatingIps":   quotas["floating_ips"],
+				"maxSecurityGroups":     quotas["security_groups"],
+				"maxSecurityGroupRules": quotas["security_group_rules"],
+				"maxImageMeta":          128,
 
 				// Current usage
-				"totalInstancesUsed":    instancesUsed,
-				"totalCoresUsed":        coresUsed,
-				"totalRAMUsed":          ramUsed,
-				"totalFloatingIpsUsed":  0,
+				"totalInstancesUsed":      instancesUsed,
+				"totalCoresUsed":          coresUsed,
+				"totalRAMUsed":            ramUsed,
+				"totalFloatingIpsUsed":    0,
 				"totalSecurityGroupsUsed": 0,
-				"totalServerGroupsUsed": 0,
+				"totalServerGroupsUsed":   0,
 			},
 		},
 	})
