@@ -2,19 +2,22 @@ package common
 
 import (
 	"crypto/rand"
-	"fmt"
+	"math/big"
 )
 
 const alphanumeric = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
-// GeneratePassword returns a cryptographically random alphanumeric string.
+// GeneratePassword returns a cryptographically random alphanumeric string
+// with uniform distribution (no modulo bias).
 func GeneratePassword(length int) string {
+	max := big.NewInt(int64(len(alphanumeric)))
 	b := make([]byte, length)
-	if _, err := rand.Read(b); err != nil {
-		panic(fmt.Sprintf("crypto/rand.Read failed: %v", err))
-	}
 	for i := range b {
-		b[i] = alphanumeric[int(b[i])%len(alphanumeric)]
+		n, err := rand.Int(rand.Reader, max)
+		if err != nil {
+			panic("crypto/rand.Int failed: " + err.Error())
+		}
+		b[i] = alphanumeric[n.Int64()]
 	}
 	return string(b)
 }
