@@ -278,6 +278,7 @@ func (svc *Service) ListPorts(c *gin.Context) {
 		var createdAt, updatedAt time.Time
 
 		if err := rows.Scan(&id, &name, &networkID, &deviceID, &deviceOwner, &macAddress, &adminStateUp, &status, &fixedIPsJSON, &createdAt, &updatedAt); err != nil {
+			log.Warn().Err(err).Msg("failed to scan port row")
 			continue
 		}
 
@@ -607,6 +608,7 @@ func (svc *Service) ListSecurityGroups(c *gin.Context) {
 		var createdAt, updatedAt time.Time
 
 		if err := rows.Scan(&id, &name, &description, &createdAt, &updatedAt); err != nil {
+			log.Warn().Err(err).Msg("failed to scan security group row")
 			continue
 		}
 
@@ -675,6 +677,7 @@ func (svc *Service) GetSecurityGroup(c *gin.Context) {
 		err := rows.Scan(&ruleID, &direction, &ethertype, &protocol, &portRangeMin, &portRangeMax,
 			&remoteIPPrefix, &remoteGroupID, &ruleCreatedAt)
 		if err != nil {
+			log.Warn().Err(err).Msg("failed to scan security group rule row")
 			continue
 		}
 
@@ -940,6 +943,7 @@ func (svc *Service) ListSecurityGroupRules(c *gin.Context) {
 		var createdAt time.Time
 
 		if err := rows.Scan(&id, &sgID, &direction, &etherType, &protocol, &portMin, &portMax, &remoteIP, &remoteGroup, &createdAt); err != nil {
+			log.Warn().Err(err).Msg("failed to scan security group rule row")
 			continue
 		}
 
@@ -1164,6 +1168,7 @@ func (svc *Service) fetchSecurityGroupRulesForPort(ctx context.Context, security
 			&remoteGroup,
 		)
 		if err != nil {
+			log.Warn().Err(err).Msg("failed to scan security group rule row")
 			continue
 		}
 

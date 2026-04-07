@@ -38,6 +38,7 @@ func (svc *Service) ListMigrations(c *gin.Context) {
 		err := rows.Scan(&id, &serverUUID, &sourceNode, &destNode, &oldFlavorID, &newFlavorID,
 			&status, &migrationType, &createdAt, &updatedAt)
 		if err != nil {
+			log.Warn().Err(err).Msg("failed to scan migration row")
 			continue
 		}
 
@@ -94,6 +95,7 @@ func (svc *Service) ListServerMigrations(c *gin.Context) {
 		err := rows.Scan(&id, &serverUUID, &sourceNode, &destNode, &oldFlavorID, &newFlavorID,
 			&status, &migrationType, &createdAt, &updatedAt)
 		if err != nil {
+			log.Warn().Err(err).Msg("failed to scan migration row")
 			continue
 		}
 

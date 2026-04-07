@@ -39,6 +39,7 @@ func (svc *Service) ListMeteringLabels(c *gin.Context) {
 
 		err := rows.Scan(&id, &name, &description, &projectID, &shared, &createdAt, &updatedAt)
 		if err != nil {
+			log.Warn().Err(err).Msg("failed to scan metering label row")
 			continue
 		}
 
@@ -198,6 +199,7 @@ func (svc *Service) ListMeteringLabelRules(c *gin.Context) {
 
 		err := rows.Scan(&id, &labelID, &remoteIPPrefix, &direction, &excluded, &createdAt)
 		if err != nil {
+			log.Warn().Err(err).Msg("failed to scan metering label rule row")
 			continue
 		}
 

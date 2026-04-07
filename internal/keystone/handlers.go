@@ -894,6 +894,7 @@ func (svc *Service) ListRoleAssignments(c *gin.Context) {
 	for rows.Next() {
 		var uid, pid, rid, rname string
 		if err := rows.Scan(&uid, &pid, &rid, &rname); err != nil {
+			log.Warn().Err(err).Msg("failed to scan role assignment row")
 			continue
 		}
 		assignments = append(assignments, gin.H{

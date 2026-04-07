@@ -99,6 +99,7 @@ func (svc *Service) ListInstanceActions(c *gin.Context) {
 		var startTime time.Time
 
 		if err := rows.Scan(&id, &action, &requestID, &userID, &projectIDStr, &startTime, &message); err != nil {
+			log.Warn().Err(err).Msg("failed to scan instance action row")
 			continue
 		}
 

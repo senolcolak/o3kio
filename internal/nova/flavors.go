@@ -138,9 +138,9 @@ func (svc *Service) GetFlavorExtraSpecs(c *gin.Context) {
 	for rows.Next() {
 		var key, value string
 		if err := rows.Scan(&key, &value); err != nil {
+			log.Warn().Err(err).Msg("failed to scan flavor extra spec row")
 			continue
 		}
-		extraSpecs[key] = value
 	}
 
 	c.JSON(http.StatusOK, gin.H{"extra_specs": extraSpecs})
@@ -339,6 +339,7 @@ func (svc *Service) GetFlavorAccess(c *gin.Context) {
 	for rows.Next() {
 		var fID, pID string
 		if err := rows.Scan(&fID, &pID); err != nil {
+			log.Warn().Err(err).Msg("failed to scan flavor access row")
 			continue
 		}
 		flavorAccess = append(flavorAccess, gin.H{

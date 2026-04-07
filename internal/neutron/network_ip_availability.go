@@ -103,6 +103,7 @@ func (svc *Service) GetNetworkIPAvailability(c *gin.Context) {
 	for rows.Next() {
 		var subnetID, cidr string
 		if err := rows.Scan(&subnetID, &cidr); err != nil {
+			log.Warn().Err(err).Msg("failed to scan subnet row")
 			continue
 		}
 

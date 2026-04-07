@@ -729,6 +729,7 @@ func (svc *Service) ListImageMembers(c *gin.Context) {
 		var createdAt, updatedAt time.Time
 
 		if err := rows.Scan(&memberID, &status, &createdAt, &updatedAt); err != nil {
+			log.Warn().Err(err).Msg("failed to scan image member row")
 			continue
 		}
 

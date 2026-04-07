@@ -107,6 +107,7 @@ func (svc *Service) ListVolumeTransfers(c *gin.Context) {
 		var createdAt time.Time
 
 		if err := rows.Scan(&id, &volumeID, &name, &createdAt); err != nil {
+			log.Warn().Err(err).Msg("failed to scan transfer row")
 			continue
 		}
 

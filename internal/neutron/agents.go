@@ -33,6 +33,7 @@ func (svc *Service) ListAgents(c *gin.Context) {
 		var configurations map[string]interface{}
 
 		if err := rows.Scan(&id, &agentType, &binary, &host, &description, &adminStateUp, &alive, &startedAt, &createdAt, &configurations); err != nil {
+			log.Warn().Err(err).Msg("failed to scan agent row")
 			continue
 		}
 
@@ -135,6 +136,7 @@ func (svc *Service) ListL3AgentsOnRouter(c *gin.Context) {
 		var configurations map[string]interface{}
 
 		if err := rows.Scan(&id, &agentType, &binary, &host, &description, &adminStateUp, &alive, &startedAt, &createdAt, &configurations); err != nil {
+			log.Warn().Err(err).Msg("failed to scan agent row")
 			continue
 		}
 
