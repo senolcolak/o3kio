@@ -1663,29 +1663,29 @@ func (svc *Service) ResetServerMetadata(c *gin.Context) {
 		return
 	}
 
-	// Delete all existing metadata for this server
-	_, err = database.DB.Exec(c.Request.Context(),
-		"DELETE FROM instance_metadata WHERE instance_id = $1",
-		serverID,
-	)
-	if err != nil {
-		log.Error().Err(err).Str("operation", "clear_metadata").Msg("database error")
-		common.SendError(c, common.NewInternalServerError("failed to clear metadata"))
-		return
-	}
-
-	// Insert new metadata
-	for key, value := range req.Metadata {
-		_, err := database.DB.Exec(c.Request.Context(),
-			`INSERT INTO instance_metadata (instance_id, meta_key, meta_value)
-			 VALUES ($1, $2, $3)`,
-			serverID, key, value,
-		)
-		if err != nil {
-			log.Error().Err(err).Str("operation", "insert_metadata").Msg("database error")
-			common.SendError(c, common.NewInternalServerError("failed to insert metadata"))
-			return
+	// Delete all existing metadata then insert new metadata atomically
+	err = database.WithTx(c.Request.Context(), func(tx pgx.Tx) error {
+		if _, err := tx.Exec(c.Request.Context(),
+			"DELETE FROM instance_metadata WHERE instance_id = $1",
+			serverID,
+		); err != nil {
+			return fmt.Errorf("clear_metadata: %w", err)
 		}
+		for key, value := range req.Metadata {
+			if _, err := tx.Exec(c.Request.Context(),
+				`INSERT INTO instance_metadata (instance_id, meta_key, meta_value)
+				 VALUES ($1, $2, $3)`,
+				serverID, key, value,
+			); err != nil {
+				return fmt.Errorf("insert_metadata: %w", err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		log.Error().Err(err).Str("operation", "reset_metadata").Msg("database error")
+		common.SendError(c, common.NewInternalServerError("failed to reset metadata"))
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"metadata": req.Metadata})
