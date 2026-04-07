@@ -1106,8 +1106,8 @@ func (svc *Service) ListFlavorsDetail(c *gin.Context) {
 
 	// Add limit
 	if limitStr != "" {
-		query += fmt.Sprintf(" LIMIT $%d", argIndex)
 		if limit, err := strconv.Atoi(limitStr); err == nil && limit > 0 {
+			query += fmt.Sprintf(" LIMIT $%d", argIndex)
 			args = append(args, limit)
 		}
 	}
@@ -1415,10 +1415,11 @@ func (svc *Service) GetLimits(c *gin.Context) {
 	if err := database.DB.QueryRow(ctx,
 		`SELECT
 			COUNT(*),
-			COALESCE(SUM(vcpus), 0),
-			COALESCE(SUM(memory_mb), 0)
-		FROM instances
-		WHERE project_id = $1 AND status != 'DELETED'`,
+			COALESCE(SUM(f.vcpus), 0),
+			COALESCE(SUM(f.ram_mb), 0)
+		FROM instances i
+		LEFT JOIN flavors f ON i.flavor_id = f.id
+		WHERE i.project_id = $1 AND i.status != 'DELETED'`,
 		projectID,
 	).Scan(&instancesUsed, &coresUsed, &ramUsed); err != nil {
 		instancesUsed, coresUsed, ramUsed = 0, 0, 0
@@ -1427,14 +1428,14 @@ func (svc *Service) GetLimits(c *gin.Context) {
 	// Query project quotas from the quotas table (row-per-resource schema).
 	// Defaults are used for any resource not explicitly configured.
 	quotaDefaults := map[string]int{
-		"instances":           100,
-		"cores":               200,
-		"ram":                 512000,
-		"keypairs":            100,
-		"server_groups":       10,
+		"instances":            100,
+		"cores":                200,
+		"ram":                  512000,
+		"keypairs":             100,
+		"server_groups":        10,
 		"server_group_members": 10,
-		"floating_ips":        10,
-		"security_groups":     50,
+		"floatingip":           10,
+		"security_groups":      50,
 		"security_group_rules": 100,
 	}
 	quotas := make(map[string]int)
@@ -1470,7 +1471,7 @@ func (svc *Service) GetLimits(c *gin.Context) {
 				"maxPersonalitySize":    10240,
 				"maxServerGroups":       quotas["server_groups"],
 				"maxServerGroupMembers": quotas["server_group_members"],
-				"maxTotalFloatingIps":   quotas["floating_ips"],
+				"maxTotalFloatingIps":   quotas["floatingip"],
 				"maxSecurityGroups":     quotas["security_groups"],
 				"maxSecurityGroupRules": quotas["security_group_rules"],
 				"maxImageMeta":          128,
