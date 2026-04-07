@@ -33,7 +33,10 @@ type Service struct {
 
 // NewService creates a new Neutron service
 func NewService(mode string, cacheInstance *cache.Cache) *Service {
-	sgManager, _ := networking.NewSecurityGroupManager(mode, "") // Ignore error for now, empty path for stub/iptables
+	sgManager, err := networking.NewSecurityGroupManager(mode, "")
+	if err != nil {
+		log.Error().Err(err).Str("mode", mode).Msg("failed to initialize security group manager")
+	}
 	return &Service{
 		mode:          mode,
 		nsManager:     networking.NewNetworkNamespaceManager(mode),

@@ -348,10 +348,12 @@ func (svc *Service) CreateServer(c *gin.Context) {
 
 	// Log instance action
 	requestID := uuid.New().String()
-	_, _ = database.DB.Exec(c.Request.Context(), `
+	if _, err := database.DB.Exec(c.Request.Context(), `
 		INSERT INTO instance_actions (instance_id, action, request_id, user_id, project_id, start_time, message)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
-	`, instanceID, "create", requestID, userID, projectID, now, "Instance created")
+	`, instanceID, "create", requestID, userID, projectID, now, "Instance created"); err != nil {
+		log.Debug().Err(err).Str("instance_id", instanceID).Msg("failed to log instance action (non-critical)")
+	}
 
 	// Create VM asynchronously (or synchronously if libvirt is available)
 	if svc.vmManager != nil {
