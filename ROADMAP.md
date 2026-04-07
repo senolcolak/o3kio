@@ -1,7 +1,7 @@
 # O3K Development Roadmap
 
-**Version**: 1.1
-**Last Updated**: 2026-03-31
+**Version**: 1.2
+**Last Updated**: 2026-04-07
 **Status**: Active
 
 ## Executive Summary
@@ -448,6 +448,24 @@ Total Timeline: ~56 weeks (~13 months)
 
 ---
 
+## v0.7.0 Targets
+
+Based on the remaining findings from the April 2026 codebase review:
+
+### Database Architecture
+- **Dependency injection**: Refactor 665 global `database.DB` references to accept pool via constructor (H-3)
+- **Unit test enablement**: DI enables mock database for fast unit tests
+
+### API Security
+- **Rate limiting**: Token-bucket middleware per project_id (H-6)
+- **CI linting**: Re-enable golangci-lint after fixing remaining lint errors (H-4)
+
+### Code Quality
+- **Cinder route deduplication**: Extract shared route registration (H-8)
+- **Pagination migration**: Adopt `common.ParsePagination()` across all 32+ list handlers
+
+---
+
 ## Phase 5: Advanced Features (Weeks 45-56)
 
 **Goal**: Enterprise and advanced capabilities
@@ -711,4 +729,4 @@ Phase 1 ──┐
 
 **Document Ownership**: O3K Core Team
 **Review Cycle**: Quarterly
-**Next Review**: 2026-06-09
+**Next Review**: 2026-07-07

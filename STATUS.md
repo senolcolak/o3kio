@@ -1,10 +1,38 @@
 # O3K Project Status Report
 
-**Generated**: March 31, 2026
-**Version**: v0.5.0
+**Generated**: April 7, 2026
+**Version**: v0.6.0
 **Overall Coverage**: 104% (342/330 endpoints)
 **Contract Tests**: 90% passing (258/286 tests)
-**Milestone**: 🎉 Contract Test Coverage Milestone Achieved!
+**Milestone**: Contract Test Coverage Milestone Achieved!
+
+---
+
+## v0.6.0 Updates (April 2026)
+
+A comprehensive codebase review identified 42 findings (5 Critical, 12 High, 15 Medium, 10 Low). **32 findings have been fixed** across 39 commits in 7 phases:
+
+### Findings Resolved
+| Severity | Found | Fixed | Remaining |
+|----------|-------|-------|-----------|
+| Critical | 5 | 5 | 0 |
+| High | 12 | 8 | 4 |
+| Medium | 15 | 12 | 3 |
+| Low | 10 | 7 | 3 |
+| **Total** | **42** | **32** | **10** |
+
+### Key Improvements
+- **Zero error leakage**: All 1,200 inline error responses migrated to structured framework
+- **Security hardened**: crypto/rand for MAC/passwords, configurable CORS, SQL injection prevention
+- **Transaction safety**: Multi-statement database operations wrapped in transactions
+- **Graceful shutdown**: Goroutines tracked with WaitGroup, cancellable service contexts
+- **16 new unit tests**: Pagination, passwords, MAC generation, CORS, Glance allowlist
+
+### Remaining Items (Deferred to v0.7.0)
+- **H-3**: Database dependency injection (665 global DB references)
+- **H-4**: Re-enable CI linting (needs lint error cleanup)
+- **H-6**: Rate limiting middleware
+- **H-8**: Cinder route consolidation (partially done)
 
 ---
 
@@ -261,7 +289,7 @@ test/*.sh              20+ integration test scripts
 - Mandatory before any endpoint implementation
 - RED → GREEN → REFACTOR workflow enforced
 
-**Contract Test Results** (as of March 31, 2026):
+**Contract Test Results** (as of April 7, 2026):
 - **258/286 tests passing (90.2% success rate)** ✅ **MILESTONE ACHIEVED**
 - Service breakdown:
   - ✅ **Keystone**: 55/55 (100%) - Identity fully validated
@@ -339,7 +367,7 @@ Real Mode (Production):
 
 ### 5.1 Active Bugs
 
-None - all critical bugs resolved as of v0.5.0.
+None - all critical bugs resolved as of v0.6.0.
 
 ### 5.2 Intentional Limitations
 
@@ -415,16 +443,17 @@ Seed data creates:
 
 ## 7. Roadmap & Next Steps
 
-### 7.1 Current Focus: v0.5.x (Contract Testing Excellence)
+### 7.1 Current Focus: v0.6.x (Codebase Quality & Hardening)
 
-**Recent Achievements** (March 2026):
+**Recent Achievements** (April 2026):
 - ✅ 90% contract test coverage achieved (258/286 tests)
 - ✅ Keystone: 100% (55/55 tests)
 - ✅ Neutron: 100% (59/59 tests)
 - ✅ Nova: 93% (82/88 tests, 6 skipped)
 - ✅ Glance: 91% (29/32 tests, 3 skipped)
 - ✅ Cinder core features: 100% (volumes, snapshots, QoS, backups, AZs)
-- ✅ 12 new tests passing (QoS Specs, Backups, Availability Zones)
+- ✅ 32 codebase findings resolved (5 Critical, 8 High, 12 Medium, 7 Low)
+- ✅ Security hardening: crypto/rand, configurable CORS, transaction safety
 
 **Next Focus**:
 - 📋 Documentation updates reflecting 90% milestone
@@ -442,7 +471,7 @@ Seed data creates:
 - Volume management endpoints (2 tests)
 - **Timeline**: 2-3 weeks
 
-**Option B - Feature Expansion** (v0.6+):
+**Option B - Feature Expansion** (v0.7+):
 - Additional services (Barbican, Designate, Octavia)
 - eBPF-based security groups
 - High availability (multi-node control plane)
@@ -563,7 +592,7 @@ At the **90%+ contract test coverage threshold** where the system provides produ
 
 ---
 
-**Report Generated**: March 31, 2026
-**Next Review**: After v0.5.1 release (CI/CD automation complete)
+**Report Generated**: April 7, 2026
+**Next Review**: After v0.6.1 release (deferred items addressed)
 **Maintainer**: O3K Development Team
 **License**: Apache License 2.0
