@@ -14,11 +14,7 @@ import (
 
 // GetAutoAllocatedTopology returns the auto-allocated network topology for a project
 func (svc *Service) GetAutoAllocatedTopology(c *gin.Context) {
-	projectIDParam := c.Param("project")
 	projectID := c.GetString("project_id")
-
-	// In multi-project setup, would validate projectIDParam matches auth
-	_ = projectIDParam
 
 	// Check if auto-allocated network exists for this project
 	var networkID, networkName string
@@ -55,10 +51,7 @@ func (svc *Service) GetAutoAllocatedTopology(c *gin.Context) {
 
 // CreateAutoAllocatedTopology creates an auto-allocated network topology for a project
 func (svc *Service) CreateAutoAllocatedTopology(c *gin.Context) {
-	projectIDParam := c.Param("project")
 	projectID := c.GetString("project_id")
-
-	_ = projectIDParam
 
 	// Check if auto-allocated network already exists
 	var existingNetworkID string
@@ -129,10 +122,7 @@ func (svc *Service) CreateAutoAllocatedTopology(c *gin.Context) {
 
 // DeleteAutoAllocatedTopology deletes the auto-allocated network topology for a project
 func (svc *Service) DeleteAutoAllocatedTopology(c *gin.Context) {
-	projectIDParam := c.Param("project")
 	projectID := c.GetString("project_id")
-
-	_ = projectIDParam
 
 	// Find auto-allocated network
 	var networkID string

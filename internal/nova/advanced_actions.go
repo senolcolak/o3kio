@@ -548,31 +548,11 @@ func (svc *Service) LiveMigrateInstance(c *gin.Context) {
 	instanceID := c.Param("id")
 	projectID := c.GetString("project_id")
 
-	// Get action data from context (already parsed by ServerAction)
-	actionData, exists := c.Get("action_data")
-	if !exists {
+	// Validate that action data exists (already parsed by ServerAction)
+	if _, exists := c.Get("action_data"); !exists {
 		common.SendError(c, common.NewBadRequestError("missing os-migrateLive data"))
 		return
 	}
-
-	// Type assert to map (from JSON interface{})
-	liveMigrateMap, ok := actionData.(map[string]interface{})
-	if !ok {
-		// Action data might be nil or empty object, which is fine
-		liveMigrateMap = make(map[string]interface{})
-	}
-
-	// Extract optional host and block_migration (not used in stub mode but parsed for API compatibility)
-	var host *string
-	var blockMigration bool
-	if hostVal, ok := liveMigrateMap["host"].(string); ok && hostVal != "" {
-		host = &hostVal
-	}
-	if bmVal, ok := liveMigrateMap["block_migration"].(bool); ok {
-		blockMigration = bmVal
-	}
-	_ = host
-	_ = blockMigration
 
 	var status string
 	err := database.DB.QueryRow(c.Request.Context(),
