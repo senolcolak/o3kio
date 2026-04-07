@@ -129,7 +129,7 @@ func (svc *Service) GetVersion(c *gin.Context) {
 			"links": []gin.H{
 				{
 					"rel":  "self",
-					"href": "http://localhost:35357/v3",
+					"href": fmt.Sprintf("%s/v3", common.BaseURL(c, 35357)),
 				},
 			},
 			"media-types": []gin.H{

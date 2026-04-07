@@ -136,7 +136,7 @@ func (svc *Service) GetVersions(c *gin.Context) {
 				"links": []gin.H{
 					{
 						"rel":  "self",
-						"href": "http://localhost:9292/",
+						"href": fmt.Sprintf("%s/", common.BaseURL(c, 9292)),
 					},
 				},
 			},
@@ -153,7 +153,7 @@ func (svc *Service) GetVersionV2(c *gin.Context) {
 			"links": []gin.H{
 				{
 					"rel":  "self",
-					"href": "http://localhost:9292/",
+					"href": fmt.Sprintf("%s/", common.BaseURL(c, 9292)),
 				},
 			},
 		},

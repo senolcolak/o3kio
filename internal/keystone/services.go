@@ -250,7 +250,7 @@ func (svc *Service) UpdateService(c *gin.Context) {
 		"name":    name,
 		"enabled": enabled,
 		"links": map[string]interface{}{
-			"self": fmt.Sprintf("http://localhost:35357/v3/services/%s", id),
+			"self": fmt.Sprintf("%s/v3/services/%s", common.BaseURL(c, 35357), id),
 		},
 	}
 

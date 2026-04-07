@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -27,6 +28,9 @@ type Service struct {
 	vmManager     *hypervisor.VMManager
 	cache         *cache.Cache
 	neutronSvc    NeutronService // For port allocation
+	wg            sync.WaitGroup
+	ctx           context.Context
+	cancel        context.CancelFunc
 }
 
 const (
@@ -41,12 +45,21 @@ type NeutronService interface {
 
 // NewService creates a new Nova service
 func NewService(libvirtURI, libvirtMode string, cacheInstance *cache.Cache) *Service {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Service{
 		libvirtURI:  libvirtURI,
 		libvirtMode: libvirtMode,
 		cache:       cacheInstance,
 		neutronSvc:  nil, // Set via SetNeutronService after initialization
+		ctx:         ctx,
+		cancel:      cancel,
 	}
+}
+
+// Shutdown signals all background goroutines to stop and waits for them.
+func (svc *Service) Shutdown() {
+	svc.cancel()
+	svc.wg.Wait()
 }
 
 // SetNeutronService sets the Neutron service reference (called after both services are created)
@@ -195,7 +208,7 @@ func (svc *Service) ListVersions(c *gin.Context) {
 				"version":     novaCurrentVersion,
 				"min_version": novaMinVersion,
 				"links": []gin.H{
-					{"rel": "self", "href": "http://localhost:8774/v2.1"},
+					{"rel": "self", "href": fmt.Sprintf("%s/v2.1", common.BaseURL(c, 8774))},
 				},
 			},
 		},
@@ -343,7 +356,9 @@ func (svc *Service) CreateServer(c *gin.Context) {
 	// Create VM asynchronously (or synchronously if libvirt is available)
 	if svc.vmManager != nil {
 		logger.Info().Str("instance_id", instanceID).Msg("Starting VM creation via libvirt")
+		svc.wg.Add(1)
 		go func() {
+			defer svc.wg.Done()
 			// Recover from panics in goroutine
 			defer func() {
 				if r := recover(); r != nil {
@@ -354,7 +369,7 @@ func (svc *Service) CreateServer(c *gin.Context) {
 				}
 			}()
 
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			ctx, cancel := context.WithTimeout(svc.ctx, 30*time.Second)
 			defer cancel()
 
 			log.Debug().Str("instance_id", instanceID).Msg("VM creation goroutine started")
@@ -444,7 +459,9 @@ func (svc *Service) CreateServer(c *gin.Context) {
 			if err != nil {
 				log.Error().Err(err).Str("instance_id", instanceID).Msg("Failed to create VM via libvirt")
 				// Update instance status to ERROR
-				database.DB.Exec(context.Background(),
+				dbCtx, dbCancel := context.WithTimeout(svc.ctx, 5*time.Second)
+				defer dbCancel()
+				database.DB.Exec(dbCtx,
 					"UPDATE instances SET status = $1, updated_at = $2 WHERE id = $3",
 					"ERROR", time.Now(), instanceID)
 				return
@@ -459,7 +476,9 @@ func (svc *Service) CreateServer(c *gin.Context) {
 				Msg("VM created successfully via libvirt")
 
 			// Update instance with libvirt UUID
-			database.DB.Exec(context.Background(), `
+			dbCtx, dbCancel := context.WithTimeout(svc.ctx, 5*time.Second)
+			defer dbCancel()
+			database.DB.Exec(dbCtx, `
 				UPDATE instances
 				SET status = $1, power_state = $2, libvirt_domain_id = $3, launched_at = $4, updated_at = $5
 				WHERE id = $6
@@ -540,7 +559,7 @@ func (svc *Service) ListServers(c *gin.Context) {
 			"id":   id,
 			"name": name,
 			"links": []gin.H{
-				{"rel": "self", "href": fmt.Sprintf("http://localhost:8774/v2.1/servers/%s", id)},
+				{"rel": "self", "href": fmt.Sprintf("%s/v2.1/servers/%s", common.BaseURL(c, 8774), id)},
 			},
 		})
 	}
@@ -1063,7 +1082,7 @@ func (svc *Service) ListFlavors(c *gin.Context) {
 			"id":   id,
 			"name": name,
 			"links": []gin.H{
-				{"rel": "self", "href": fmt.Sprintf("http://localhost:8774/v2.1/flavors/%s", id)},
+				{"rel": "self", "href": fmt.Sprintf("%s/v2.1/flavors/%s", common.BaseURL(c, 8774), id)},
 			},
 		})
 	}
@@ -1838,7 +1857,7 @@ func (svc *Service) CreateImageAction(c *gin.Context, createImageData interface{
 	}
 
 	// Return Location header with image URL
-	imageLocation := fmt.Sprintf("http://localhost:9292/v2/images/%s", imageID)
+	imageLocation := fmt.Sprintf("%s/v2/images/%s", common.BaseURL(c, 9292), imageID)
 	c.Header("Location", imageLocation)
 	c.Status(http.StatusAccepted)
 }
