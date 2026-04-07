@@ -18,6 +18,11 @@ type Config struct {
 	Glance   GlanceConfig   `yaml:"glance"`
 	Logging  LoggingConfig  `yaml:"logging"`
 	Cache    CacheConfig    `yaml:"cache"`
+	Server   ServerConfig   `yaml:"server"`
+}
+
+type ServerConfig struct {
+	CORSAllowedOrigins []string `yaml:"cors_allowed_origins"`
 }
 
 type DatabaseConfig struct {

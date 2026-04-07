@@ -246,12 +246,28 @@ func RecoveryMiddleware() gin.HandlerFunc {
 	return gin.RecoveryWithWriter(gin.DefaultWriter)
 }
 
-// CORSMiddleware adds CORS headers
-func CORSMiddleware() gin.HandlerFunc {
+// CORSMiddlewareWithConfig adds CORS headers using a configurable origin allowlist.
+// Only origins present in allowedOrigins are echoed back; no wildcard is used.
+// If allowedOrigins is empty or nil, it defaults to ["http://localhost"].
+func CORSMiddlewareWithConfig(allowedOrigins []string) gin.HandlerFunc {
+	if len(allowedOrigins) == 0 {
+		allowedOrigins = []string{"http://localhost"}
+	}
+
+	// Build O(1) lookup map.
+	originSet := make(map[string]struct{}, len(allowedOrigins))
+	for _, o := range allowedOrigins {
+		originSet[o] = struct{}{}
+	}
+
 	return func(c *gin.Context) {
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-Auth-Token, X-Subject-Token")
+		origin := c.Request.Header.Get("Origin")
+		if _, allowed := originSet[origin]; allowed {
+			c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
+			c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-Auth-Token, X-Subject-Token, OpenStack-API-Version, X-OpenStack-Nova-API-Version, Accept")
+			c.Writer.Header().Set("Access-Control-Max-Age", "3600")
+		}
 
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
@@ -260,6 +276,12 @@ func CORSMiddleware() gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+// CORSMiddleware adds CORS headers using the default origin allowlist.
+// Deprecated: prefer CORSMiddlewareWithConfig with an explicit allowlist.
+func CORSMiddleware() gin.HandlerFunc {
+	return CORSMiddlewareWithConfig(nil)
 }
 
 func init() {

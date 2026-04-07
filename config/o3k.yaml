@@ -61,6 +61,11 @@ glance:
   s3_region: us-east-1  # S3 region
   s3_endpoint: ""     # Custom S3 endpoint (for MinIO, Ceph RGW, etc.)
 
+server:
+  cors_allowed_origins:
+    - "http://localhost"
+    - "http://localhost:3000"
+
 logging:
   level: info
   format: json

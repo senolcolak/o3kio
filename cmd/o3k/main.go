@@ -277,7 +277,7 @@ func createKeystoneServer(cfg *common.Config, svc *keystone.Service) *http.Serve
 	r := gin.New()
 	r.Use(middleware.LoggingMiddleware())
 	r.Use(middleware.RecoveryMiddleware())
-	r.Use(middleware.CORSMiddleware())
+	r.Use(middleware.CORSMiddlewareWithConfig(cfg.Server.CORSAllowedOrigins))
 
 	// Root version discovery
 	r.GET("/", func(c *gin.Context) {
@@ -308,7 +308,7 @@ func createNovaServer(cfg *common.Config, svc *nova.Service, authService *keysto
 	r := gin.New()
 	r.Use(middleware.LoggingMiddleware())
 	r.Use(middleware.RecoveryMiddleware())
-	r.Use(middleware.CORSMiddleware())
+	r.Use(middleware.CORSMiddlewareWithConfig(cfg.Server.CORSAllowedOrigins))
 	r.Use(middleware.AuthMiddleware(authService))
 
 	svc.RegisterRoutes(r.Group(""))
@@ -323,7 +323,7 @@ func createNeutronServer(cfg *common.Config, svc *neutron.Service, authService *
 	r := gin.New()
 	r.Use(middleware.LoggingMiddleware())
 	r.Use(middleware.RecoveryMiddleware())
-	r.Use(middleware.CORSMiddleware())
+	r.Use(middleware.CORSMiddlewareWithConfig(cfg.Server.CORSAllowedOrigins))
 	r.Use(middleware.AuthMiddleware(authService))
 
 	svc.RegisterRoutes(r.Group(""))
@@ -338,7 +338,7 @@ func createCinderServer(cfg *common.Config, svc *cinder.Service, authService *ke
 	r := gin.New()
 	r.Use(middleware.LoggingMiddleware())
 	r.Use(middleware.RecoveryMiddleware())
-	r.Use(middleware.CORSMiddleware())
+	r.Use(middleware.CORSMiddlewareWithConfig(cfg.Server.CORSAllowedOrigins))
 	r.Use(middleware.AuthMiddleware(authService))
 
 	svc.RegisterRoutes(r.Group(""))
@@ -353,7 +353,7 @@ func createGlanceServer(cfg *common.Config, svc *glance.Service, authService *ke
 	r := gin.New()
 	r.Use(middleware.LoggingMiddleware())
 	r.Use(middleware.RecoveryMiddleware())
-	r.Use(middleware.CORSMiddleware())
+	r.Use(middleware.CORSMiddlewareWithConfig(cfg.Server.CORSAllowedOrigins))
 
 	// Version discovery endpoints (no auth required per OpenStack spec)
 	root := r.Group("")
