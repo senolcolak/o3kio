@@ -286,7 +286,7 @@ Analysis of dashboard compatibility and integration options.
 **O3K Project**:
 - GitHub: https://github.com/cobaltcore-dev/o3k
 - License: Apache 2.0
-- Current Version: v0.5.0 (Production Ready)
+- Current Version: v0.6.0 (Production Ready)
 - API Coverage: 104% (342/330 endpoints)
 
 ---
