@@ -1,7 +1,44 @@
 # What's Left? - O3K Status Overview
 
-**Date**: 2026-03-16
+**Date**: April 2026
+**Version**: v0.6.0
 **Current Coverage**: 104% (342/330 endpoints) ✅
+
+---
+
+## Resolved in v0.6.0
+
+The following issues from the April 2026 codebase review have been fixed:
+
+- ✅ Internal error leakage to API clients (C-1) — structured error framework
+- ✅ No database transactions for multi-statement ops (C-2) — WithTx helper
+- ✅ Predictable MAC addresses (C-3) — crypto/rand
+- ✅ Hardcoded admin passwords (C-4) — cryptographic generation
+- ✅ Wildcard CORS (C-5) — configurable origins
+- ✅ Error handling middleware not registered (H-9)
+- ✅ Inconsistent error formats (H-2) — unified across 50 files
+- ✅ Goroutines without shutdown coordination (H-7)
+- ✅ Hardcoded localhost URLs (H-11) — dynamic base URL
+- ✅ And 22 more findings (see CHANGELOG.md)
+
+---
+
+## Remaining Technical Debt
+
+From the codebase review, 10 items are deferred to v0.7.0:
+
+| ID | Severity | Description | Reason Deferred |
+|----|----------|-------------|-----------------|
+| H-3 | High | Database dependency injection (665 sites) | Major architectural refactor, needs design |
+| H-4 | High | Re-enable CI linting | Needs lint error cleanup first |
+| H-6 | High | Rate limiting middleware | Needs design spec |
+| H-8 | High | Cinder route deduplication | Partially addressed |
+| H-1 | High | Unit test coverage (6 files for 31K lines) | Ongoing effort |
+| L-1 | Low | TODO comments in storage package | Tracks planned go-ceph work |
+| L-2 | Low | Dockerfile runs as root | Required for network namespaces |
+| L-5 | Low | Benchmarks not in CI | Nice to have |
+| L-7 | Low | Docker Compose proliferation | Low impact |
+| L-9 | Low | Contract test helper duplication | Low impact |
 
 ---
 

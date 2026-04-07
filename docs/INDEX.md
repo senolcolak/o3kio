@@ -47,6 +47,13 @@ Choose your deployment strategy based on your use case.
   - Load balancing, monitoring, backup, disaster recovery
   - Complete production operations guide
 
+#### Kubernetes
+- **[KUBERNETES_DEPLOYMENT](KUBERNETES_DEPLOYMENT.md)** ⭐ **NEW**
+  - Manual manifests and Helm chart guide
+  - ConfigMap, Secret, Deployment, Service, Ingress
+  - Health checks, scaling, monitoring
+  - Production considerations
+
 **Decision Matrix**:
 | Use Case | Guide | Features | Hardware |
 |----------|-------|----------|----------|
@@ -54,6 +61,7 @@ Choose your deployment strategy based on your use case.
 | Development | DOCKER_DEPLOYMENT | Containers, easy setup | 8 GB RAM |
 | Demo/POC | SINGLE_NODE_DEPLOYMENT | Real KVM, full features | 16-32 GB RAM (Linux) |
 | Production | SCALING | HA, multi-node, Ceph | 8+ nodes |
+| Kubernetes | KUBERNETES_DEPLOYMENT | Single binary, all services | K8s cluster |
 
 ---
 
@@ -247,11 +255,12 @@ Analysis of dashboard compatibility and integration options.
 
 ---
 
-## 🆕 Recently Added (March 2026)
+## 🆕 Recently Added (April 2026)
 
-1. **[SINGLE_NODE_DEPLOYMENT](SINGLE_NODE_DEPLOYMENT.md)** - Complete single-host KVM deployment guide
-2. **[SCALING](SCALING.md)** - Production multi-node scaling guide (3-node to 10+ nodes)
-3. **[ELEKTRA_INTEGRATION_ANALYSIS](ELEKTRA_INTEGRATION_ANALYSIS.md)** - SAP Elektra compatibility analysis
+1. **[KUBERNETES_DEPLOYMENT](KUBERNETES_DEPLOYMENT.md)** - Kubernetes deployment with manifests and Helm guide
+2. **v0.6.0 Code Quality Release** - 39 commits fixing 32 codebase review findings
+3. **[testing/](testing/)** - Organized test reports directory
+4. **[review/](review/)** - Codebase review report directory
 
 ---
 
@@ -301,5 +310,5 @@ Analysis of dashboard compatibility and integration options.
 ---
 
 **Last Updated**: April 2026
-**Total Documentation Files**: 39
+**Total Documentation Files**: 40
 **Coverage**: Getting Started, Installation, Configuration, Operations, Architecture, API Reference, Testing, Code Quality
