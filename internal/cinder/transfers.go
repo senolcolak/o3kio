@@ -6,10 +6,12 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/cobaltcore-dev/o3k/internal/common"
 	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/rs/zerolog/log"
 )
 
 // CreateVolumeTransfer handles POST /v3/:project_id/volume-transfers
@@ -24,7 +26,7 @@ func (svc *Service) CreateVolumeTransfer(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		common.SendError(c, common.NewBadRequestError("invalid request body"))
 		return
 	}
 
@@ -36,17 +38,18 @@ func (svc *Service) CreateVolumeTransfer(c *gin.Context) {
 	).Scan(&volumeStatus)
 
 	if err == pgx.ErrNoRows {
-		c.JSON(http.StatusNotFound, gin.H{"error": "volume not found"})
+		common.SendError(c, common.NewNotFoundError("volume"))
 		return
 	}
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "create_transfer").Msg("failed to query volume")
+		common.SendError(c, common.NewInternalServerError("failed to create transfer"))
 		return
 	}
 
 	// Volume must be available
 	if volumeStatus != "available" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "volume must be available for transfer"})
+		common.SendError(c, common.NewBadRequestError("volume must be available for transfer"))
 		return
 	}
 
@@ -64,7 +67,8 @@ func (svc *Service) CreateVolumeTransfer(c *gin.Context) {
 	`, transferID, req.Transfer.VolumeID, req.Transfer.Name, projectID, authKey, now, now)
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "create_transfer").Msg("failed to insert transfer")
+		common.SendError(c, common.NewInternalServerError("failed to create transfer"))
 		return
 	}
 
@@ -90,7 +94,8 @@ func (svc *Service) ListVolumeTransfers(c *gin.Context) {
 		ORDER BY created_at DESC
 	`, projectID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "list_transfers").Msg("failed to query transfers")
+		common.SendError(c, common.NewInternalServerError("failed to list transfers"))
 		return
 	}
 	defer rows.Close()
@@ -137,11 +142,12 @@ func (svc *Service) GetVolumeTransfer(c *gin.Context) {
 	`, transferID, projectID).Scan(&volumeID, &name, &createdAt)
 
 	if err == pgx.ErrNoRows {
-		c.JSON(http.StatusNotFound, gin.H{"error": "transfer not found"})
+		common.SendError(c, common.NewNotFoundError("transfer"))
 		return
 	}
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "get_transfer").Msg("failed to query transfer")
+		common.SendError(c, common.NewInternalServerError("failed to get transfer"))
 		return
 	}
 
@@ -166,12 +172,13 @@ func (svc *Service) DeleteVolumeTransfer(c *gin.Context) {
 	)
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "delete_transfer").Msg("failed to delete transfer")
+		common.SendError(c, common.NewInternalServerError("failed to delete transfer"))
 		return
 	}
 
 	if result.RowsAffected() == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "transfer not found"})
+		common.SendError(c, common.NewNotFoundError("transfer"))
 		return
 	}
 
@@ -190,7 +197,7 @@ func (svc *Service) AcceptVolumeTransfer(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		common.SendError(c, common.NewBadRequestError("invalid request body"))
 		return
 	}
 
@@ -205,17 +212,18 @@ func (svc *Service) AcceptVolumeTransfer(c *gin.Context) {
 	`, transferID).Scan(&volumeID, &name, &storedAuthKey, &sourceProjectID)
 
 	if err == pgx.ErrNoRows {
-		c.JSON(http.StatusNotFound, gin.H{"error": "transfer not found"})
+		common.SendError(c, common.NewNotFoundError("transfer"))
 		return
 	}
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "accept_transfer").Msg("failed to query transfer")
+		common.SendError(c, common.NewInternalServerError("failed to accept transfer"))
 		return
 	}
 
 	// Verify auth key
 	if req.Accept.AuthKey != storedAuthKey {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid auth key"})
+		common.SendError(c, common.NewBadRequestError("invalid auth key"))
 		return
 	}
 
@@ -226,7 +234,8 @@ func (svc *Service) AcceptVolumeTransfer(c *gin.Context) {
 	)
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "accept_transfer").Msg("failed to transfer volume ownership")
+		common.SendError(c, common.NewInternalServerError("failed to accept transfer"))
 		return
 	}
 
@@ -237,7 +246,8 @@ func (svc *Service) AcceptVolumeTransfer(c *gin.Context) {
 	)
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "accept_transfer").Msg("failed to mark transfer as accepted")
+		common.SendError(c, common.NewInternalServerError("failed to accept transfer"))
 		return
 	}
 

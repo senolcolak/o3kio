@@ -6,10 +6,12 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/cobaltcore-dev/o3k/internal/common"
 	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/rs/zerolog/log"
 )
 
 // CreateVolumeType creates a new volume type
@@ -23,7 +25,7 @@ func (svc *Service) CreateVolumeType(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		common.SendError(c, common.NewBadRequestError("invalid request body"))
 		return
 	}
 
@@ -39,17 +41,18 @@ func (svc *Service) CreateVolumeType(c *gin.Context) {
 	`, typeID, req.VolumeType.Name, req.VolumeType.Description, isPublic)
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "create_volume_type").Msg("failed to insert volume type")
+		common.SendError(c, common.NewInternalServerError("failed to create volume type"))
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"volume_type": map[string]interface{}{
-			"id":                                typeID,
-			"name":                              req.VolumeType.Name,
-			"description":                       req.VolumeType.Description,
+			"id":                               typeID,
+			"name":                             req.VolumeType.Name,
+			"description":                      req.VolumeType.Description,
 			"os-volume-type-access:is_public":  isPublic,
-			"extra_specs":                       map[string]string{},
+			"extra_specs":                      map[string]string{},
 		},
 	})
 }
@@ -67,7 +70,7 @@ func (svc *Service) UpdateVolumeType(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		common.SendError(c, common.NewBadRequestError("invalid request body"))
 		return
 	}
 
@@ -79,7 +82,7 @@ func (svc *Service) UpdateVolumeType(c *gin.Context) {
 	).Scan(&exists)
 
 	if err != nil || !exists {
-		c.JSON(http.StatusNotFound, gin.H{"error": "volume type not found"})
+		common.SendError(c, common.NewNotFoundError("volume type"))
 		return
 	}
 
@@ -107,7 +110,7 @@ func (svc *Service) UpdateVolumeType(c *gin.Context) {
 	}
 
 	if len(updates) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "no fields to update"})
+		common.SendError(c, common.NewBadRequestError("no fields to update"))
 		return
 	}
 
@@ -118,7 +121,8 @@ func (svc *Service) UpdateVolumeType(c *gin.Context) {
 	_, err = database.DB.Exec(c.Request.Context(), query, args...)
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "update_volume_type").Msg("failed to update volume type")
+		common.SendError(c, common.NewInternalServerError("failed to update volume type"))
 		return
 	}
 
@@ -136,12 +140,13 @@ func (svc *Service) DeleteVolumeType(c *gin.Context) {
 	)
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "delete_volume_type").Msg("failed to delete volume type")
+		common.SendError(c, common.NewInternalServerError("failed to delete volume type"))
 		return
 	}
 
 	if result.RowsAffected() == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "volume type not found"})
+		common.SendError(c, common.NewNotFoundError("volume type"))
 		return
 	}
 
@@ -160,11 +165,12 @@ func (svc *Service) ListVolumeTypeExtraSpecs(c *gin.Context) {
 	).Scan(&extraSpecs)
 
 	if err == pgx.ErrNoRows {
-		c.JSON(http.StatusNotFound, gin.H{"error": "volume type not found"})
+		common.SendError(c, common.NewNotFoundError("volume type"))
 		return
 	}
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "list_extra_specs").Msg("failed to query extra specs")
+		common.SendError(c, common.NewInternalServerError("failed to list extra specs"))
 		return
 	}
 
@@ -183,14 +189,15 @@ func (svc *Service) CreateVolumeTypeExtraSpecs(c *gin.Context) {
 		ExtraSpecs map[string]string `json:"extra_specs" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		common.SendError(c, common.NewBadRequestError("invalid request body"))
 		return
 	}
 
 	// Convert to JSONB
 	extraSpecsJSON, err := json.Marshal(req.ExtraSpecs)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "create_extra_specs").Msg("failed to marshal extra specs")
+		common.SendError(c, common.NewInternalServerError("failed to create extra specs"))
 		return
 	}
 
@@ -199,7 +206,8 @@ func (svc *Service) CreateVolumeTypeExtraSpecs(c *gin.Context) {
 		extraSpecsJSON, typeID,
 	)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "create_extra_specs").Msg("failed to update extra specs")
+		common.SendError(c, common.NewInternalServerError("failed to create extra specs"))
 		return
 	}
 
@@ -218,17 +226,18 @@ func (svc *Service) GetVolumeTypeExtraSpecKey(c *gin.Context) {
 	).Scan(&extraSpecs)
 
 	if err == pgx.ErrNoRows {
-		c.JSON(http.StatusNotFound, gin.H{"error": "volume type not found"})
+		common.SendError(c, common.NewNotFoundError("volume type"))
 		return
 	}
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "get_extra_spec_key").Msg("failed to query extra specs")
+		common.SendError(c, common.NewInternalServerError("failed to get extra spec"))
 		return
 	}
 
 	value, ok := extraSpecs[key]
 	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "extra spec key not found"})
+		common.SendError(c, common.NewNotFoundError("extra spec key"))
 		return
 	}
 
@@ -242,13 +251,13 @@ func (svc *Service) UpdateVolumeTypeExtraSpecKey(c *gin.Context) {
 
 	var req map[string]string
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		common.SendError(c, common.NewBadRequestError("invalid request body"))
 		return
 	}
 
 	value, ok := req[key]
 	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "key not found in request body"})
+		common.SendError(c, common.NewBadRequestError("key not found in request body"))
 		return
 	}
 
@@ -260,11 +269,12 @@ func (svc *Service) UpdateVolumeTypeExtraSpecKey(c *gin.Context) {
 	).Scan(&extraSpecs)
 
 	if err == pgx.ErrNoRows {
-		c.JSON(http.StatusNotFound, gin.H{"error": "volume type not found"})
+		common.SendError(c, common.NewNotFoundError("volume type"))
 		return
 	}
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "update_extra_spec_key").Msg("failed to query extra specs")
+		common.SendError(c, common.NewInternalServerError("failed to update extra spec"))
 		return
 	}
 
@@ -278,7 +288,8 @@ func (svc *Service) UpdateVolumeTypeExtraSpecKey(c *gin.Context) {
 	// Save back to database
 	extraSpecsJSON, err := json.Marshal(extraSpecs)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "update_extra_spec_key").Msg("failed to marshal extra specs")
+		common.SendError(c, common.NewInternalServerError("failed to update extra spec"))
 		return
 	}
 
@@ -287,7 +298,8 @@ func (svc *Service) UpdateVolumeTypeExtraSpecKey(c *gin.Context) {
 		extraSpecsJSON, typeID,
 	)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "update_extra_spec_key").Msg("failed to save extra specs")
+		common.SendError(c, common.NewInternalServerError("failed to update extra spec"))
 		return
 	}
 
@@ -307,11 +319,12 @@ func (svc *Service) DeleteVolumeTypeExtraSpecKey(c *gin.Context) {
 	).Scan(&extraSpecs)
 
 	if err == pgx.ErrNoRows {
-		c.JSON(http.StatusNotFound, gin.H{"error": "volume type not found"})
+		common.SendError(c, common.NewNotFoundError("volume type"))
 		return
 	}
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "delete_extra_spec_key").Msg("failed to query extra specs")
+		common.SendError(c, common.NewInternalServerError("failed to delete extra spec"))
 		return
 	}
 
@@ -321,7 +334,7 @@ func (svc *Service) DeleteVolumeTypeExtraSpecKey(c *gin.Context) {
 
 	// Check if key exists
 	if _, ok := extraSpecs[key]; !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "extra spec key not found"})
+		common.SendError(c, common.NewNotFoundError("extra spec key"))
 		return
 	}
 
@@ -331,7 +344,8 @@ func (svc *Service) DeleteVolumeTypeExtraSpecKey(c *gin.Context) {
 	// Save back to database
 	extraSpecsJSON, err := json.Marshal(extraSpecs)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "delete_extra_spec_key").Msg("failed to marshal extra specs")
+		common.SendError(c, common.NewInternalServerError("failed to delete extra spec"))
 		return
 	}
 
@@ -340,7 +354,8 @@ func (svc *Service) DeleteVolumeTypeExtraSpecKey(c *gin.Context) {
 		extraSpecsJSON, typeID,
 	)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "delete_extra_spec_key").Msg("failed to save extra specs")
+		common.SendError(c, common.NewInternalServerError("failed to delete extra spec"))
 		return
 	}
 

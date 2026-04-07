@@ -4,10 +4,12 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/cobaltcore-dev/o3k/internal/common"
 	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/rs/zerolog/log"
 )
 
 // ListGroups lists all volume groups
@@ -21,7 +23,8 @@ func (svc *Service) ListGroups(c *gin.Context) {
 		ORDER BY created_at DESC
 	`, projectID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "list_groups").Msg("failed to query volume groups")
+		common.SendError(c, common.NewInternalServerError("failed to list groups"))
 		return
 	}
 	defer rows.Close()
@@ -41,7 +44,8 @@ func (svc *Service) ListGroups(c *gin.Context) {
 
 		err := rows.Scan(&id, &projID, &name, &description, &status, &groupType, &createdAt, &updatedAt)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			log.Error().Err(err).Str("operation", "scan_group").Msg("failed to scan group row")
+			common.SendError(c, common.NewInternalServerError("failed to read group data"))
 			return
 		}
 
@@ -73,7 +77,7 @@ func (svc *Service) CreateGroup(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		common.SendError(c, common.NewBadRequestError("invalid request body"))
 		return
 	}
 
@@ -86,7 +90,8 @@ func (svc *Service) CreateGroup(c *gin.Context) {
 	`, groupID, projectID, req.Group.Name, req.Group.Description, "available", req.Group.GroupType, now, now)
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "create_group").Msg("failed to insert volume group")
+		common.SendError(c, common.NewInternalServerError("failed to create group"))
 		return
 	}
 
@@ -124,11 +129,12 @@ func (svc *Service) GetGroup(c *gin.Context) {
 	`, groupID, projectID).Scan(&name, &description, &status, &groupType, &createdAt, &updatedAt)
 
 	if err == pgx.ErrNoRows {
-		c.JSON(http.StatusNotFound, gin.H{"error": "group not found"})
+		common.SendError(c, common.NewNotFoundError("group"))
 		return
 	}
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "get_group").Msg("failed to query volume group")
+		common.SendError(c, common.NewInternalServerError("failed to get group"))
 		return
 	}
 
@@ -158,7 +164,7 @@ func (svc *Service) UpdateGroup(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		common.SendError(c, common.NewBadRequestError("invalid request body"))
 		return
 	}
 
@@ -170,7 +176,7 @@ func (svc *Service) UpdateGroup(c *gin.Context) {
 	).Scan(&exists)
 
 	if err != nil || !exists {
-		c.JSON(http.StatusNotFound, gin.H{"error": "group not found"})
+		common.SendError(c, common.NewNotFoundError("group"))
 		return
 	}
 
@@ -184,7 +190,8 @@ func (svc *Service) UpdateGroup(c *gin.Context) {
 	`, req.Group.Name, req.Group.Description, time.Now(), groupID, projectID)
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "update_group").Msg("failed to update volume group")
+		common.SendError(c, common.NewInternalServerError("failed to update group"))
 		return
 	}
 
@@ -205,7 +212,8 @@ func (svc *Service) UpdateGroup(c *gin.Context) {
 	`, groupID, projectID).Scan(&name, &description, &status, &groupType, &createdAt, &updatedAt)
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "fetch_updated_group").Msg("failed to fetch updated group")
+		common.SendError(c, common.NewInternalServerError("failed to fetch updated group"))
 		return
 	}
 
@@ -233,12 +241,13 @@ func (svc *Service) DeleteGroup(c *gin.Context) {
 	)
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "delete_group").Msg("failed to delete volume group")
+		common.SendError(c, common.NewInternalServerError("failed to delete group"))
 		return
 	}
 
 	if result.RowsAffected() == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "group not found"})
+		common.SendError(c, common.NewNotFoundError("group"))
 		return
 	}
 

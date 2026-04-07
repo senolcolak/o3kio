@@ -4,9 +4,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/cobaltcore-dev/o3k/internal/common"
 	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/rs/zerolog/log"
 )
 
 // VolumeTypeAction handles POST /v3/:project_id/types/:id/action
@@ -15,7 +17,7 @@ func (svc *Service) VolumeTypeAction(c *gin.Context) {
 
 	var req map[string]interface{}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		common.SendError(c, common.NewBadRequestError("invalid request body"))
 		return
 	}
 
@@ -32,12 +34,12 @@ func (svc *Service) VolumeTypeAction(c *gin.Context) {
 		).Scan(&isPublic)
 
 		if err != nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Volume type not found"})
+			common.SendError(c, common.NewNotFoundError("volume type"))
 			return
 		}
 
 		if isPublic {
-			c.JSON(http.StatusConflict, gin.H{"error": "Cannot add access to public volume type"})
+			common.SendError(c, common.NewConflictError("cannot add access to public volume type"))
 			return
 		}
 
@@ -49,7 +51,8 @@ func (svc *Service) VolumeTypeAction(c *gin.Context) {
 		`, typeID, projectID, time.Now())
 
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			log.Error().Err(err).Str("operation", "add_volume_type_access").Msg("failed to add project access")
+			common.SendError(c, common.NewInternalServerError("failed to add project access"))
 			return
 		}
 
@@ -69,12 +72,13 @@ func (svc *Service) VolumeTypeAction(c *gin.Context) {
 		)
 
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			log.Error().Err(err).Str("operation", "remove_volume_type_access").Msg("failed to remove project access")
+			common.SendError(c, common.NewInternalServerError("failed to remove project access"))
 			return
 		}
 
 		if result.RowsAffected() == 0 {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Project access not found"})
+			common.SendError(c, common.NewNotFoundError("project access"))
 			return
 		}
 
@@ -82,7 +86,7 @@ func (svc *Service) VolumeTypeAction(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusBadRequest, gin.H{"error": "Unknown action"})
+	common.SendError(c, common.NewBadRequestError("unknown action"))
 }
 
 // ListVolumeTypeAccess handles GET /v3/:project_id/types/:id/os-volume-type-access
@@ -97,7 +101,7 @@ func (svc *Service) ListVolumeTypeAccess(c *gin.Context) {
 	).Scan(&isPublic)
 
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Volume type not found"})
+		common.SendError(c, common.NewNotFoundError("volume type"))
 		return
 	}
 
@@ -115,7 +119,8 @@ func (svc *Service) ListVolumeTypeAccess(c *gin.Context) {
 	`, typeID)
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "list_volume_type_access").Msg("failed to query access list")
+		common.SendError(c, common.NewInternalServerError("failed to list volume type access"))
 		return
 	}
 	defer rows.Close()
@@ -133,4 +138,3 @@ func (svc *Service) ListVolumeTypeAccess(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"volume_type_access": access})
 }
-

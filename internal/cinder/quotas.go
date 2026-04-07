@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/cobaltcore-dev/o3k/internal/common"
 	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/rs/zerolog/log"
 )
 
 // GetQuotaSet returns quota limits for a project
@@ -32,11 +34,11 @@ func (svc *Service) GetQuotaSet(c *gin.Context) {
 
 	// Default quotas
 	quotas := map[string]int{
-		"volumes":   100,
-		"snapshots": 100,
-		"gigabytes": 10000,
-		"backups":   100,
-		"backup_gigabytes": 10000,
+		"volumes":              100,
+		"snapshots":            100,
+		"gigabytes":            10000,
+		"backups":              100,
+		"backup_gigabytes":     10000,
 		"per_volume_gigabytes": 1000,
 	}
 
@@ -82,7 +84,7 @@ func (svc *Service) UpdateQuotaSet(c *gin.Context) {
 			"SELECT id FROM projects WHERE name = $1",
 			targetProject).Scan(&targetProjectID)
 		if err != nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Project not found"})
+			common.SendError(c, common.NewNotFoundError("project"))
 			return
 		}
 		projectUUID, _ = uuid.Parse(targetProjectID)
@@ -92,7 +94,7 @@ func (svc *Service) UpdateQuotaSet(c *gin.Context) {
 		QuotaSet map[string]interface{} `json:"quota_set"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		common.SendError(c, common.NewBadRequestError("invalid request body"))
 		return
 	}
 
@@ -127,18 +129,19 @@ func (svc *Service) UpdateQuotaSet(c *gin.Context) {
 			DO UPDATE SET "limit" = $3, updated_at = NOW()
 		`, projectUUID, resource, limit)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			log.Error().Err(err).Str("operation", "update_quota").Str("resource", resource).Msg("failed to update quota")
+			common.SendError(c, common.NewInternalServerError("failed to update quota"))
 			return
 		}
 	}
 
 	// Load and return all quotas (defaults + overrides)
 	defaults := map[string]int{
-		"volumes":   100,
-		"snapshots": 100,
-		"gigabytes": 10000,
-		"backups":   100,
-		"backup_gigabytes": 10000,
+		"volumes":              100,
+		"snapshots":            100,
+		"gigabytes":            10000,
+		"backups":              100,
+		"backup_gigabytes":     10000,
 		"per_volume_gigabytes": 1000,
 	}
 
@@ -188,7 +191,8 @@ func (svc *Service) DeleteQuotaSet(c *gin.Context) {
 		"DELETE FROM cinder_quotas WHERE project_id = $1",
 		targetProjectID)
 	if err != nil && err != pgx.ErrNoRows {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reset quotas"})
+		log.Error().Err(err).Str("operation", "delete_quota_set").Msg("failed to reset quotas")
+		common.SendError(c, common.NewInternalServerError("failed to reset quotas"))
 		return
 	}
 

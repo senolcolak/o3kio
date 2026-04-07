@@ -5,10 +5,12 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/cobaltcore-dev/o3k/internal/common"
 	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/rs/zerolog/log"
 )
 
 // ListBackups lists all volume backups
@@ -22,7 +24,8 @@ func (svc *Service) ListBackups(c *gin.Context) {
 		ORDER BY created_at DESC
 	`, projectID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "list_backups").Msg("failed to query backups")
+		common.SendError(c, common.NewInternalServerError("failed to list backups"))
 		return
 	}
 	defer rows.Close()
@@ -43,7 +46,8 @@ func (svc *Service) ListBackups(c *gin.Context) {
 
 		err := rows.Scan(&id, &projID, &volumeID, &name, &description, &status, &sizeGB, &createdAt, &updatedAt)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			log.Error().Err(err).Str("operation", "scan_backup").Msg("failed to scan backup row")
+			common.SendError(c, common.NewInternalServerError("failed to read backup data"))
 			return
 		}
 
@@ -82,7 +86,7 @@ func (svc *Service) CreateBackup(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		common.SendError(c, common.NewBadRequestError("invalid request body"))
 		return
 	}
 
@@ -94,11 +98,12 @@ func (svc *Service) CreateBackup(c *gin.Context) {
 	).Scan(&volumeSize)
 
 	if err == pgx.ErrNoRows {
-		c.JSON(http.StatusNotFound, gin.H{"error": "volume not found"})
+		common.SendError(c, common.NewNotFoundError("volume"))
 		return
 	}
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "create_backup").Msg("failed to query volume")
+		common.SendError(c, common.NewInternalServerError("failed to create backup"))
 		return
 	}
 
@@ -111,7 +116,8 @@ func (svc *Service) CreateBackup(c *gin.Context) {
 	`, backupID, projectID, req.Backup.VolumeID, req.Backup.Name, req.Backup.Description, "available", volumeSize, now, now)
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "create_backup").Msg("failed to insert backup")
+		common.SendError(c, common.NewInternalServerError("failed to create backup"))
 		return
 	}
 
@@ -151,11 +157,12 @@ func (svc *Service) GetBackup(c *gin.Context) {
 	`, backupID, projectID).Scan(&volumeID, &name, &description, &status, &sizeGB, &createdAt, &updatedAt)
 
 	if err == pgx.ErrNoRows {
-		c.JSON(http.StatusNotFound, gin.H{"error": "backup not found"})
+		common.SendError(c, common.NewNotFoundError("backup"))
 		return
 	}
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "get_backup").Msg("failed to query backup")
+		common.SendError(c, common.NewInternalServerError("failed to get backup"))
 		return
 	}
 
@@ -184,12 +191,13 @@ func (svc *Service) DeleteBackup(c *gin.Context) {
 	)
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "delete_backup").Msg("failed to delete backup")
+		common.SendError(c, common.NewInternalServerError("failed to delete backup"))
 		return
 	}
 
 	if result.RowsAffected() == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "backup not found"})
+		common.SendError(c, common.NewNotFoundError("backup"))
 		return
 	}
 
@@ -204,14 +212,14 @@ func (svc *Service) RestoreBackup(c *gin.Context) {
 	// Get restore data from context (set by BackupAction)
 	restoreData, exists := c.Get("restore_data")
 	if !exists {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing restore data"})
+		common.SendError(c, common.NewBadRequestError("missing restore data"))
 		return
 	}
 
 	// Parse restore data
 	restoreMap, ok := restoreData.(map[string]interface{})
 	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid restore data format"})
+		common.SendError(c, common.NewBadRequestError("invalid restore data format"))
 		return
 	}
 
@@ -232,11 +240,12 @@ func (svc *Service) RestoreBackup(c *gin.Context) {
 	).Scan(&originalVolumeID, &sizeGB)
 
 	if err == pgx.ErrNoRows {
-		c.JSON(http.StatusNotFound, gin.H{"error": "backup not found"})
+		common.SendError(c, common.NewNotFoundError("backup"))
 		return
 	}
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "restore_backup").Msg("failed to query backup")
+		common.SendError(c, common.NewInternalServerError("failed to restore backup"))
 		return
 	}
 
@@ -253,7 +262,7 @@ func (svc *Service) RestoreBackup(c *gin.Context) {
 		).Scan(&exists)
 
 		if err != nil || !exists {
-			c.JSON(http.StatusNotFound, gin.H{"error": "target volume not found"})
+			common.SendError(c, common.NewNotFoundError("target volume"))
 			return
 		}
 	} else {
@@ -272,7 +281,8 @@ func (svc *Service) RestoreBackup(c *gin.Context) {
 		`, restoredVolumeID, projectID, volumeName, "Restored from backup", sizeGB, "available", now, now)
 
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			log.Error().Err(err).Str("operation", "restore_backup").Msg("failed to create restored volume")
+			common.SendError(c, common.NewInternalServerError("failed to restore backup"))
 			return
 		}
 	}
@@ -289,7 +299,7 @@ func (svc *Service) RestoreBackup(c *gin.Context) {
 func (svc *Service) BackupAction(c *gin.Context) {
 	var req map[string]interface{}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		common.SendError(c, common.NewBadRequestError("invalid request body"))
 		return
 	}
 
@@ -301,5 +311,5 @@ func (svc *Service) BackupAction(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusBadRequest, gin.H{"error": "unknown action"})
+	common.SendError(c, common.NewBadRequestError("unknown action"))
 }

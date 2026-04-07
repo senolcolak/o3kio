@@ -4,9 +4,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/cobaltcore-dev/o3k/internal/common"
 	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/rs/zerolog/log"
 )
 
 // ManageVolume handles POST /v3/:project_id/os-volume-manage
@@ -24,7 +26,7 @@ func (svc *Service) ManageVolume(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		common.SendError(c, common.NewBadRequestError("invalid request body"))
 		return
 	}
 
@@ -40,7 +42,8 @@ func (svc *Service) ManageVolume(c *gin.Context) {
 	`, volumeID, req.Volume.Name, sizeGB, "available", projectID, time.Now(), time.Now())
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "manage_volume").Msg("failed to insert managed volume")
+		common.SendError(c, common.NewInternalServerError("failed to manage volume"))
 		return
 	}
 
@@ -63,7 +66,7 @@ func (svc *Service) ListManageableVolumes(c *gin.Context) {
 	host := c.Query("host")
 
 	if host == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "host parameter is required"})
+		common.SendError(c, common.NewBadRequestError("host parameter is required"))
 		return
 	}
 
@@ -89,13 +92,13 @@ func (svc *Service) UnmanageVolume(c *gin.Context, volumeID string) {
 	`, volumeID, projectID).Scan(&id, &status)
 
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Volume not found"})
+		common.SendError(c, common.NewNotFoundError("volume"))
 		return
 	}
 
 	// Cannot unmanage attached volumes
 	if status == "in-use" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot unmanage volume in use"})
+		common.SendError(c, common.NewBadRequestError("cannot unmanage volume in use"))
 		return
 	}
 
@@ -106,7 +109,8 @@ func (svc *Service) UnmanageVolume(c *gin.Context, volumeID string) {
 	)
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "unmanage_volume").Msg("failed to delete volume")
+		common.SendError(c, common.NewInternalServerError("failed to unmanage volume"))
 		return
 	}
 
@@ -127,7 +131,7 @@ func (svc *Service) ManageSnapshot(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		common.SendError(c, common.NewBadRequestError("invalid request body"))
 		return
 	}
 
@@ -138,7 +142,7 @@ func (svc *Service) ManageSnapshot(c *gin.Context) {
 	`, req.Snapshot.VolumeID, projectID).Scan(&volumeExists)
 
 	if err != nil || !volumeExists {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Volume not found"})
+		common.SendError(c, common.NewNotFoundError("volume"))
 		return
 	}
 
@@ -154,7 +158,8 @@ func (svc *Service) ManageSnapshot(c *gin.Context) {
 	`, snapshotID, req.Snapshot.Name, req.Snapshot.VolumeID, sizeGB, "available", projectID, time.Now(), time.Now())
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "manage_snapshot").Msg("failed to insert managed snapshot")
+		common.SendError(c, common.NewInternalServerError("failed to manage snapshot"))
 		return
 	}
 
