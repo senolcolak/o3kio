@@ -1409,28 +1409,27 @@ func (svc *Service) SetVolumeMetadata(c *gin.Context) {
 		return
 	}
 
-	// Delete existing metadata
-	_, err = database.DB.Exec(c.Request.Context(),
-		"DELETE FROM volume_metadata WHERE volume_id = $1",
-		volumeID,
-	)
-	if err != nil {
-		log.Error().Err(err).Str("operation", "set_volume_metadata_delete").Str("volume_id", volumeID).Msg("failed to delete volume metadata")
+	// Delete existing metadata then insert new metadata atomically
+	if err = database.WithTx(c.Request.Context(), func(tx pgx.Tx) error {
+		if _, err := tx.Exec(c.Request.Context(),
+			"DELETE FROM volume_metadata WHERE volume_id = $1",
+			volumeID,
+		); err != nil {
+			return fmt.Errorf("delete_volume_metadata: %w", err)
+		}
+		for key, value := range req.Metadata {
+			if _, err := tx.Exec(c.Request.Context(), `
+				INSERT INTO volume_metadata (volume_id, meta_key, meta_value)
+				VALUES ($1, $2, $3)
+			`, volumeID, key, value); err != nil {
+				return fmt.Errorf("insert_volume_metadata: %w", err)
+			}
+		}
+		return nil
+	}); err != nil {
+		log.Error().Err(err).Str("operation", "set_volume_metadata").Str("volume_id", volumeID).Msg("failed to set volume metadata")
 		common.SendError(c, common.NewInternalServerError("failed to set volume metadata"))
 		return
-	}
-
-	// Insert new metadata
-	for key, value := range req.Metadata {
-		_, err = database.DB.Exec(c.Request.Context(), `
-			INSERT INTO volume_metadata (volume_id, meta_key, meta_value)
-			VALUES ($1, $2, $3)
-		`, volumeID, key, value)
-		if err != nil {
-			log.Error().Err(err).Str("operation", "set_volume_metadata_insert").Str("volume_id", volumeID).Msg("failed to insert volume metadata")
-			common.SendError(c, common.NewInternalServerError("failed to set volume metadata"))
-			return
-		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{"metadata": req.Metadata})
@@ -1618,28 +1617,27 @@ func (svc *Service) SetSnapshotMetadata(c *gin.Context) {
 		return
 	}
 
-	// Delete existing metadata
-	_, err = database.DB.Exec(c.Request.Context(),
-		"DELETE FROM snapshot_metadata WHERE snapshot_id = $1",
-		snapshotID,
-	)
-	if err != nil {
-		log.Error().Err(err).Str("operation", "set_snapshot_metadata_delete").Str("snapshot_id", snapshotID).Msg("failed to delete snapshot metadata")
+	// Delete existing metadata then insert new metadata atomically
+	if err = database.WithTx(c.Request.Context(), func(tx pgx.Tx) error {
+		if _, err := tx.Exec(c.Request.Context(),
+			"DELETE FROM snapshot_metadata WHERE snapshot_id = $1",
+			snapshotID,
+		); err != nil {
+			return fmt.Errorf("delete_snapshot_metadata: %w", err)
+		}
+		for key, value := range req.Metadata {
+			if _, err := tx.Exec(c.Request.Context(), `
+				INSERT INTO snapshot_metadata (snapshot_id, meta_key, meta_value)
+				VALUES ($1, $2, $3)
+			`, snapshotID, key, value); err != nil {
+				return fmt.Errorf("insert_snapshot_metadata: %w", err)
+			}
+		}
+		return nil
+	}); err != nil {
+		log.Error().Err(err).Str("operation", "set_snapshot_metadata").Str("snapshot_id", snapshotID).Msg("failed to set snapshot metadata")
 		common.SendError(c, common.NewInternalServerError("failed to set snapshot metadata"))
 		return
-	}
-
-	// Insert new metadata
-	for key, value := range req.Metadata {
-		_, err = database.DB.Exec(c.Request.Context(), `
-			INSERT INTO snapshot_metadata (snapshot_id, meta_key, meta_value)
-			VALUES ($1, $2, $3)
-		`, snapshotID, key, value)
-		if err != nil {
-			log.Error().Err(err).Str("operation", "set_snapshot_metadata_insert").Str("snapshot_id", snapshotID).Msg("failed to insert snapshot metadata")
-			common.SendError(c, common.NewInternalServerError("failed to set snapshot metadata"))
-			return
-		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{"metadata": req.Metadata})
