@@ -8,6 +8,8 @@ LDFLAGS=-ldflags "-X main.Version=$(VERSION)"
 
 # Database variables
 POSTGRES_VERSION?=18
+# Development-only defaults. Do NOT use in production.
+# Production should set DB_URL via environment variable with sslmode=require.
 DB_URL?=postgres://o3k:secret@localhost:5432/o3k?sslmode=disable
 
 # Build the binary
