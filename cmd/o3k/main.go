@@ -250,6 +250,12 @@ func main() {
 
 	log.Println("Shutting down servers...")
 
+	// Stop service background goroutines before closing HTTP servers
+	novaService.Shutdown()
+	log.Println("Nova background goroutines stopped")
+	cinderService.Shutdown()
+	log.Println("Cinder background goroutines stopped")
+
 	// Stop VXLAN services
 	if vxlanCoordinator != nil {
 		vxlanCoordinator.Stop()

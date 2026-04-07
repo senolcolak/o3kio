@@ -54,13 +54,17 @@ func (svc *Service) SuspendInstance(c *gin.Context) {
 
 	// Suspend VM in libvirt (asynchronously)
 	if svc.vmManager != nil && libvirtDomainID != "" {
+		svc.wg.Add(1)
 		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer svc.wg.Done()
+			ctx, cancel := context.WithTimeout(svc.ctx, 30*time.Second)
 			defer cancel()
 
 			if err := svc.vmManager.SuspendVM(ctx, libvirtDomainID); err != nil {
 				// On failure, revert to ERROR state
-				database.DB.Exec(context.Background(),
+				dbCtx, dbCancel := context.WithTimeout(svc.ctx, 5*time.Second)
+				defer dbCancel()
+				database.DB.Exec(dbCtx,
 					"UPDATE instances SET status = $1, task_state = $2 WHERE id = $3",
 					"ERROR", "", instanceID)
 			}
@@ -108,13 +112,17 @@ func (svc *Service) ResumeInstance(c *gin.Context) {
 
 	// Resume VM in libvirt (asynchronously)
 	if svc.vmManager != nil && libvirtDomainID != "" {
+		svc.wg.Add(1)
 		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer svc.wg.Done()
+			ctx, cancel := context.WithTimeout(svc.ctx, 30*time.Second)
 			defer cancel()
 
 			if err := svc.vmManager.ResumeVM(ctx, libvirtDomainID); err != nil {
 				// On failure, revert to ERROR state
-				database.DB.Exec(context.Background(),
+				dbCtx, dbCancel := context.WithTimeout(svc.ctx, 5*time.Second)
+				defer dbCancel()
+				database.DB.Exec(dbCtx,
 					"UPDATE instances SET status = $1, task_state = $2 WHERE id = $3",
 					"ERROR", "", instanceID)
 			}
@@ -177,8 +185,10 @@ func (svc *Service) ShelveInstance(c *gin.Context) {
 
 	// Stop and undefine VM in libvirt (asynchronously)
 	if svc.vmManager != nil && libvirtDomainID != "" {
+		svc.wg.Add(1)
 		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer svc.wg.Done()
+			ctx, cancel := context.WithTimeout(svc.ctx, 30*time.Second)
 			defer cancel()
 
 			// Stop VM
@@ -326,9 +336,17 @@ func (svc *Service) resizeInstance(c *gin.Context, instanceID, projectID, flavor
 
 	// In real mode, would rebuild VM with new flavor
 	// For stub mode, auto-confirm after 5 seconds
+	svc.wg.Add(1)
 	go func() {
-		time.Sleep(5 * time.Second)
-		database.DB.Exec(context.Background(),
+		defer svc.wg.Done()
+		select {
+		case <-time.After(5 * time.Second):
+		case <-svc.ctx.Done():
+			return
+		}
+		ctx, cancel := context.WithTimeout(svc.ctx, 5*time.Second)
+		defer cancel()
+		database.DB.Exec(ctx,
 			"UPDATE instances SET status = $1, task_state = $2 WHERE id = $3",
 			"ACTIVE", "", instanceID)
 	}()
@@ -498,10 +516,16 @@ func (svc *Service) MigrateInstance(c *gin.Context) {
 	}
 
 	// Background goroutine to complete migration after 5 seconds (stub mode)
+	svc.wg.Add(1)
 	go func() {
-		time.Sleep(5 * time.Second)
+		defer svc.wg.Done()
+		select {
+		case <-time.After(5 * time.Second):
+		case <-svc.ctx.Done():
+			return
+		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(svc.ctx, 5*time.Second)
 		defer cancel()
 
 		// Clear task_state and mark migration as complete

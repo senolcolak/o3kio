@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -24,16 +25,28 @@ type Service struct {
 	cephPool   string
 	cephConf   string
 	cephClient *storage.CephClient
+	wg         sync.WaitGroup
+	ctx        context.Context
+	cancel     context.CancelFunc
 }
 
 // NewService creates a new Cinder service
 func NewService(mode, cephPool, cephConf string) *Service {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Service{
 		mode:       mode,
 		cephPool:   cephPool,
 		cephConf:   cephConf,
 		cephClient: storage.NewCephClient(mode, cephPool, cephConf),
+		ctx:        ctx,
+		cancel:     cancel,
 	}
+}
+
+// Shutdown signals all background goroutines to stop and waits for them.
+func (svc *Service) Shutdown() {
+	svc.cancel()
+	svc.wg.Wait()
 }
 
 // RegisterRoutes registers Cinder routes
@@ -224,10 +237,17 @@ func (svc *Service) CreateVolume(c *gin.Context) {
 	}
 
 	// Update status to available in background
+	svc.wg.Add(1)
 	go func() {
-		time.Sleep(100 * time.Millisecond)
-		// Use context.Background() instead of c.Request.Context() to avoid cancellation
-		database.DB.Exec(context.Background(),
+		defer svc.wg.Done()
+		select {
+		case <-time.After(100 * time.Millisecond):
+		case <-svc.ctx.Done():
+			return
+		}
+		ctx, cancel := context.WithTimeout(svc.ctx, 5*time.Second)
+		defer cancel()
+		database.DB.Exec(ctx,
 			"UPDATE volumes SET status = $1, updated_at = $2 WHERE id = $3",
 			"available", time.Now(), volumeID)
 	}()
@@ -313,6 +333,7 @@ func (svc *Service) ListVolumes(c *gin.Context) {
 		var size int
 
 		if err := rows.Scan(&id, &name, &size); err != nil {
+			log.Warn().Err(err).Msg("failed to scan volume row")
 			continue
 		}
 
@@ -397,6 +418,7 @@ func (svc *Service) ListVolumesDetail(c *gin.Context) {
 		var createdAt, updatedAt time.Time
 
 		if err := rows.Scan(&id, &name, &size, &status, &bootable, &attachedTo, &createdAt, &updatedAt); err != nil {
+			log.Warn().Err(err).Msg("failed to scan volume detail row")
 			continue
 		}
 
@@ -920,9 +942,17 @@ func (svc *Service) CreateSnapshot(c *gin.Context) {
 	}
 
 	// Update status to available
+	svc.wg.Add(1)
 	go func() {
-		time.Sleep(100 * time.Millisecond)
-		database.DB.Exec(c.Request.Context(),
+		defer svc.wg.Done()
+		select {
+		case <-time.After(100 * time.Millisecond):
+		case <-svc.ctx.Done():
+			return
+		}
+		ctx, cancel := context.WithTimeout(svc.ctx, 5*time.Second)
+		defer cancel()
+		database.DB.Exec(ctx,
 			"UPDATE snapshots SET status = $1 WHERE id = $2",
 			"available", snapshotID)
 	}()
@@ -968,6 +998,7 @@ func (svc *Service) ListSnapshotsDetail(c *gin.Context) {
 		var createdAt time.Time
 
 		if err := rows.Scan(&id, &name, &volumeID, &size, &status, &createdAt); err != nil {
+			log.Warn().Err(err).Msg("failed to scan snapshot row")
 			continue
 		}
 
@@ -1030,6 +1061,7 @@ func (svc *Service) ListSnapshots(c *gin.Context) {
 		var createdAt time.Time
 
 		if err := rows.Scan(&id, &name, &volumeID, &size, &status, &createdAt); err != nil {
+			log.Warn().Err(err).Msg("failed to scan snapshot row")
 			continue
 		}
 
@@ -1157,6 +1189,7 @@ func (svc *Service) ListVolumeTypes(c *gin.Context) {
 		var createdAt time.Time
 
 		if err := rows.Scan(&id, &name, &description, &isPublic, &createdAt); err != nil {
+			log.Warn().Err(err).Msg("failed to scan volume type row")
 			continue
 		}
 
@@ -1376,6 +1409,7 @@ func (svc *Service) GetVolumeMetadata(c *gin.Context) {
 	for rows.Next() {
 		var key, value string
 		if err := rows.Scan(&key, &value); err != nil {
+			log.Warn().Err(err).Msg("failed to scan metadata row")
 			continue
 		}
 		metadata[key] = value
@@ -1584,6 +1618,7 @@ func (svc *Service) GetSnapshotMetadata(c *gin.Context) {
 	for rows.Next() {
 		var key, value string
 		if err := rows.Scan(&key, &value); err != nil {
+			log.Warn().Err(err).Msg("failed to scan metadata row")
 			continue
 		}
 		metadata[key] = value

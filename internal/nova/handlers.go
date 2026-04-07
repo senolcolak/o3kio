@@ -553,6 +553,7 @@ func (svc *Service) ListServers(c *gin.Context) {
 	for rows.Next() {
 		var id, name string
 		if err := rows.Scan(&id, &name); err != nil {
+			log.Warn().Err(err).Msg("failed to scan server row")
 			continue
 		}
 		servers = append(servers, gin.H{
@@ -637,6 +638,7 @@ func (svc *Service) ListServersDetail(c *gin.Context) {
 		if err := rows.Scan(&id, &name, &status, &powerState, &projectID, &userID,
 			&flavorID, &imageID, &createdAt, &updatedAt, &launchedAt,
 			&vcpus, &ramMB, &diskGB, &flavorName); err != nil {
+			log.Warn().Err(err).Msg("failed to scan server detail row")
 			continue
 		}
 
@@ -693,6 +695,7 @@ func (svc *Service) getInstanceAddresses(ctx context.Context, instanceID, projec
 		var fixedIPsJSON []byte
 
 		if err := rows.Scan(&networkID, &fixedIPsJSON, &networkName); err != nil {
+			log.Warn().Err(err).Msg("failed to scan network row")
 			continue
 		}
 
@@ -1008,9 +1011,17 @@ func (svc *Service) ServerAction(c *gin.Context) {
 			database.DB.Exec(c.Request.Context(),
 				"UPDATE instances SET status = $1, updated_at = $2 WHERE (id::text = $3 OR name = $3) AND project_id = $4",
 				"REBOOT", time.Now(), instanceID, projectID)
+			svc.wg.Add(1)
 			go func() {
-				time.Sleep(1 * time.Second)
-				database.DB.Exec(context.Background(),
+				defer svc.wg.Done()
+				select {
+				case <-time.After(1 * time.Second):
+				case <-svc.ctx.Done():
+					return
+				}
+				ctx, cancel := context.WithTimeout(svc.ctx, 5*time.Second)
+				defer cancel()
+				database.DB.Exec(ctx,
 					"UPDATE instances SET status = $1, updated_at = $2 WHERE (id::text = $3 OR name = $3) AND project_id = $4",
 					"ACTIVE", time.Now(), instanceID, projectID)
 			}()
@@ -1076,6 +1087,7 @@ func (svc *Service) ListFlavors(c *gin.Context) {
 	for rows.Next() {
 		var id, name string
 		if err := rows.Scan(&id, &name); err != nil {
+			log.Warn().Err(err).Msg("failed to scan flavor row")
 			continue
 		}
 		flavors = append(flavors, gin.H{
@@ -1145,6 +1157,7 @@ func (svc *Service) ListFlavorsDetail(c *gin.Context) {
 		var isPublic bool
 
 		if err := rows.Scan(&id, &name, &vcpus, &ramMB, &diskGB, &isPublic); err != nil {
+			log.Warn().Err(err).Msg("failed to scan flavor detail row")
 			continue
 		}
 
@@ -1336,6 +1349,7 @@ func (svc *Service) ListAvailabilityZones(c *gin.Context) {
 	for rows.Next() {
 		var zoneName string
 		if err := rows.Scan(&zoneName); err != nil {
+			log.Warn().Err(err).Msg("failed to scan availability zone row")
 			continue
 		}
 		zones = append(zones, gin.H{
@@ -1375,6 +1389,7 @@ func (svc *Service) ListAvailabilityZonesDetail(c *gin.Context) {
 		var zoneName string
 		var hosts []string
 		if err := rows.Scan(&zoneName, &hosts); err != nil {
+			log.Warn().Err(err).Msg("failed to scan availability zone host row")
 			continue
 		}
 		zoneHosts[zoneName] = append(zoneHosts[zoneName], hosts...)
@@ -1743,9 +1758,17 @@ func (svc *Service) RebuildInstanceAction(c *gin.Context, rebuildData interface{
 
 	// In stub mode, simulate rebuild completion
 	if svc.libvirtMode == "stub" {
+		svc.wg.Add(1)
 		go func() {
-			time.Sleep(2 * time.Second)
-			database.DB.Exec(context.Background(),
+			defer svc.wg.Done()
+			select {
+			case <-time.After(2 * time.Second):
+			case <-svc.ctx.Done():
+				return
+			}
+			ctx, cancel := context.WithTimeout(svc.ctx, 5*time.Second)
+			defer cancel()
+			database.DB.Exec(ctx,
 				"UPDATE instances SET status = $1, updated_at = $2 WHERE id = $3 AND project_id = $4",
 				"ACTIVE", time.Now(), instanceID, projectID)
 		}()

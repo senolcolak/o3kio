@@ -121,8 +121,10 @@ func (svc *Service) AttachVolume(c *gin.Context) {
 
 	// Attach volume to VM if hypervisor is available
 	if svc.vmManager != nil && libvirtDomainID != "" {
+		svc.wg.Add(1)
 		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer svc.wg.Done()
+			ctx, cancel := context.WithTimeout(svc.ctx, 10*time.Second)
 			defer cancel()
 
 			// Get volume details
