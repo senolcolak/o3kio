@@ -3,11 +3,11 @@ package database
 import (
 	"context"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/rs/zerolog/log"
 )
 
 // QueryLogger wraps database operations with execution time logging
@@ -31,7 +31,7 @@ func (ql *QueryLogger) Query(ctx context.Context, sql string, args ...interface{
 	duration := time.Since(start)
 
 	if duration > ql.slowQueryThreshold {
-		log.Printf("[SLOW QUERY] %s | Duration: %v | Args: %v", sql, duration, args)
+		log.Warn().Str("sql", sql).Dur("duration", duration).Interface("args", args).Msg("slow query")
 	}
 
 	return rows, err
@@ -44,7 +44,7 @@ func (ql *QueryLogger) QueryRow(ctx context.Context, sql string, args ...interfa
 	duration := time.Since(start)
 
 	if duration > ql.slowQueryThreshold {
-		log.Printf("[SLOW QUERY] %s | Duration: %v | Args: %v", sql, duration, args)
+		log.Warn().Str("sql", sql).Dur("duration", duration).Interface("args", args).Msg("slow query")
 	}
 
 	return row
@@ -57,8 +57,7 @@ func (ql *QueryLogger) Exec(ctx context.Context, sql string, args ...interface{}
 	duration := time.Since(start)
 
 	if duration > ql.slowQueryThreshold {
-		log.Printf("[SLOW QUERY] %s | Duration: %v | Args: %v",
-			sql, duration, args)
+		log.Warn().Str("sql", sql).Dur("duration", duration).Interface("args", args).Msg("slow query")
 	}
 
 	return err

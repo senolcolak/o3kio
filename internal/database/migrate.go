@@ -36,7 +36,7 @@ func GetMigrationStatus(dbURL, migrationsPath string) (*MigrationInfo, error) {
 	}
 	defer func() {
 		if sourceErr, dbErr := m.Close(); sourceErr != nil || dbErr != nil {
-			log.Printf("Error closing migrator: source=%v, db=%v", sourceErr, dbErr)
+			log.Error().Err(sourceErr).AnErr("db_err", dbErr).Msg("error closing migrator")
 		}
 	}()
 
@@ -59,7 +59,7 @@ func MigrateUp(dbURL, migrationsPath string) error {
 	}
 	defer func() {
 		if sourceErr, dbErr := m.Close(); sourceErr != nil || dbErr != nil {
-			log.Printf("Error closing migrator: source=%v, db=%v", sourceErr, dbErr)
+			log.Error().Err(sourceErr).AnErr("db_err", dbErr).Msg("error closing migrator")
 		}
 	}()
 
@@ -86,7 +86,7 @@ func MigrateDown(dbURL, migrationsPath string) error {
 	}
 	defer func() {
 		if sourceErr, dbErr := m.Close(); sourceErr != nil || dbErr != nil {
-			log.Printf("Error closing migrator: source=%v, db=%v", sourceErr, dbErr)
+			log.Error().Err(sourceErr).AnErr("db_err", dbErr).Msg("error closing migrator")
 		}
 	}()
 
@@ -117,7 +117,7 @@ func MigrateToVersion(dbURL, migrationsPath string, targetVersion uint) error {
 	}
 	defer func() {
 		if sourceErr, dbErr := m.Close(); sourceErr != nil || dbErr != nil {
-			log.Printf("Error closing migrator: source=%v, db=%v", sourceErr, dbErr)
+			log.Error().Err(sourceErr).AnErr("db_err", dbErr).Msg("error closing migrator")
 		}
 	}()
 
@@ -151,7 +151,7 @@ func MigrateReset(dbURL, migrationsPath string) error {
 	}
 	defer func() {
 		if sourceErr, dbErr := m.Close(); sourceErr != nil || dbErr != nil {
-			log.Printf("Error closing migrator: source=%v, db=%v", sourceErr, dbErr)
+			log.Error().Err(sourceErr).AnErr("db_err", dbErr).Msg("error closing migrator")
 		}
 	}()
 
@@ -171,7 +171,7 @@ func MigrateReset(dbURL, migrationsPath string) error {
 	}
 	defer func() {
 		if sourceErr, dbErr := m2.Close(); sourceErr != nil || dbErr != nil {
-			log.Printf("Error closing migrator: source=%v, db=%v", sourceErr, dbErr)
+			log.Error().Err(sourceErr).AnErr("db_err", dbErr).Msg("error closing migrator")
 		}
 	}()
 
@@ -194,7 +194,7 @@ func ForceMigrationVersion(dbURL, migrationsPath string, version int) error {
 	}
 	defer func() {
 		if sourceErr, dbErr := m.Close(); sourceErr != nil || dbErr != nil {
-			log.Printf("Error closing migrator: source=%v, db=%v", sourceErr, dbErr)
+			log.Error().Err(sourceErr).AnErr("db_err", dbErr).Msg("error closing migrator")
 		}
 	}()
 
