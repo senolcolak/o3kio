@@ -4,8 +4,10 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/cobaltcore-dev/o3k/internal/common"
 	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/gin-gonic/gin"
+	"github.com/rs/zerolog/log"
 )
 
 // ListCachedImages lists images in the cache
@@ -18,7 +20,8 @@ func (svc *Service) ListCachedImages(c *gin.Context) {
 		ORDER BY cached_at DESC
 	`)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "list_cached_images").Msg("failed to query cached images")
+		common.SendError(c, common.NewInternalServerError("operation failed"))
 		return
 	}
 	defer rows.Close()
@@ -34,15 +37,16 @@ func (svc *Service) ListCachedImages(c *gin.Context) {
 
 		err := rows.Scan(&id, &name, &size, &cachedAt)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			log.Error().Err(err).Str("operation", "list_cached_images_scan").Msg("failed to scan cached image row")
+			common.SendError(c, common.NewInternalServerError("operation failed"))
 			return
 		}
 
 		image := map[string]interface{}{
-			"image_id":  id,
+			"image_id":      id,
 			"last_accessed": cachedAt.Format(time.RFC3339),
 			"last_modified": cachedAt.Format(time.RFC3339),
-			"size":      size,
+			"size":          size,
 		}
 		if name != nil {
 			image["name"] = *name
@@ -65,7 +69,7 @@ func (svc *Service) PrefetchImage(c *gin.Context) {
 	).Scan(&exists)
 
 	if err != nil || !exists {
-		c.JSON(http.StatusNotFound, gin.H{"error": "image not found"})
+		common.SendError(c, common.NewNotFoundError("image"))
 		return
 	}
 
@@ -77,7 +81,8 @@ func (svc *Service) PrefetchImage(c *gin.Context) {
 	`, time.Now(), imageID)
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "prefetch_image").Msg("failed to mark image as cached")
+		common.SendError(c, common.NewInternalServerError("operation failed"))
 		return
 	}
 
@@ -95,12 +100,13 @@ func (svc *Service) DeleteCachedImage(c *gin.Context) {
 	`, imageID)
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "delete_cached_image").Msg("failed to remove image from cache")
+		common.SendError(c, common.NewInternalServerError("operation failed"))
 		return
 	}
 
 	if result.RowsAffected() == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "cached image not found"})
+		common.SendError(c, common.NewNotFoundError("cached image"))
 		return
 	}
 
@@ -116,7 +122,8 @@ func (svc *Service) ClearCache(c *gin.Context) {
 	`)
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "clear_cache").Msg("failed to clear image cache")
+		common.SendError(c, common.NewInternalServerError("operation failed"))
 		return
 	}
 

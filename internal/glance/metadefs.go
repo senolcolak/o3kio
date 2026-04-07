@@ -4,8 +4,10 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/cobaltcore-dev/o3k/internal/common"
 	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/gin-gonic/gin"
+	"github.com/rs/zerolog/log"
 )
 
 // ListMetadefNamespaces handles GET /v2/metadefs/namespaces
@@ -17,7 +19,8 @@ func (svc *Service) ListMetadefNamespaces(c *gin.Context) {
 	`)
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "list_metadef_namespaces").Msg("failed to query metadef namespaces")
+		common.SendError(c, common.NewInternalServerError("operation failed"))
 		return
 	}
 	defer rows.Close()
@@ -62,13 +65,13 @@ func (svc *Service) ListMetadefNamespaces(c *gin.Context) {
 func (svc *Service) CreateMetadefNamespace(c *gin.Context) {
 	var req map[string]interface{}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		common.SendError(c, common.NewBadRequestError("invalid request body"))
 		return
 	}
 
 	namespace, ok := req["namespace"].(string)
 	if !ok || namespace == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "namespace is required"})
+		common.SendError(c, common.NewBadRequestError("namespace is required"))
 		return
 	}
 
@@ -87,7 +90,7 @@ func (svc *Service) CreateMetadefNamespace(c *gin.Context) {
 	`, namespace, displayName, description, visibility, protected, owner, time.Now(), time.Now())
 
 	if err != nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "Namespace already exists"})
+		common.SendError(c, common.NewConflictError("Namespace already exists"))
 		return
 	}
 
@@ -143,7 +146,7 @@ func (svc *Service) GetMetadefNamespace(c *gin.Context) {
 	`, namespace).Scan(&ns, &displayName, &description, &visibility, &protected, &owner, &createdAt, &updatedAt)
 
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Namespace not found"})
+		common.SendError(c, common.NewNotFoundError("Namespace"))
 		return
 	}
 
@@ -202,7 +205,7 @@ func (svc *Service) UpdateMetadefNamespace(c *gin.Context) {
 
 	var req map[string]interface{}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		common.SendError(c, common.NewBadRequestError("invalid request body"))
 		return
 	}
 
@@ -213,7 +216,7 @@ func (svc *Service) UpdateMetadefNamespace(c *gin.Context) {
 	`, namespace).Scan(&exists)
 
 	if err != nil || !exists {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Namespace not found"})
+		common.SendError(c, common.NewNotFoundError("Namespace"))
 		return
 	}
 
@@ -229,7 +232,8 @@ func (svc *Service) UpdateMetadefNamespace(c *gin.Context) {
 	`, displayName, description, visibility, protected, time.Now(), namespace)
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "update_metadef_namespace").Msg("failed to update metadef namespace")
+		common.SendError(c, common.NewInternalServerError("operation failed"))
 		return
 	}
 
@@ -260,12 +264,13 @@ func (svc *Service) DeleteMetadefNamespace(c *gin.Context) {
 	)
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Error().Err(err).Str("operation", "delete_metadef_namespace").Msg("failed to delete metadef namespace")
+		common.SendError(c, common.NewInternalServerError("operation failed"))
 		return
 	}
 
 	if result.RowsAffected() == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Namespace not found"})
+		common.SendError(c, common.NewNotFoundError("Namespace"))
 		return
 	}
 
