@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.6.0] - 2026-04-07
+
+### 🔒 Security Hardening
+- **crypto/rand for MAC addresses**: Replace predictable `math/rand` with cryptographic random for multi-tenant MAC generation (C-3)
+- **Cryptographic admin passwords**: Replace hardcoded `"generated-password"` and `"rescuepass123"` with random 16-char passwords using `crypto/rand` (C-4)
+- **Configurable CORS origins**: Replace wildcard `Access-Control-Allow-Origin: *` with origin-checked middleware, configurable via `server.cors_allowed_origins` in o3k.yaml (C-5)
+- **Glance PATCH field allowlist**: Harden SQL field interpolation with map-based validation to prevent injection (M-14)
+
+### 🔧 Error Handling
+- **Structured error framework migration**: Migrate ~1,200 inline `c.JSON()` error responses across 50 files to `common.SendError()` with OpenStack-compatible format (C-1, H-2)
+- **Error handling middleware**: Register `ErrorHandlingMiddleware`, `NotFoundHandler`, and `MethodNotAllowedHandler` in all 7 HTTP servers (H-9)
+- **Zero error leakage**: Internal errors no longer expose database details, SQL queries, or stack traces to API clients
+
+### 🗄️ Database Integrity
+- **Transaction helper**: Add `database.WithTx()` for atomic multi-statement operations (C-2)
+- **Transactional metadata ops**: Wrap `ResetServerMetadata` (Nova) and metadata operations (Cinder) in transactions
+
+### ⚡ Reliability
+- **Goroutine lifecycle management**: Add `sync.WaitGroup` and cancellable context to Nova and Cinder services for graceful shutdown (H-7)
+- **Context propagation**: Replace `context.Background()` with request or service context in handlers and metadata service (M-2, M-11)
+- **Shutdown coordination**: Service `Shutdown()` methods called before HTTP server stop in main.go
+
+### 📊 Observability
+- **Zerolog migration**: Replace remaining `log.Printf` calls with structured `zerolog` logging (M-1)
+- **Scan error logging**: Add warnings for previously silent `rows.Scan` failures across all list handlers (M-4)
+- **Swallowed error propagation**: Log or propagate 15 instances of silently discarded errors (M-6)
+
+### 🛠️ Utilities & Fixes
+- **Shared pagination helper**: `common.ParsePagination()` extracts duplicated limit/offset/marker parsing (M-3)
+- **Version consistency**: Fix Placement (1.39→1.40) and Nova (2.79→2.90) version mismatches with constants (H-10, L-4)
+- **Quota queries**: `GetLimits` reads project quotas from database instead of hardcoded values (H-12)
+- **Flavor pagination**: Replace UUID-based cursor with `created_at` for deterministic ordering (M-10)
+- **Flavor JSON tag**: Fix `IsPublic` tag from `OS-FLV-EXT-DATA:ephemeral` to `os-flavor-access:is_public` (M-5)
+- **Remove duplicate migration function**: Consolidate `RunMigrations` into `MigrateUp` (M-8)
+- **Remove unused variables**: Clean up discarded parameters in neutron and nova handlers (M-7)
+
+### 🏗️ CI & Configuration
+- **Docker port fix**: Expose port 35357 (Keystone) instead of unused 5000 (M-9)
+- **PostgreSQL version alignment**: Makefile uses postgres:18 matching docker-compose (M-15)
+- **Dynamic base URLs**: Derive self-links from request Host header instead of hardcoding localhost (H-11)
+- **Migration placeholder**: Add placeholder for skipped migration 042 (H-5)
+- **Remove E2E stubs**: Remove no-op e2e-fast/e2e-full CI jobs (M-13)
+- **Clean up stale files**: Remove debug script and unused query logger (L-6, L-8)
+
+### 📚 Documentation
+- **Root directory cleanup**: Reduce from 25 markdown files to 5 essential files
+- **Organized docs/**: Move test reports to `docs/testing/`, code review to `docs/review/`, compatibility to `docs/compatibility/`
+- **Updated INDEX.md**: Add Testing & Quality section with links to all moved files
+
+### Deferred to v0.7.0
+- Database dependency injection (H-3) — 665 call sites, needs dedicated design
+- Rate limiting (H-6) — needs design spec for per-project limits
+- Re-enable CI linting (H-4) — needs lint error cleanup first
+
+---
+
 ## [0.5.0] - 2026-03-13
 
 ### 🎉 Feature: OpenStack Horizon 100% Compatibility (Flamingo 2025.2)

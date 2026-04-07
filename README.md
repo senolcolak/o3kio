@@ -2,8 +2,8 @@
 
 [![CI Pipeline](https://github.com/cobaltcore-dev/o3k/actions/workflows/ci.yml/badge.svg)](https://github.com/cobaltcore-dev/o3k/actions/workflows/ci.yml)
 
-**Status**: v0.5.0 - Production Ready | 104% API Coverage (342/330 endpoints) | 100% Terraform Compatible
-**Last Updated**: March 19, 2026
+**Status**: v0.6.0 - Production Ready | 104% API Coverage (342/330 endpoints) | 100% Terraform Compatible
+**Last Updated**: April 7, 2026
 
 **O3K** (OpenStack 3 Kubernetes-style) is a lightweight, high-performance implementation of OpenStack APIs in pure Go, inspired by how K3s simplified Kubernetes.
 
@@ -22,6 +22,17 @@ Just as **K3s** is to Kubernetes, **O3K** is to OpenStack:
 - **Drop-in Compatible**: Use existing Terraform scripts, Horizon UI, and OpenStack CLI unchanged
 - **Production Ready**: All HIGH and MEDIUM priority features complete
 - **Modern**: Supports OpenStack Flamingo (2025.2) and later versions only
+
+## 🆕 What's New in v0.6.0
+
+**Code Quality Overhaul** — 39 commits fixing 32 of 42 findings from a comprehensive codebase review:
+
+- **Security**: Cryptographic random for MAC addresses and passwords, configurable CORS, SQL injection hardening
+- **Error Handling**: 1,200 inline errors migrated to structured OpenStack-compatible framework — zero internal error leakage
+- **Reliability**: Database transactions for multi-statement ops, goroutine lifecycle with graceful shutdown
+- **Observability**: Unified structured logging with zerolog, scan error logging, swallowed error fixes
+
+See [CHANGELOG.md](CHANGELOG.md) for the full list.
 
 ## 📦 What's Included
 
@@ -459,7 +470,7 @@ The seed data creates:
 
 ### Roadmap
 
-**Completed (v0.1-v0.5.0):**
+**Completed (v0.1-v0.6.0):**
 - ✅ All 5 core OpenStack services (Keystone, Nova, Neutron, Cinder, Glance)
 - ✅ 104% API coverage (342/330 endpoints) - EXCEEDS BASELINE
 - ✅ All HIGH and MEDIUM priority features
@@ -472,7 +483,7 @@ The seed data creates:
 - ✅ Production deployments validated
 - ✅ Performance optimization (pagination, indexes)
 
-**Current Focus (v0.5.x - Stability & Polish):**
+**Current Focus (v0.6.x - Stability & Polish):**
 - 🔧 Bug fixes and error handling improvements
 - 🔧 Performance monitoring and optimization
 - 🔧 Documentation enhancements
@@ -490,7 +501,7 @@ The seed data creates:
 
 Contributions welcome! See `docs/CONTRIBUTING.md` for guidelines.
 
-**Current focus areas (v0.5.x stability phase):**
+**Current focus areas (v0.6.x stability phase):**
 - Bug fixes and error handling improvements
 - Performance monitoring and optimization
 - Documentation and tutorials
@@ -567,7 +578,7 @@ Apache License 2.0 - See [LICENSE](LICENSE)
 
 ---
 
-**Status**: ✅ v0.5.0 Production Ready | **Coverage**: 104% (342/330 endpoints) | **Horizon**: 100% Compatible
+**Status**: ✅ v0.6.0 Production Ready | **Coverage**: 104% (342/330 endpoints) | **Horizon**: 100% Compatible
 **Build**: ✅ SUCCESS (35MB) | **Tests**: ✅ 157/191 Contract Tests PASS (82%)
 **Achievement**: 🎉 Exceeds OpenStack Baseline by 12 Endpoints
 **Updated**: March 17, 2026
