@@ -3,7 +3,7 @@ version: '3.8'
 services:
   # PostgreSQL Database
   postgres:
-    image: postgres:18.3-alpine
+    image: postgres:17-alpine
     container_name: o3k-postgres
     environment:
       POSTGRES_DB: lightstack

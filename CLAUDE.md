@@ -116,7 +116,7 @@ go test ./internal/nova/...   # Test specific package
 
 ```bash
 # Start PostgreSQL (Docker)
-make db-up                    # Starts postgres:18.3 container
+make db-up                    # Starts postgres:17 container
 
 # Run migrations
 make migrate                  # Applies all pending migrations
@@ -414,7 +414,7 @@ if requestedVersion == "" {
 
 ## Active Technologies
 - Go 1.26 + Gin (HTTP framework), pgx (PostgreSQL driver), gophercloud (contract testing), go-libvirt (hypervisor), netlink (networking) (002-horizon-full-compatibility)
-- PostgreSQL 18 (primary database) (002-horizon-full-compatibility)
+- PostgreSQL 17 (primary database) (002-horizon-full-compatibility)
 
 ## Recent Changes
 - 002-horizon-full-compatibility: Added Go 1.26 + Gin (HTTP framework), pgx (PostgreSQL driver), gophercloud (contract testing), go-libvirt (hypervisor), netlink (networking)
