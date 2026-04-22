@@ -113,6 +113,12 @@ Understand O3K's design, implementation, and OpenStack compatibility.
 - **[ARCHITECTURE](ARCHITECTURE.md)** - System design and component overview
 - **[KEYSTONE_AUTH_FLOW](KEYSTONE_AUTH_FLOW.md)** - JWT authentication flow
 
+#### Design Specs
+- **[superpowers/specs/2026-04-10-o3k-server-agent-scaling-design](superpowers/specs/2026-04-10-o3k-server-agent-scaling-design.md)** ⭐ **NEW**
+  - Server/agent scaling architecture (k3s-style `o3k server` + `o3k agent`)
+  - gRPC back-channel, mTLS join tokens, HA-aware task dispatcher
+  - Spec v1.4.0 — CEO review #2 complete, approved for implementation
+
 #### API Compatibility
 - **[API_COVERAGE_REPORT](API_COVERAGE_REPORT.md)** - 104% coverage analysis (342/330 endpoints)
 - **[API](API.md)** - OpenStack API compatibility details
@@ -257,10 +263,11 @@ Analysis of dashboard compatibility and integration options.
 
 ## 🆕 Recently Added (April 2026)
 
-1. **[KUBERNETES_DEPLOYMENT](KUBERNETES_DEPLOYMENT.md)** - Kubernetes deployment with manifests and Helm guide
-2. **v0.6.0 Code Quality Release** - 39 commits fixing 32 codebase review findings
-3. **[testing/](testing/)** - Organized test reports directory
-4. **[review/](review/)** - Codebase review report directory
+1. **[superpowers/specs/2026-04-10-o3k-server-agent-scaling-design](superpowers/specs/2026-04-10-o3k-server-agent-scaling-design.md)** ⭐ **NEW** - Server/agent scaling spec v1.4.0 (approved)
+2. **[KUBERNETES_DEPLOYMENT](KUBERNETES_DEPLOYMENT.md)** - Kubernetes deployment with manifests and Helm guide
+3. **v0.6.0 Code Quality Release** - 39 commits fixing 32 codebase review findings
+4. **[testing/](testing/)** - Organized test reports directory
+5. **[review/](review/)** - Codebase review report directory
 
 ---
 
@@ -310,5 +317,5 @@ Analysis of dashboard compatibility and integration options.
 ---
 
 **Last Updated**: April 2026
-**Total Documentation Files**: 40
+**Total Documentation Files**: 41
 **Coverage**: Getting Started, Installation, Configuration, Operations, Architecture, API Reference, Testing, Code Quality

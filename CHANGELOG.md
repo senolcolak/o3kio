@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Spec v1.4.0] - 2026-04-22
+
+### 📐 Architecture Spec: Server/Agent Scaling (CEO Review #2 — HOLD SCOPE)
+
+Second CEO review of `docs/superpowers/specs/2026-04-10-o3k-server-agent-scaling-design.md`.
+Mode: HOLD SCOPE — no new features, bulletproof the existing design. 47 issues resolved
+(4 critical, 23 warnings, 20 informational). Spec grew from 1,501 → 1,674 lines (+173).
+
+**Critical fixes:**
+- **OrphanReport HMAC re-sign**: Agent re-signs stored results with new server nonce on reconnect. OrphanReport HMAC verification spec added. Prevents nonce mismatch on reconnection after network partition.
+- **Dispatcher interface**: Added `Dispatch(ctx, agentID, task)` with `ErrAgentBusy` / `ErrAgentGone`. Specified `ErrAgentBusy` condition (`inflight >= max_agent_inflight`). Previously the gRPC tunnel had no typed dispatch contract.
+- **pg_notify fan-out model**: Single shared listener goroutine + `chan struct{}` fan-out to N workers. Prevents per-worker listener explosion under load.
+- **Stream Send/Recv timeout**: `context.WithTimeout` wraps both `Send` and `Recv` in the `Dispatch` call. Without it, a blocked agent stream parks the worker goroutine indefinitely.
+- **Reconciler max_retries guard**: Explicit `retries < max_retries` check before requeue prevents DB CHECK constraint violation when reconciler increments an already-maxed task.
+
+**Key warning fixes:**
+- Duplicate node_id registration: atomic stream replacement + audit log
+- HMAC length-prefix encoding: 4-byte big-endian per field (prevents length-extension attacks)
+- `timeout_sec > 0` CHECK constraint on tasks DDL
+- Instance deleted mid-flight: `RETURNING 0 rows → VM_DELETE` path specified
+- `max_pending_age` scanner: `RETURNING id` guard prevents double-fire
+- Agent SQLite failure recovery: synthetic OrphanReport with `RECOVERY_FAILED`
+- Signed URL TTL: must be ≥ `image_prefetch_timeout` + 60s + scope validation
+- Join token single-use: enforced via `join_tokens` table
+- Instance initial status: `vm_state=building, task_state=scheduling` at INSERT
+- Concurrent IMAGE_PREFETCH: per-image in-memory mutex for `.tmp` file serialization
+- Reconciler metrics: `o3k_reconciler_runs_total` + `o3k_reconciler_last_run_timestamp`
+- `ReconcilerSilent` alert (fires if no run in >2 minutes)
+- Automated `audit_events` partition creation on server startup
+- Agent reconnect backoff: 1s/2s/4s/8s/30s cap ±20% jitter
+- 11 new failure mode rows in Section 9 error/rescue table
+- 7 new test strategy entries
+
+---
+
 ## [0.6.0] - 2026-04-07
 
 ### 🔒 Security Hardening
