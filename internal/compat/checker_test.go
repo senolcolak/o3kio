@@ -54,3 +54,9 @@ func TestRecorderCaptures(t *testing.T) {
 	assert.Equal(t, 201, results[0].StatusCode)
 	assert.True(t, results[0].Compatible)
 }
+
+func TestCheckerRunNoTerraform(t *testing.T) {
+	c := compat.NewChecker(compat.CheckerOptions{TerraformDir: "/nonexistent"})
+	_, err := c.Run()
+	assert.Error(t, err)
+}

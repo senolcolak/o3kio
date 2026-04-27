@@ -1,6 +1,9 @@
 package compat
 
 import (
+	"context"
+	"fmt"
+	"net"
 	"net/http"
 	"sync"
 )
@@ -71,4 +74,47 @@ func isCompatibleStatus(method string, code int) bool {
 		return true
 	}
 	return false
+}
+
+// EmbeddedServer holds a minimal stub OpenStack server for compat testing.
+type EmbeddedServer struct {
+	Listener net.Listener
+	Server   *http.Server
+	Recorder *Recorder
+}
+
+// StartEmbeddedServer starts a minimal Keystone stub on an available port.
+func StartEmbeddedServer(ctx context.Context) (*EmbeddedServer, error) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, fmt.Errorf("failed to bind port: %w", err)
+	}
+
+	rec := NewRecorder()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		w.Write([]byte(`{"versions":{"values":[{"id":"v3","status":"stable"}]}}`))
+		rec.Record(r.Method, r.URL.Path, 200)
+	})
+
+	es := &EmbeddedServer{
+		Listener: listener,
+		Server:   &http.Server{Handler: mux},
+		Recorder: rec,
+	}
+	go es.Server.Serve(listener)
+	return es, nil
+}
+
+// Addr returns the "host:port" the embedded server is listening on.
+func (e *EmbeddedServer) Addr() string {
+	return e.Listener.Addr().String()
+}
+
+// Shutdown stops the embedded server.
+func (e *EmbeddedServer) Shutdown(ctx context.Context) {
+	e.Server.Shutdown(ctx)
 }
