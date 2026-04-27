@@ -19,6 +19,7 @@ type Config struct {
 	Logging  LoggingConfig  `yaml:"logging"`
 	Cache    CacheConfig    `yaml:"cache"`
 	Server   ServerConfig   `yaml:"server"`
+	Tunnel   TunnelConfig   `yaml:"tunnel"`
 }
 
 type ServerConfig struct {
@@ -50,10 +51,18 @@ type KeystoneConfig struct {
 }
 
 type NovaConfig struct {
-	Port           int    `yaml:"port"`
-	LibvirtURI     string `yaml:"libvirt_uri"`
-	DefaultFlavor  string `yaml:"default_flavor"`
-	LibvirtMode    string `yaml:"libvirt_mode"` // "stub" or "real"
+	Port          int    `yaml:"port"`
+	LibvirtURI    string `yaml:"libvirt_uri"`
+	DefaultFlavor string `yaml:"default_flavor"`
+	LibvirtMode   string `yaml:"libvirt_mode"` // "stub" or "real"
+	AsyncCompute  bool   `yaml:"async_compute"`
+}
+
+// TunnelConfig holds configuration for the agent tunnel / join-token system.
+type TunnelConfig struct {
+	Port        int    `yaml:"port"`
+	TokenSecret string `yaml:"token_secret"`
+	TokenFile   string `yaml:"token_file"`
 }
 
 type NeutronConfig struct {
@@ -91,10 +100,10 @@ type LoggingConfig struct {
 }
 
 type CacheConfig struct {
-	Enabled    bool                   `yaml:"enabled"`
-	RedisURL   string                 `yaml:"redis_url"`
-	KeyPrefix  string                 `yaml:"key_prefix"`
-	DefaultTTL time.Duration          `yaml:"default_ttl"`
+	Enabled    bool                     `yaml:"enabled"`
+	RedisURL   string                   `yaml:"redis_url"`
+	KeyPrefix  string                   `yaml:"key_prefix"`
+	DefaultTTL time.Duration            `yaml:"default_ttl"`
 	TTL        map[string]time.Duration `yaml:"ttl"` // Per-resource TTL overrides
 }
 
