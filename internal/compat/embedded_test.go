@@ -1,6 +1,8 @@
 package compat_test
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -32,4 +34,20 @@ func TestEmbeddedRouterNovaFlavors(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestEmbeddedServerRecordsAPICalls(t *testing.T) {
+	ctx := context.Background()
+	srv, err := compat.StartEmbeddedServer(ctx)
+	assert.NoError(t, err)
+	defer srv.Shutdown(ctx)
+
+	resp, err := http.Get(fmt.Sprintf("http://%s/v3", srv.Addr()))
+	assert.NoError(t, err)
+	resp.Body.Close()
+	assert.Equal(t, 200, resp.StatusCode)
+
+	results := srv.Recorder.Results()
+	assert.GreaterOrEqual(t, len(results), 1)
+	assert.Equal(t, "GET", results[0].Method)
 }

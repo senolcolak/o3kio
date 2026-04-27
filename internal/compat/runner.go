@@ -81,6 +81,7 @@ type EmbeddedServer struct {
 	Listener net.Listener
 	Server   *http.Server
 	Recorder *Recorder
+	cleanup  func()
 }
 
 // StartEmbeddedServer starts a minimal Keystone stub on an available port.
@@ -91,19 +92,14 @@ func StartEmbeddedServer(ctx context.Context) (*EmbeddedServer, error) {
 	}
 
 	rec := NewRecorder()
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(200)
-		w.Write([]byte(`{"versions":{"values":[{"id":"v3","status":"stable"}]}}`))
-		rec.Record(r.Method, r.URL.Path, 200)
-	})
+	router, cleanup := NewEmbeddedRouter()
+	handler := rec.Middleware(router)
 
 	es := &EmbeddedServer{
 		Listener: listener,
-		Server:   &http.Server{Handler: mux},
+		Server:   &http.Server{Handler: handler},
 		Recorder: rec,
+		cleanup:  cleanup,
 	}
 	go es.Server.Serve(listener)
 	return es, nil
@@ -117,4 +113,7 @@ func (e *EmbeddedServer) Addr() string {
 // Shutdown stops the embedded server.
 func (e *EmbeddedServer) Shutdown(ctx context.Context) {
 	e.Server.Shutdown(ctx)
+	if e.cleanup != nil {
+		e.cleanup()
+	}
 }
