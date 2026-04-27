@@ -30,19 +30,6 @@ func NewChecker(opts CheckerOptions) *Checker {
 	}
 }
 
-// Stubs so cmd/compat-check compiles (real impl in Tasks 2 & 3)
-type Report struct {
-	Compatible   bool
-	OutputFormat string
-}
-
-func (r *Report) String() string {
-	if r.Compatible {
-		return `{"compatible":true}`
-	}
-	return `{"compatible":false}`
-}
-
 func (c *Checker) Run() (*Report, error) {
 	return nil, fmt.Errorf("not yet implemented")
 }
