@@ -10,7 +10,7 @@ import (
 // WithTx executes fn within a database transaction.
 // If fn returns an error, the transaction is rolled back. Otherwise committed.
 func WithTx(ctx context.Context, fn func(tx pgx.Tx) error) error {
-	tx, err := DB.Begin(ctx)
+	tx, err := DB.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}

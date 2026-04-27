@@ -8,7 +8,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-var DB *pgxpool.Pool
+var DB DBIF
+
+var pool *pgxpool.Pool
 
 // PoolConfig contains database connection pool configuration
 type PoolConfig struct {
@@ -48,18 +50,19 @@ func Connect(ctx context.Context, connString string, poolConfig *PoolConfig) err
 	config.MaxConnIdleTime = poolConfig.MaxConnIdleTime
 	config.HealthCheckPeriod = poolConfig.HealthCheckPeriod
 
-	pool, err := pgxpool.NewWithConfig(ctx, config)
+	p, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
 		return fmt.Errorf("failed to create connection pool: %w", err)
 	}
 
 	// Test connection
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
+	if err := p.Ping(ctx); err != nil {
+		p.Close()
 		return fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	DB = pool
+	DB = p
+	pool = p
 	return nil
 }
 
@@ -76,23 +79,21 @@ func ConnectSimple(ctx context.Context, connString string, maxConns int) error {
 
 // Close closes the database connection pool
 func Close() {
-	if DB != nil {
-		DB.Close()
+	if pool != nil {
+		pool.Close()
 	}
 }
 
-// Stats returns current connection pool statistics
 func Stats() *pgxpool.Stat {
-	if DB == nil {
+	if pool == nil {
 		return nil
 	}
-	return DB.Stat()
+	return pool.Stat()
 }
 
-// HealthCheck verifies database connectivity
 func HealthCheck(ctx context.Context) error {
-	if DB == nil {
+	if pool == nil {
 		return fmt.Errorf("database connection not initialized")
 	}
-	return DB.Ping(ctx)
+	return pool.Ping(ctx)
 }
