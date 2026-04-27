@@ -1,4 +1,4 @@
-.PHONY: build run test clean install-deps migrate db-up db-down build-ebpf bench bench-quick
+.PHONY: build run test clean install-deps migrate db-up db-down build-ebpf bench bench-quick build-compat-check
 
 # Build variables
 BINARY_NAME=o3k
@@ -24,6 +24,12 @@ build-ebpf:
 	@which clang > /dev/null || (echo "ERROR: clang not found. Install with: apt-get install clang llvm libbpf-dev" && exit 1)
 	clang -O2 -target bpf -c pkg/networking/ebpf/secgroup.c -o pkg/networking/ebpf/secgroup.o
 	@echo "eBPF program compiled: pkg/networking/ebpf/secgroup.o"
+
+# Build compat-check tool
+build-compat-check:
+	@echo "Building compat-check..."
+	@mkdir -p $(BUILD_DIR)
+	go build $(LDFLAGS) -o $(BUILD_DIR)/compat-check ./cmd/compat-check
 
 # Build with eBPF support
 build-with-ebpf: build-ebpf build
