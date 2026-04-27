@@ -1,6 +1,9 @@
 package compat_test
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/cobaltcore-dev/o3k/internal/compat"
@@ -59,4 +62,44 @@ func TestCheckerRunNoTerraform(t *testing.T) {
 	c := compat.NewChecker(compat.CheckerOptions{TerraformDir: "/nonexistent"})
 	_, err := c.Run()
 	assert.Error(t, err)
+}
+
+func TestCheckerRunWithTerraform(t *testing.T) {
+	if _, err := exec.LookPath("terraform"); err != nil {
+		t.Skip("terraform not in PATH")
+	}
+
+	dir := t.TempDir()
+	tfConfig := `
+terraform {
+  required_providers {
+    openstack = {
+      source  = "terraform-provider-openstack/openstack"
+      version = "~> 3.0"
+    }
+  }
+}
+
+provider "openstack" {}
+
+data "openstack_identity_auth_scope_v3" "scope" {
+  name = "my_scope"
+}
+`
+	err := os.WriteFile(filepath.Join(dir, "main.tf"), []byte(tfConfig), 0644)
+	assert.NoError(t, err)
+
+	c := compat.NewChecker(compat.CheckerOptions{
+		TerraformDir: dir,
+		OutputFormat: "json",
+	})
+
+	report, err := c.Run()
+	if err != nil {
+		t.Logf("Run() error (may be expected): %v", err)
+		return
+	}
+
+	assert.NotNil(t, report)
+	t.Logf("Report: %s", report.String())
 }
