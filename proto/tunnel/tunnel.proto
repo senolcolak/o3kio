@@ -1,0 +1,50 @@
+syntax = "proto3";
+package tunnel;
+option go_package = "github.com/cobaltcore-dev/o3k/proto/tunnel";
+
+service TunnelHub {
+  rpc AgentStream(stream AgentMessage) returns (stream ServerMessage) {}
+}
+
+message AgentMessage {
+  oneof payload {
+    HeartbeatMsg heartbeat = 1;
+    TaskResultMsg task_result = 2;
+    JoinMsg join = 3;
+  }
+}
+
+message ServerMessage {
+  oneof payload {
+    TaskMsg task = 1;
+    PingMsg ping = 2;
+  }
+}
+
+message JoinMsg {
+  string node_id   = 1;
+  string hostname  = 2;
+  string tunnel_ip = 3;
+  string token_hash = 4;
+}
+
+message HeartbeatMsg {
+  int64 timestamp_unix = 1;
+  int32 vcpus_free     = 2;
+  int64 memory_free_mb = 3;
+}
+
+message TaskMsg {
+  string task_id   = 1;
+  string task_type = 2;
+  bytes  payload   = 3;
+}
+
+message TaskResultMsg {
+  string task_id  = 1;
+  bool   success  = 2;
+  string error    = 3;
+  bytes  result   = 4;
+}
+
+message PingMsg {}
