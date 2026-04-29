@@ -887,6 +887,25 @@ func (svc *Service) DeleteServer(c *gin.Context) {
 		logger.Info().Str("libvirt_domain_id", libvirtDomainID).Msg("VM deleted from libvirt")
 	}
 
+	// Unbind ports before deleting them from the database
+	if svc.neutronSvc != nil {
+		ctx := c.Request.Context()
+		rows, portErr := svc.activeDB().Query(ctx,
+			"SELECT id, mac_address, network_id FROM ports WHERE device_id = $1",
+			instanceID)
+		if portErr == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var portID, mac, networkID string
+				if scanErr := rows.Scan(&portID, &mac, &networkID); scanErr == nil {
+					if unbindErr := svc.neutronSvc.UnbindPort(portID, mac, networkID); unbindErr != nil {
+						logger.Warn().Err(unbindErr).Str("port_id", portID).Msg("Failed to unbind port")
+					}
+				}
+			}
+		}
+	}
+
 	// Delete from database (support lookup by ID or name)
 	queryStart = time.Now()
 	_, err = svc.activeDB().Exec(c.Request.Context(),
