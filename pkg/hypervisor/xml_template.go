@@ -26,6 +26,8 @@ type NetworkConfig struct {
 	PortID     string
 	MACAddress string
 	BridgeName string
+	IPAddress  string
+	NetworkID  string
 }
 
 // VolumeConfig defines volume attachment configuration

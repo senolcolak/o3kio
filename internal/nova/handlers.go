@@ -44,6 +44,8 @@ const (
 // NeutronService defines the interface for Neutron operations Nova needs
 type NeutronService interface {
 	AllocatePortForInstance(ctx context.Context, networkID, projectID, instanceID string) (interface{}, error)
+	BindPort(portID, mac, ip, networkID, hostname string) error
+	UnbindPort(portID, mac, networkID string) error
 }
 
 // NewService creates a new Nova service
@@ -444,7 +446,18 @@ func (svc *Service) CreateServer(c *gin.Context) {
 							PortID:     portInfo.ID,
 							MACAddress: portInfo.MAC,
 							BridgeName: fmt.Sprintf("br-%s", portInfo.NetworkID[:8]),
+							IPAddress:  portInfo.IPAddress,
+							NetworkID:  portInfo.NetworkID,
 						})
+					}
+				}
+			}
+
+			// Bind ports to prepare DHCP leases on the host
+			if svc.neutronSvc != nil {
+				for _, net := range networks {
+					if err := svc.neutronSvc.BindPort(net.PortID, net.MACAddress, net.IPAddress, net.NetworkID, req.Server.Name); err != nil {
+						log.Warn().Err(err).Str("port_id", net.PortID).Msg("Failed to bind port")
 					}
 				}
 			}
