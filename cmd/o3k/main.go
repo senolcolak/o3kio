@@ -341,9 +341,33 @@ func runAgent(args []string) {
 func runTokenCmd(args []string) {
 	fs := flag.NewFlagSet("token", flag.ExitOnError)
 	configPath := fs.String("config", "config/o3k.yaml", "path to config")
+	nodeID := fs.String("node-id", "", "node ID to generate token for (required)")
 	_ = fs.Parse(args)
-	fmt.Fprintf(os.Stderr, "o3k token — reads token_secret from %s and prints a join token\n", *configPath)
-	fmt.Println("(not yet implemented)")
+
+	if *nodeID == "" {
+		fmt.Fprintln(os.Stderr, "ERROR: --node-id is required")
+		os.Exit(1)
+	}
+
+	cfg, err := common.LoadConfig(*configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: failed to load config: %v\n", err)
+		os.Exit(1)
+	}
+
+	secret := cfg.Tunnel.TokenSecret
+	if cfg.Tunnel.TokenFile != "" {
+		if data, err := os.ReadFile(cfg.Tunnel.TokenFile); err == nil {
+			secret = strings.TrimSpace(string(data))
+		}
+	}
+	if secret == "" {
+		fmt.Fprintln(os.Stderr, "ERROR: tunnel.token_secret not set in config")
+		os.Exit(1)
+	}
+
+	hash := tunnel.GenerateTokenHash(secret, *nodeID)
+	fmt.Println(hash)
 }
 
 func createKeystoneServer(cfg *common.Config, svc *keystone.Service) *http.Server {
