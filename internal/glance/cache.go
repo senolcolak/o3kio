@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/cobaltcore-dev/o3k/internal/common"
-	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog/log"
 )
@@ -13,7 +12,7 @@ import (
 // ListCachedImages lists images in the cache
 func (svc *Service) ListCachedImages(c *gin.Context) {
 	// Query images that have been marked as cached
-	rows, err := database.DB.Query(c.Request.Context(), `
+	rows, err := svc.activeDB().Query(c.Request.Context(), `
 		SELECT id, name, size_bytes, cached_at
 		FROM images
 		WHERE cached_at IS NOT NULL
@@ -63,7 +62,7 @@ func (svc *Service) PrefetchImage(c *gin.Context) {
 
 	// Verify image exists
 	var exists bool
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT EXISTS(SELECT 1 FROM images WHERE id = $1)",
 		imageID,
 	).Scan(&exists)
@@ -74,7 +73,7 @@ func (svc *Service) PrefetchImage(c *gin.Context) {
 	}
 
 	// Mark image as cached
-	_, err = database.DB.Exec(c.Request.Context(), `
+	_, err = svc.activeDB().Exec(c.Request.Context(), `
 		UPDATE images
 		SET cached_at = $1
 		WHERE id = $2
@@ -93,7 +92,7 @@ func (svc *Service) PrefetchImage(c *gin.Context) {
 func (svc *Service) DeleteCachedImage(c *gin.Context) {
 	imageID := c.Param("id")
 
-	result, err := database.DB.Exec(c.Request.Context(), `
+	result, err := svc.activeDB().Exec(c.Request.Context(), `
 		UPDATE images
 		SET cached_at = NULL
 		WHERE id = $1 AND cached_at IS NOT NULL
@@ -115,7 +114,7 @@ func (svc *Service) DeleteCachedImage(c *gin.Context) {
 
 // ClearCache clears all cached images
 func (svc *Service) ClearCache(c *gin.Context) {
-	_, err := database.DB.Exec(c.Request.Context(), `
+	_, err := svc.activeDB().Exec(c.Request.Context(), `
 		UPDATE images
 		SET cached_at = NULL
 		WHERE cached_at IS NOT NULL

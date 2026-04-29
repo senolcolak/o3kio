@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 )
@@ -17,7 +16,7 @@ func (svc *Service) StageImageData(c *gin.Context) {
 
 	// Verify image exists and is owned by project
 	var status string
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT status FROM images WHERE id = $1 AND project_id = $2",
 		imageID, projectID,
 	).Scan(&status)
@@ -46,7 +45,7 @@ func (svc *Service) StageImageData(c *gin.Context) {
 	}
 
 	// Update image status to uploading
-	_, err = database.DB.Exec(c.Request.Context(), `
+	_, err = svc.activeDB().Exec(c.Request.Context(), `
 		UPDATE images
 		SET status = $1, size_bytes = $2, updated_at = $3
 		WHERE id = $4
@@ -83,7 +82,7 @@ func (svc *Service) ImportImage(c *gin.Context) {
 
 	// Verify image exists
 	var status string
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT status FROM images WHERE id = $1 AND project_id = $2",
 		imageID, projectID,
 	).Scan(&status)
@@ -101,7 +100,7 @@ func (svc *Service) ImportImage(c *gin.Context) {
 	// Import from staging to active storage
 	// In stub mode, just mark as active
 	// In real mode, would move from staging to backend storage
-	_, err = database.DB.Exec(c.Request.Context(), `
+	_, err = svc.activeDB().Exec(c.Request.Context(), `
 		UPDATE images
 		SET status = $1, updated_at = $2
 		WHERE id = $3
@@ -122,7 +121,7 @@ func (svc *Service) GetImageImportInfo(c *gin.Context) {
 
 	// Verify image exists
 	var exists bool
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT EXISTS(SELECT 1 FROM images WHERE id = $1 AND project_id = $2)",
 		imageID, projectID,
 	).Scan(&exists)

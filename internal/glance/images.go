@@ -28,6 +28,7 @@ type Service struct {
 	s3Endpoint  string
 	imageStore  *storage.ImageStore
 	cache       *cache.Cache
+	db          database.DBIF
 }
 
 // NewService creates a new Glance service
@@ -43,6 +44,21 @@ func NewService(mode, cephPool, cephConf, s3Bucket, s3Region, s3Endpoint string,
 		imageStore:  storage.NewImageStore(mode, cephPool, cephConf, s3Bucket, s3Region, s3Endpoint),
 		cache:       cacheInstance,
 	}
+}
+
+// NewServiceWithDB creates a Glance service with an injected DB for testing.
+func NewServiceWithDB(db database.DBIF, mode, cephPool, cephConf, s3Bucket, s3Region, s3Endpoint string, cacheInstance *cache.Cache) *Service {
+	svc := NewService(mode, cephPool, cephConf, s3Bucket, s3Region, s3Endpoint, cacheInstance)
+	svc.db = db
+	return svc
+}
+
+// activeDB returns the injected DB or falls back to the global.
+func (svc *Service) activeDB() database.DBIF {
+	if svc.db != nil {
+		return svc.db
+	}
+	return database.DB
 }
 
 // RegisterRoutes registers Glance routes (excluding version discovery which is handled separately)
@@ -189,7 +205,7 @@ func (svc *Service) CreateImage(c *gin.Context) {
 
 	// Insert into database
 	now := time.Now()
-	_, err := database.DB.Exec(c.Request.Context(), `
+	_, err := svc.activeDB().Exec(c.Request.Context(), `
 		INSERT INTO images (id, name, project_id, status, visibility, disk_format, container_format, min_disk_gb, min_ram_mb, rbd_pool, rbd_image, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 	`, imageID, req.Name, sql.NullString{String: projectID, Valid: visibility == "private"}, "queued", visibility, diskFormat, containerFormat, req.MinDisk, req.MinRAM, svc.cephPool, "image-"+imageID, now, now)
@@ -245,7 +261,7 @@ func (svc *Service) ListImages(c *gin.Context) {
 
 	if marker := c.Query("marker"); marker != "" {
 		var markerCreatedAt time.Time
-		err := database.DB.QueryRow(c.Request.Context(),
+		err := svc.activeDB().QueryRow(c.Request.Context(),
 			"SELECT created_at FROM images WHERE id = $1",
 			marker,
 		).Scan(&markerCreatedAt)
@@ -258,7 +274,7 @@ func (svc *Service) ListImages(c *gin.Context) {
 
 	queryArgs = append(queryArgs, limit, offset)
 
-	rows, err := database.DB.Query(c.Request.Context(), fmt.Sprintf(`
+	rows, err := svc.activeDB().Query(c.Request.Context(), fmt.Sprintf(`
 		SELECT id, name, status, visibility, size_bytes, disk_format, container_format, min_disk_gb, min_ram_mb, created_at, updated_at
 		FROM images
 		WHERE (visibility = 'public' OR project_id = $1)%s
@@ -343,7 +359,7 @@ func (svc *Service) GetImage(c *gin.Context) {
 
 	// Try by UUID first, then by name if UUID parsing fails
 	// Use CAST to handle non-UUID strings gracefully
-	err := database.DB.QueryRow(ctx, `
+	err := svc.activeDB().QueryRow(ctx, `
 		SELECT id, name, status, visibility, size_bytes, disk_format, container_format, min_disk_gb, min_ram_mb, checksum, created_at, updated_at
 		FROM images
 		WHERE (id::text = $1 OR name = $1) AND (visibility = 'public' OR project_id = $2)
@@ -385,7 +401,7 @@ func (svc *Service) GetImage(c *gin.Context) {
 	}
 
 	// Load tags
-	rows, err := database.DB.Query(ctx,
+	rows, err := svc.activeDB().Query(ctx,
 		"SELECT tag FROM image_tags WHERE image_id = $1 ORDER BY tag",
 		id,
 	)
@@ -420,7 +436,7 @@ func (svc *Service) DeleteImage(c *gin.Context) {
 
 	// Check if image exists in database (and user has access)
 	var exists bool
-	err := database.DB.QueryRow(ctx,
+	err := svc.activeDB().QueryRow(ctx,
 		"SELECT EXISTS(SELECT 1 FROM images WHERE id = $1 AND (visibility = 'public' OR project_id = $2))",
 		imageID, projectID,
 	).Scan(&exists)
@@ -435,7 +451,7 @@ func (svc *Service) DeleteImage(c *gin.Context) {
 	}
 
 	// Delete from database first
-	_, err = database.DB.Exec(ctx,
+	_, err = svc.activeDB().Exec(ctx,
 		"DELETE FROM images WHERE id = $1 AND (visibility = 'public' OR project_id = $2)",
 		imageID, projectID,
 	)
@@ -494,7 +510,7 @@ func (svc *Service) UpdateImage(c *gin.Context) {
 			}
 			// field is now a validated column name from the allowlist
 			query := fmt.Sprintf("UPDATE images SET %s = $1, updated_at = $2 WHERE id = $3 AND (visibility != 'public' OR project_id = $4)", field)
-			database.DB.Exec(c.Request.Context(), query, value, time.Now(), imageID, projectID)
+			svc.activeDB().Exec(c.Request.Context(), query, value, time.Now(), imageID, projectID)
 		}
 	}
 
@@ -509,7 +525,7 @@ func (svc *Service) UploadImageData(c *gin.Context) {
 
 	// Check if image exists and is in queued status
 	var status string
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT status FROM images WHERE id = $1 AND (visibility = 'public' OR project_id = $2)",
 		imageID, projectID,
 	).Scan(&status)
@@ -525,14 +541,14 @@ func (svc *Service) UploadImageData(c *gin.Context) {
 	}
 
 	// Update status to saving
-	database.DB.Exec(c.Request.Context(),
+	svc.activeDB().Exec(c.Request.Context(),
 		"UPDATE images SET status = $1, updated_at = $2 WHERE id = $3",
 		"saving", time.Now(), imageID)
 
 	// Upload to storage
 	size, err := svc.imageStore.UploadImage(c.Request.Context(), imageID, c.Request.Body)
 	if err != nil {
-		database.DB.Exec(c.Request.Context(),
+		svc.activeDB().Exec(c.Request.Context(),
 			"UPDATE images SET status = $1 WHERE id = $2",
 			"queued", imageID)
 		log.Error().Err(err).Str("operation", "upload_image").Str("image_id", imageID).Msg("failed to upload image to storage")
@@ -541,7 +557,7 @@ func (svc *Service) UploadImageData(c *gin.Context) {
 	}
 
 	// Update status to active and set size
-	database.DB.Exec(c.Request.Context(),
+	svc.activeDB().Exec(c.Request.Context(),
 		"UPDATE images SET status = $1, size_bytes = $2, updated_at = $3 WHERE id = $4",
 		"active", size, time.Now(), imageID)
 
@@ -556,7 +572,7 @@ func (svc *Service) DownloadImageData(c *gin.Context) {
 	// Check if image exists and is active
 	var status string
 	var sizeBytes sql.NullInt64
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT status, size_bytes FROM images WHERE id = $1 AND (visibility = 'public' OR project_id = $2)",
 		imageID, projectID,
 	).Scan(&status, &sizeBytes)
@@ -637,7 +653,7 @@ func (svc *Service) CreateImageMember(c *gin.Context) {
 
 	// Check if image exists and is owned by requester
 	var ownerID sql.NullString
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT project_id FROM images WHERE id = $1",
 		imageID,
 	).Scan(&ownerID)
@@ -660,7 +676,7 @@ func (svc *Service) CreateImageMember(c *gin.Context) {
 	// Insert image member
 	memberID := uuid.New().String()
 	now := time.Now()
-	_, err = database.DB.Exec(c.Request.Context(), `
+	_, err = svc.activeDB().Exec(c.Request.Context(), `
 		INSERT INTO image_members (id, image_id, member_id, status, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6)
 	`, memberID, imageID, req.Member, "pending", now, now)
@@ -688,7 +704,7 @@ func (svc *Service) ListImageMembers(c *gin.Context) {
 
 	// Check if image exists and requester has access
 	var ownerID sql.NullString
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT project_id FROM images WHERE id = $1",
 		imageID,
 	).Scan(&ownerID)
@@ -709,7 +725,7 @@ func (svc *Service) ListImageMembers(c *gin.Context) {
 		return
 	}
 
-	rows, err := database.DB.Query(c.Request.Context(), `
+	rows, err := svc.activeDB().Query(c.Request.Context(), `
 		SELECT member_id, status, created_at, updated_at
 		FROM image_members
 		WHERE image_id = $1
@@ -761,7 +777,7 @@ func (svc *Service) GetImageMember(c *gin.Context) {
 
 	// Check if image exists and requester has access
 	var ownerID sql.NullString
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT project_id FROM images WHERE id = $1",
 		imageID,
 	).Scan(&ownerID)
@@ -784,7 +800,7 @@ func (svc *Service) GetImageMember(c *gin.Context) {
 
 	var status string
 	var createdAt, updatedAt time.Time
-	err = database.DB.QueryRow(c.Request.Context(), `
+	err = svc.activeDB().QueryRow(c.Request.Context(), `
 		SELECT status, created_at, updated_at
 		FROM image_members
 		WHERE image_id = $1 AND member_id = $2
@@ -832,7 +848,7 @@ func (svc *Service) UpdateImageMember(c *gin.Context) {
 
 	// Check if image exists
 	var ownerID sql.NullString
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT project_id FROM images WHERE id = $1",
 		imageID,
 	).Scan(&ownerID)
@@ -865,7 +881,7 @@ func (svc *Service) UpdateImageMember(c *gin.Context) {
 	}
 
 	// Update member status
-	_, err = database.DB.Exec(c.Request.Context(), `
+	_, err = svc.activeDB().Exec(c.Request.Context(), `
 		UPDATE image_members
 		SET status = $1, updated_at = $2
 		WHERE image_id = $3 AND member_id = $4
@@ -880,7 +896,7 @@ func (svc *Service) UpdateImageMember(c *gin.Context) {
 	// Return updated member
 	var status string
 	var createdAt, updatedAt time.Time
-	err = database.DB.QueryRow(c.Request.Context(), `
+	err = svc.activeDB().QueryRow(c.Request.Context(), `
 		SELECT status, created_at, updated_at
 		FROM image_members
 		WHERE image_id = $1 AND member_id = $2
@@ -910,7 +926,7 @@ func (svc *Service) DeleteImageMember(c *gin.Context) {
 
 	// Check if image exists and requester is owner
 	var ownerID sql.NullString
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT project_id FROM images WHERE id = $1",
 		imageID,
 	).Scan(&ownerID)
@@ -932,7 +948,7 @@ func (svc *Service) DeleteImageMember(c *gin.Context) {
 	}
 
 	// Delete member
-	_, err = database.DB.Exec(c.Request.Context(),
+	_, err = svc.activeDB().Exec(c.Request.Context(),
 		"DELETE FROM image_members WHERE image_id = $1 AND member_id = $2",
 		imageID, memberID,
 	)
@@ -953,7 +969,7 @@ func (svc *Service) AddImageTag(c *gin.Context) {
 
 	// Check image exists and user has permission
 	var ownerID sql.NullString
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT project_id FROM images WHERE id = $1",
 		imageID,
 	).Scan(&ownerID)
@@ -975,7 +991,7 @@ func (svc *Service) AddImageTag(c *gin.Context) {
 	}
 
 	// Add tag (ignore if already exists due to UNIQUE constraint)
-	_, err = database.DB.Exec(c.Request.Context(), `
+	_, err = svc.activeDB().Exec(c.Request.Context(), `
 		INSERT INTO image_tags (image_id, tag)
 		VALUES ($1, $2)
 		ON CONFLICT (image_id, tag) DO NOTHING
@@ -998,7 +1014,7 @@ func (svc *Service) DeleteImageTag(c *gin.Context) {
 
 	// Check image exists and user has permission
 	var ownerID sql.NullString
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT project_id FROM images WHERE id = $1",
 		imageID,
 	).Scan(&ownerID)
@@ -1020,7 +1036,7 @@ func (svc *Service) DeleteImageTag(c *gin.Context) {
 	}
 
 	// Delete tag
-	_, err = database.DB.Exec(c.Request.Context(),
+	_, err = svc.activeDB().Exec(c.Request.Context(),
 		"DELETE FROM image_tags WHERE image_id = $1 AND tag = $2",
 		imageID, tag,
 	)
@@ -1040,7 +1056,7 @@ func (svc *Service) DeactivateImage(c *gin.Context) {
 
 	// Check image exists and user has permission
 	var ownerID sql.NullString
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT project_id FROM images WHERE id = $1",
 		imageID,
 	).Scan(&ownerID)
@@ -1062,7 +1078,7 @@ func (svc *Service) DeactivateImage(c *gin.Context) {
 	}
 
 	// Update status to deactivated
-	_, err = database.DB.Exec(c.Request.Context(),
+	_, err = svc.activeDB().Exec(c.Request.Context(),
 		"UPDATE images SET status = $1, updated_at = $2 WHERE id = $3",
 		"deactivated", time.Now(), imageID,
 	)
@@ -1082,7 +1098,7 @@ func (svc *Service) ReactivateImage(c *gin.Context) {
 
 	// Check image exists and user has permission
 	var ownerID sql.NullString
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT project_id FROM images WHERE id = $1",
 		imageID,
 	).Scan(&ownerID)
@@ -1104,7 +1120,7 @@ func (svc *Service) ReactivateImage(c *gin.Context) {
 	}
 
 	// Update status to active
-	_, err = database.DB.Exec(c.Request.Context(),
+	_, err = svc.activeDB().Exec(c.Request.Context(),
 		"UPDATE images SET status = $1, updated_at = $2 WHERE id = $3",
 		"active", time.Now(), imageID,
 	)
