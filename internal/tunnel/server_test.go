@@ -67,3 +67,16 @@ func TestHubSetTLSConfig(t *testing.T) {
 	hub.SetTLSConfig(tlsCfg)
 	// Verify it doesn't panic — full E2E in Task 7.
 }
+
+func TestAgentClientSetTLSConfig(t *testing.T) {
+	ca, err := tunnel.GenerateCA()
+	assert.NoError(t, err)
+	clientCert, err := tunnel.SignCert(ca, "agent-1")
+	assert.NoError(t, err)
+	tlsCfg, err := tunnel.ClientTLSConfig(ca, clientCert)
+	assert.NoError(t, err)
+
+	client := tunnel.NewAgentClient("127.0.0.1:6385", "node-1", "hash")
+	client.SetTLSConfig(tlsCfg)
+	// No panic — full E2E would require running server.
+}

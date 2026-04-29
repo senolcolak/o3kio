@@ -2,10 +2,12 @@ package tunnel
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 
 	pb "github.com/cobaltcore-dev/o3k/proto/tunnel"
@@ -16,6 +18,7 @@ type AgentClient struct {
 	serverAddr string
 	nodeID     string
 	tokenHash  string
+	tlsConfig  *tls.Config
 }
 
 // NewAgentClient creates an AgentClient that will connect to serverAddr.
@@ -25,6 +28,12 @@ func NewAgentClient(serverAddr, nodeID, tokenHash string) *AgentClient {
 		nodeID:     nodeID,
 		tokenHash:  tokenHash,
 	}
+}
+
+// SetTLSConfig configures mTLS for the client. When nil (the default), the
+// client dials without TLS, which is suitable for development/stub mode.
+func (c *AgentClient) SetTLSConfig(cfg *tls.Config) {
+	c.tlsConfig = cfg
 }
 
 // Connect runs the agent stream loop, reconnecting on error until ctx is done.
@@ -45,9 +54,14 @@ func (c *AgentClient) Connect(ctx context.Context) error {
 }
 
 func (c *AgentClient) runStream(ctx context.Context) error {
-	conn, err := grpc.NewClient(c.serverAddr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+	var dialOpts []grpc.DialOption
+	if c.tlsConfig != nil {
+		dialOpts = append(dialOpts, grpc.WithTransportCredentials(credentials.NewTLS(c.tlsConfig)))
+	} else {
+		dialOpts = append(dialOpts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	}
+
+	conn, err := grpc.NewClient(c.serverAddr, dialOpts...)
 	if err != nil {
 		return fmt.Errorf("dial %s: %w", c.serverAddr, err)
 	}
