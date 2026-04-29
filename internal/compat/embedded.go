@@ -3,6 +3,7 @@ package compat
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -52,11 +53,11 @@ func newServiceGin() *gin.Engine {
 // The returned cleanup function restores the global database.DB.
 func NewEmbeddedRouter() (http.Handler, func()) {
 	origDB := database.DB
-	database.DB = database.NewMockDB()
+	database.DB = database.NewSeededMockDB()
 
 	gin.SetMode(gin.ReleaseMode)
 
-	authService := keystone.NewAuthService("compat-check-secret", 0, nil)
+	authService := keystone.NewAuthService("compat-check-secret", 24*time.Hour, nil)
 
 	// Keystone — handles /v3
 	keystoneGin := newServiceGin()
