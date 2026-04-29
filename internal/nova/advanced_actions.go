@@ -12,7 +12,6 @@ import (
 	"github.com/rs/zerolog/log"
 	"golang.org/x/crypto/bcrypt"
 	"github.com/cobaltcore-dev/o3k/internal/common"
-	"github.com/cobaltcore-dev/o3k/internal/database"
 )
 
 // Suspend suspends a running instance (saves RAM to disk)
@@ -23,7 +22,7 @@ func (svc *Service) SuspendInstance(c *gin.Context) {
 	// Get instance and libvirt domain ID
 	var libvirtDomainID, status string
 	var powerState int
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT libvirt_domain_id, status, power_state FROM instances WHERE id = $1 AND project_id = $2",
 		instanceID, projectID,
 	).Scan(&libvirtDomainID, &status, &powerState)
@@ -40,7 +39,7 @@ func (svc *Service) SuspendInstance(c *gin.Context) {
 	}
 
 	// Update status to SUSPENDED
-	_, err = database.DB.Exec(c.Request.Context(), `
+	_, err = svc.activeDB().Exec(c.Request.Context(), `
 		UPDATE instances
 		SET status = $1, power_state = $2, task_state = $3, updated_at = $4
 		WHERE id = $5
@@ -64,7 +63,7 @@ func (svc *Service) SuspendInstance(c *gin.Context) {
 				// On failure, revert to ERROR state
 				dbCtx, dbCancel := context.WithTimeout(svc.ctx, 5*time.Second)
 				defer dbCancel()
-				database.DB.Exec(dbCtx,
+				svc.activeDB().Exec(dbCtx,
 					"UPDATE instances SET status = $1, task_state = $2 WHERE id = $3",
 					"ERROR", "", instanceID)
 			}
@@ -81,7 +80,7 @@ func (svc *Service) ResumeInstance(c *gin.Context) {
 
 	// Get instance and libvirt domain ID
 	var libvirtDomainID, status string
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT libvirt_domain_id, status FROM instances WHERE id = $1 AND project_id = $2",
 		instanceID, projectID,
 	).Scan(&libvirtDomainID, &status)
@@ -98,7 +97,7 @@ func (svc *Service) ResumeInstance(c *gin.Context) {
 	}
 
 	// Update status to ACTIVE
-	_, err = database.DB.Exec(c.Request.Context(), `
+	_, err = svc.activeDB().Exec(c.Request.Context(), `
 		UPDATE instances
 		SET status = $1, power_state = $2, task_state = $3, updated_at = $4
 		WHERE id = $5
@@ -122,7 +121,7 @@ func (svc *Service) ResumeInstance(c *gin.Context) {
 				// On failure, revert to ERROR state
 				dbCtx, dbCancel := context.WithTimeout(svc.ctx, 5*time.Second)
 				defer dbCancel()
-				database.DB.Exec(dbCtx,
+				svc.activeDB().Exec(dbCtx,
 					"UPDATE instances SET status = $1, task_state = $2 WHERE id = $3",
 					"ERROR", "", instanceID)
 			}
@@ -139,7 +138,7 @@ func (svc *Service) ShelveInstance(c *gin.Context) {
 
 	// Get instance
 	var libvirtDomainID, status string
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT libvirt_domain_id, status FROM instances WHERE id = $1 AND project_id = $2",
 		instanceID, projectID,
 	).Scan(&libvirtDomainID, &status)
@@ -158,7 +157,7 @@ func (svc *Service) ShelveInstance(c *gin.Context) {
 	// Create snapshot before shelving
 	snapshotName := fmt.Sprintf("shelved-%s-%d", instanceID[:8], time.Now().Unix())
 
-	_, err = database.DB.Exec(c.Request.Context(), `
+	_, err = svc.activeDB().Exec(c.Request.Context(), `
 		INSERT INTO instance_snapshots (id, instance_id, snapshot_name, flavor_id, created_at)
 		SELECT gen_random_uuid(), $1, $2, flavor_id, $3
 		FROM instances WHERE id = $1
@@ -171,7 +170,7 @@ func (svc *Service) ShelveInstance(c *gin.Context) {
 	}
 
 	// Update status to SHELVED
-	_, err = database.DB.Exec(c.Request.Context(), `
+	_, err = svc.activeDB().Exec(c.Request.Context(), `
 		UPDATE instances
 		SET status = $1, power_state = $2, task_state = $3, updated_at = $4
 		WHERE id = $5
@@ -207,7 +206,7 @@ func (svc *Service) UnshelveInstance(c *gin.Context) {
 
 	// Get instance
 	var status string
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT status FROM instances WHERE id = $1 AND project_id = $2",
 		instanceID, projectID,
 	).Scan(&status)
@@ -224,7 +223,7 @@ func (svc *Service) UnshelveInstance(c *gin.Context) {
 	}
 
 	// Update status to ACTIVE
-	_, err = database.DB.Exec(c.Request.Context(), `
+	_, err = svc.activeDB().Exec(c.Request.Context(), `
 		UPDATE instances
 		SET status = $1, power_state = $2, task_state = $3, updated_at = $4
 		WHERE id = $5
@@ -287,7 +286,7 @@ func (svc *Service) resizeInstance(c *gin.Context, instanceID, projectID, flavor
 
 	// Get instance
 	var status, currentFlavorID string
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT status, flavor_id FROM instances WHERE id = $1 AND project_id = $2",
 		instanceID, projectID,
 	).Scan(&status, &currentFlavorID)
@@ -305,7 +304,7 @@ func (svc *Service) resizeInstance(c *gin.Context, instanceID, projectID, flavor
 
 	// Verify new flavor exists
 	var newFlavorID string
-	err = database.DB.QueryRow(c.Request.Context(),
+	err = svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT id FROM flavors WHERE id::text = $1 OR name = $1 LIMIT 1",
 		flavorRef,
 	).Scan(&newFlavorID)
@@ -322,7 +321,7 @@ func (svc *Service) resizeInstance(c *gin.Context, instanceID, projectID, flavor
 	}
 
 	// Update instance with new flavor
-	_, err = database.DB.Exec(c.Request.Context(), `
+	_, err = svc.activeDB().Exec(c.Request.Context(), `
 		UPDATE instances
 		SET flavor_id = $1, status = $2, task_state = $3, updated_at = $4
 		WHERE id = $5
@@ -346,7 +345,7 @@ func (svc *Service) resizeInstance(c *gin.Context, instanceID, projectID, flavor
 		}
 		ctx, cancel := context.WithTimeout(svc.ctx, 5*time.Second)
 		defer cancel()
-		database.DB.Exec(ctx,
+		svc.activeDB().Exec(ctx,
 			"UPDATE instances SET status = $1, task_state = $2 WHERE id = $3",
 			"ACTIVE", "", instanceID)
 	}()
@@ -360,7 +359,7 @@ func (svc *Service) ConfirmResizeInstance(c *gin.Context) {
 	projectID := c.GetString("project_id")
 
 	// Update status to ACTIVE
-	result, err := database.DB.Exec(c.Request.Context(), `
+	result, err := svc.activeDB().Exec(c.Request.Context(), `
 		UPDATE instances
 		SET status = $1, task_state = $2, updated_at = $3
 		WHERE id = $4 AND project_id = $5 AND status = $6
@@ -388,7 +387,7 @@ func (svc *Service) RevertResizeInstance(c *gin.Context) {
 
 	// Get instance
 	var status string
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT status FROM instances WHERE id = $1 AND project_id = $2",
 		instanceID, projectID,
 	).Scan(&status)
@@ -405,7 +404,7 @@ func (svc *Service) RevertResizeInstance(c *gin.Context) {
 
 	// In real mode, would revert to old flavor
 	// For stub mode, just set back to ACTIVE
-	_, err = database.DB.Exec(c.Request.Context(), `
+	_, err = svc.activeDB().Exec(c.Request.Context(), `
 		UPDATE instances
 		SET status = $1, task_state = $2, updated_at = $3
 		WHERE id = $4
@@ -440,7 +439,7 @@ func (svc *Service) EvacuateInstance(c *gin.Context) {
 	}
 
 	var status string
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT status FROM instances WHERE id = $1 AND project_id = $2",
 		instanceID, projectID,
 	).Scan(&status)
@@ -450,7 +449,7 @@ func (svc *Service) EvacuateInstance(c *gin.Context) {
 		return
 	}
 
-	_, err = database.DB.Exec(c.Request.Context(), `
+	_, err = svc.activeDB().Exec(c.Request.Context(), `
 		UPDATE instances SET status = $1, task_state = $2, updated_at = $3
 		WHERE id = $4
 	`, "ACTIVE", "evacuating", time.Now(), instanceID)
@@ -470,7 +469,7 @@ func (svc *Service) MigrateInstance(c *gin.Context) {
 	projectID := c.GetString("project_id")
 
 	var status string
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT status FROM instances WHERE id = $1 AND project_id = $2",
 		instanceID, projectID,
 	).Scan(&status)
@@ -492,7 +491,7 @@ func (svc *Service) MigrateInstance(c *gin.Context) {
 
 	// Create migration record
 	migrationID := uuid.New().String()
-	_, err = database.DB.Exec(c.Request.Context(), `
+	_, err = svc.activeDB().Exec(c.Request.Context(), `
 		INSERT INTO server_migrations (id, server_uuid, source_node, dest_node, migration_type, status, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, 'migration', 'running', $5, $5)
 	`, migrationID, instanceID, currentHost, destHost, time.Now())
@@ -504,7 +503,7 @@ func (svc *Service) MigrateInstance(c *gin.Context) {
 	}
 
 	// Update instance to set migrating state
-	_, err = database.DB.Exec(c.Request.Context(), `
+	_, err = svc.activeDB().Exec(c.Request.Context(), `
 		UPDATE instances SET task_state = 'migrating', updated_at = $1
 		WHERE id = $2
 	`, time.Now(), instanceID)
@@ -529,12 +528,12 @@ func (svc *Service) MigrateInstance(c *gin.Context) {
 		defer cancel()
 
 		// Clear task_state and mark migration as complete
-		database.DB.Exec(ctx, `
+		svc.activeDB().Exec(ctx, `
 			UPDATE instances SET task_state = NULL, updated_at = $1
 			WHERE id = $2
 		`, time.Now(), instanceID)
 
-		database.DB.Exec(ctx, `
+		svc.activeDB().Exec(ctx, `
 			UPDATE server_migrations SET status = 'completed', updated_at = $1
 			WHERE id = $2
 		`, time.Now(), migrationID)
@@ -555,7 +554,7 @@ func (svc *Service) LiveMigrateInstance(c *gin.Context) {
 	}
 
 	var status string
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT status FROM instances WHERE id = $1 AND project_id = $2",
 		instanceID, projectID,
 	).Scan(&status)
@@ -570,7 +569,7 @@ func (svc *Service) LiveMigrateInstance(c *gin.Context) {
 		return
 	}
 
-	_, err = database.DB.Exec(c.Request.Context(), `
+	_, err = svc.activeDB().Exec(c.Request.Context(), `
 		UPDATE instances SET task_state = $1, updated_at = $2
 		WHERE id = $3
 	`, "migrating", time.Now(), instanceID)
@@ -610,7 +609,7 @@ func (svc *Service) AddSecurityGroup(c *gin.Context) {
 
 	// Verify instance exists
 	var existsCheck bool
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT EXISTS(SELECT 1 FROM instances WHERE id = $1 AND project_id = $2)",
 		instanceID, projectID,
 	).Scan(&existsCheck)
@@ -622,7 +621,7 @@ func (svc *Service) AddSecurityGroup(c *gin.Context) {
 
 	// Verify security group exists
 	var sgID string
-	err = database.DB.QueryRow(c.Request.Context(),
+	err = svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT id FROM security_groups WHERE name = $1 AND project_id = $2",
 		sgName, projectID,
 	).Scan(&sgID)
@@ -634,7 +633,7 @@ func (svc *Service) AddSecurityGroup(c *gin.Context) {
 
 	// Check if security group is already associated with instance
 	var alreadyAssociated bool
-	err = database.DB.QueryRow(c.Request.Context(),
+	err = svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT EXISTS(SELECT 1 FROM server_security_groups WHERE server_id = $1 AND security_group_id = $2)",
 		instanceID, sgID,
 	).Scan(&alreadyAssociated)
@@ -651,7 +650,7 @@ func (svc *Service) AddSecurityGroup(c *gin.Context) {
 	}
 
 	// Add security group association
-	_, err = database.DB.Exec(c.Request.Context(), `
+	_, err = svc.activeDB().Exec(c.Request.Context(), `
 		INSERT INTO server_security_groups (server_id, security_group_id, created_at)
 		VALUES ($1, $2, $3)
 	`, instanceID, sgID, time.Now())
@@ -693,7 +692,7 @@ func (svc *Service) RemoveSecurityGroup(c *gin.Context) {
 
 	// Verify instance exists
 	var existsCheck bool
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT EXISTS(SELECT 1 FROM instances WHERE id = $1 AND project_id = $2)",
 		instanceID, projectID,
 	).Scan(&existsCheck)
@@ -705,7 +704,7 @@ func (svc *Service) RemoveSecurityGroup(c *gin.Context) {
 
 	// Verify security group exists
 	var sgID string
-	err = database.DB.QueryRow(c.Request.Context(),
+	err = svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT id FROM security_groups WHERE name = $1 AND project_id = $2",
 		sgName, projectID,
 	).Scan(&sgID)
@@ -717,7 +716,7 @@ func (svc *Service) RemoveSecurityGroup(c *gin.Context) {
 
 	// Check if security group is actually associated with instance
 	var isAssociated bool
-	err = database.DB.QueryRow(c.Request.Context(),
+	err = svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT EXISTS(SELECT 1 FROM server_security_groups WHERE server_id = $1 AND security_group_id = $2)",
 		instanceID, sgID,
 	).Scan(&isAssociated)
@@ -735,7 +734,7 @@ func (svc *Service) RemoveSecurityGroup(c *gin.Context) {
 
 	// Check if this is the last security group (cannot remove last one)
 	var sgCount int
-	err = database.DB.QueryRow(c.Request.Context(),
+	err = svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT COUNT(*) FROM server_security_groups WHERE server_id = $1",
 		instanceID,
 	).Scan(&sgCount)
@@ -752,7 +751,7 @@ func (svc *Service) RemoveSecurityGroup(c *gin.Context) {
 	}
 
 	// Remove security group association
-	_, err = database.DB.Exec(c.Request.Context(), `
+	_, err = svc.activeDB().Exec(c.Request.Context(), `
 		DELETE FROM server_security_groups
 		WHERE server_id = $1 AND security_group_id = $2
 	`, instanceID, sgID)
@@ -794,7 +793,7 @@ func (svc *Service) ChangePassword(c *gin.Context) {
 
 	// Verify instance exists
 	var status string
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT status FROM instances WHERE id = $1 AND project_id = $2",
 		instanceID, projectID,
 	).Scan(&status)
@@ -825,7 +824,7 @@ func (svc *Service) ChangePassword(c *gin.Context) {
 	}
 
 	// Update admin password hash in database
-	_, err = database.DB.Exec(c.Request.Context(), `
+	_, err = svc.activeDB().Exec(c.Request.Context(), `
 		UPDATE instances
 		SET admin_password_hash = $1, updated_at = $2
 		WHERE id = $3
@@ -849,7 +848,7 @@ func (svc *Service) RestoreInstance(c *gin.Context) {
 
 	// Check if instance exists and is soft-deleted
 	var status string
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT status FROM instances WHERE id = $1 AND project_id = $2",
 		instanceID, projectID,
 	).Scan(&status)
@@ -865,7 +864,7 @@ func (svc *Service) RestoreInstance(c *gin.Context) {
 	}
 
 	// Restore instance to SHUTOFF state
-	_, err = database.DB.Exec(c.Request.Context(), `
+	_, err = svc.activeDB().Exec(c.Request.Context(), `
 		UPDATE instances
 		SET status = $1, power_state = $2, updated_at = $3
 		WHERE id = $4
@@ -916,7 +915,7 @@ func (svc *Service) CreateBackupAction(c *gin.Context) {
 
 	// Verify instance exists
 	var sourceImageID string
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT image_id FROM instances WHERE id = $1 AND project_id = $2",
 		instanceID, projectID,
 	).Scan(&sourceImageID)
@@ -934,7 +933,7 @@ func (svc *Service) CreateBackupAction(c *gin.Context) {
 	timestamp := time.Now().Format("20060102-150405")
 	fullImageName := fmt.Sprintf("%s-%s-%s", backupName, backupType, timestamp)
 
-	_, err = database.DB.Exec(c.Request.Context(), `
+	_, err = svc.activeDB().Exec(c.Request.Context(), `
 		INSERT INTO images (id, name, project_id, status, visibility, disk_format, container_format, created_at, updated_at)
 		VALUES ($1, $2, $3, 'active', 'private', 'qcow2', 'bare', $4, $4)
 	`, backupImageID, fullImageName, projectID, time.Now())
@@ -946,13 +945,13 @@ func (svc *Service) CreateBackupAction(c *gin.Context) {
 	}
 
 	// Add tags to identify this as a backup
-	database.DB.Exec(c.Request.Context(), `
+	svc.activeDB().Exec(c.Request.Context(), `
 		INSERT INTO image_tags (image_id, tag) VALUES ($1, 'backup'), ($1, $2), ($1, $3)
 	`, backupImageID, fmt.Sprintf("backup_type:%s", backupType), fmt.Sprintf("source_server:%s", instanceID))
 
 	// Implement rotation: delete old backups of same type for this server
 	// Query all backup images for this server with same backup_type
-	rows, err := database.DB.Query(c.Request.Context(), `
+	rows, err := svc.activeDB().Query(c.Request.Context(), `
 		SELECT DISTINCT i.id, i.created_at
 		FROM images i
 		JOIN image_tags t1 ON i.id = t1.image_id AND t1.tag = 'backup'
@@ -977,7 +976,7 @@ func (svc *Service) CreateBackupAction(c *gin.Context) {
 		if len(backupIDs) > int(rotation) {
 			oldBackups := backupIDs[int(rotation):]
 			for _, oldID := range oldBackups {
-				database.DB.Exec(c.Request.Context(), "DELETE FROM images WHERE id = $1", oldID)
+				svc.activeDB().Exec(c.Request.Context(), "DELETE FROM images WHERE id = $1", oldID)
 			}
 		}
 	}
@@ -1031,7 +1030,7 @@ func (svc *Service) ResetStateAction(c *gin.Context) {
 
 	// Verify instance exists
 	var existsCheck bool
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT EXISTS(SELECT 1 FROM instances WHERE id = $1 AND project_id = $2)",
 		instanceID, projectID,
 	).Scan(&existsCheck)
@@ -1049,7 +1048,7 @@ func (svc *Service) ResetStateAction(c *gin.Context) {
 		statusUpper = "ACTIVE"
 	}
 
-	_, err = database.DB.Exec(c.Request.Context(), `
+	_, err = svc.activeDB().Exec(c.Request.Context(), `
 		UPDATE instances
 		SET status = $1, updated_at = $2
 		WHERE id = $3
@@ -1071,7 +1070,7 @@ func (svc *Service) ResetNetworkAction(c *gin.Context) {
 
 	// Verify instance exists
 	var existsCheck bool
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT EXISTS(SELECT 1 FROM instances WHERE id = $1 AND project_id = $2)",
 		instanceID, projectID,
 	).Scan(&existsCheck)

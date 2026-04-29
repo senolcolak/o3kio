@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"github.com/cobaltcore-dev/o3k/internal/common"
-	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -52,7 +51,7 @@ func (svc *Service) CreateFlavor(c *gin.Context) {
 		isPublic = *req.Flavor.IsPublic
 	}
 
-	_, err := database.DB.Exec(ctx,
+	_, err := svc.activeDB().Exec(ctx,
 		`INSERT INTO flavors (id, name, vcpus, ram_mb, disk_gb, is_public)
 		 VALUES ($1, $2, $3, $4, $5, $6)`,
 		flavorID, req.Flavor.Name, req.Flavor.VCPUs, req.Flavor.RAM, req.Flavor.Disk, isPublic,
@@ -94,7 +93,7 @@ func (svc *Service) DeleteFlavor(c *gin.Context) {
 	flavorID := c.Param("id")
 	ctx := c.Request.Context()
 
-	result, err := database.DB.Exec(ctx,
+	result, err := svc.activeDB().Exec(ctx,
 		"DELETE FROM flavors WHERE id = $1",
 		flavorID,
 	)
@@ -123,7 +122,7 @@ func (svc *Service) DeleteFlavor(c *gin.Context) {
 func (svc *Service) GetFlavorExtraSpecs(c *gin.Context) {
 	flavorID := c.Param("id")
 
-	rows, err := database.DB.Query(c.Request.Context(),
+	rows, err := svc.activeDB().Query(c.Request.Context(),
 		"SELECT key, value FROM flavor_extra_specs WHERE flavor_id = $1",
 		flavorID,
 	)
@@ -161,7 +160,7 @@ func (svc *Service) CreateFlavorExtraSpecs(c *gin.Context) {
 
 	// Insert or update extra specs
 	for key, value := range req.ExtraSpecs {
-		_, err := database.DB.Exec(c.Request.Context(),
+		_, err := svc.activeDB().Exec(c.Request.Context(),
 			`INSERT INTO flavor_extra_specs (flavor_id, key, value)
 			 VALUES ($1, $2, $3)
 			 ON CONFLICT (flavor_id, key) DO UPDATE SET value = $3`,
@@ -183,7 +182,7 @@ func (svc *Service) GetFlavorExtraSpecKey(c *gin.Context) {
 	key := c.Param("key")
 
 	var value string
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT value FROM flavor_extra_specs WHERE flavor_id = $1 AND key = $2",
 		flavorID, key,
 	).Scan(&value)
@@ -214,7 +213,7 @@ func (svc *Service) UpdateFlavorExtraSpecKey(c *gin.Context) {
 		return
 	}
 
-	_, err := database.DB.Exec(c.Request.Context(),
+	_, err := svc.activeDB().Exec(c.Request.Context(),
 		`INSERT INTO flavor_extra_specs (flavor_id, key, value)
 		 VALUES ($1, $2, $3)
 		 ON CONFLICT (flavor_id, key) DO UPDATE SET value = $3`,
@@ -235,7 +234,7 @@ func (svc *Service) DeleteFlavorExtraSpecKey(c *gin.Context) {
 	flavorID := c.Param("id")
 	key := c.Param("key")
 
-	result, err := database.DB.Exec(c.Request.Context(),
+	result, err := svc.activeDB().Exec(c.Request.Context(),
 		"DELETE FROM flavor_extra_specs WHERE flavor_id = $1 AND key = $2",
 		flavorID, key,
 	)
@@ -272,7 +271,7 @@ func (svc *Service) FlavorAction(c *gin.Context) {
 			return
 		}
 
-		_, err := database.DB.Exec(c.Request.Context(),
+		_, err := svc.activeDB().Exec(c.Request.Context(),
 			`INSERT INTO flavor_access (flavor_id, project_id)
 			 VALUES ($1, $2)
 			 ON CONFLICT (flavor_id, project_id) DO NOTHING`,
@@ -302,7 +301,7 @@ func (svc *Service) FlavorAction(c *gin.Context) {
 			return
 		}
 
-		_, err := database.DB.Exec(c.Request.Context(),
+		_, err := svc.activeDB().Exec(c.Request.Context(),
 			"DELETE FROM flavor_access WHERE flavor_id = $1 AND project_id = $2",
 			flavorID, tenantID,
 		)
@@ -324,7 +323,7 @@ func (svc *Service) FlavorAction(c *gin.Context) {
 func (svc *Service) GetFlavorAccess(c *gin.Context) {
 	flavorID := c.Param("id")
 
-	rows, err := database.DB.Query(c.Request.Context(),
+	rows, err := svc.activeDB().Query(c.Request.Context(),
 		"SELECT flavor_id, project_id FROM flavor_access WHERE flavor_id = $1",
 		flavorID,
 	)

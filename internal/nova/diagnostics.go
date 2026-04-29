@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/cobaltcore-dev/o3k/internal/common"
-	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog/log"
 )
@@ -20,7 +19,7 @@ func (svc *Service) GetServerDiagnostics(c *gin.Context) {
 	var vcpus, memoryMB, diskGB int
 	var createdAt time.Time
 
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		`SELECT i.status, i.created_at, f.vcpus, f.ram_mb, f.disk_gb, i.flavor_id
 		 FROM instances i
 		 LEFT JOIN flavors f ON i.flavor_id = f.id
@@ -68,7 +67,7 @@ func (svc *Service) ListInstanceActions(c *gin.Context) {
 
 	// Verify instance exists and belongs to project
 	var exists bool
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT EXISTS(SELECT 1 FROM instances WHERE id = $1 AND project_id = $2)",
 		instanceID, projectID,
 	).Scan(&exists)
@@ -79,7 +78,7 @@ func (svc *Service) ListInstanceActions(c *gin.Context) {
 	}
 
 	// Query instance actions
-	rows, err := database.DB.Query(c.Request.Context(),
+	rows, err := svc.activeDB().Query(c.Request.Context(),
 		`SELECT id, action, request_id, user_id, project_id, start_time, message
 		 FROM instance_actions
 		 WHERE instance_id = $1
@@ -124,7 +123,7 @@ func (svc *Service) GetInstanceAction(c *gin.Context) {
 
 	// Verify instance exists and belongs to project
 	var exists bool
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT EXISTS(SELECT 1 FROM instances WHERE id = $1 AND project_id = $2)",
 		instanceID, projectID,
 	).Scan(&exists)
@@ -138,7 +137,7 @@ func (svc *Service) GetInstanceAction(c *gin.Context) {
 	var action, userID, projectIDStr, message string
 	var startTime time.Time
 
-	err = database.DB.QueryRow(c.Request.Context(),
+	err = svc.activeDB().QueryRow(c.Request.Context(),
 		`SELECT action, user_id, project_id, start_time, message
 		 FROM instance_actions
 		 WHERE instance_id = $1 AND request_id = $2`,

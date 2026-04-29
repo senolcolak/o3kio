@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/cobaltcore-dev/o3k/internal/common"
-	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
@@ -38,7 +37,7 @@ func (svc *Service) UpdateServer(c *gin.Context) {
 		updatedAt       time.Time
 	)
 
-	err := database.DB.QueryRow(c.Request.Context(), `
+	err := svc.activeDB().QueryRow(c.Request.Context(), `
 		SELECT name, status, flavor_id, image_id, created_at, updated_at
 		FROM instances
 		WHERE id = $1 AND project_id = $2
@@ -86,7 +85,7 @@ func (svc *Service) UpdateServer(c *gin.Context) {
 		}
 		query += " WHERE id = $1 AND project_id = $2"
 
-		_, err = database.DB.Exec(c.Request.Context(), query, params...)
+		_, err = svc.activeDB().Exec(c.Request.Context(), query, params...)
 		if err != nil {
 			log.Error().Err(err).Str("operation", "update_server").Msg("database error")
 			common.SendError(c, common.NewInternalServerError("failed to update server"))

@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/cobaltcore-dev/o3k/internal/common"
-	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog/log"
 )
@@ -13,7 +12,7 @@ import (
 // ListTenantUsage handles GET /v2.1/os-simple-tenant-usage
 func (svc *Service) ListTenantUsage(c *gin.Context) {
 	// Query all projects with their instance counts and uptime
-	rows, err := database.DB.Query(c.Request.Context(),
+	rows, err := svc.activeDB().Query(c.Request.Context(),
 		`SELECT
 			i.project_id,
 			COUNT(*) as total_instances,
@@ -69,7 +68,7 @@ func (svc *Service) GetTenantUsage(c *gin.Context) {
 	var totalInstances int
 	var totalHours, totalVCPUs, totalMemoryMB, totalLocalGB float64
 
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		`SELECT
 			COUNT(*) as total_instances,
 			COALESCE(SUM(EXTRACT(EPOCH FROM (NOW() - i.created_at)) / 3600), 0) as total_hours,

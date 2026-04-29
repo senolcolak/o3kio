@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/cobaltcore-dev/o3k/internal/common"
-	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
@@ -15,7 +14,7 @@ import (
 func (svc *Service) ListServerGroups(c *gin.Context) {
 	projectID := c.GetString("project_id")
 
-	rows, err := database.DB.Query(c.Request.Context(),
+	rows, err := svc.activeDB().Query(c.Request.Context(),
 		`SELECT id, name, policies, members, project_id, created_at, updated_at
 		 FROM server_groups WHERE project_id = $1`,
 		projectID,
@@ -71,7 +70,7 @@ func (svc *Service) CreateServerGroup(c *gin.Context) {
 	groupID := uuid.New().String()
 	now := time.Now()
 
-	_, err := database.DB.Exec(c.Request.Context(),
+	_, err := svc.activeDB().Exec(c.Request.Context(),
 		`INSERT INTO server_groups (id, name, policies, members, project_id, created_at, updated_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 		groupID, req.ServerGroup.Name, req.ServerGroup.Policies, []string{}, projectID, now, now,
@@ -104,7 +103,7 @@ func (svc *Service) GetServerGroup(c *gin.Context) {
 	var members []string
 	var createdAt, updatedAt time.Time
 
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		`SELECT name, policies, members, project_id, created_at, updated_at
 		 FROM server_groups WHERE id = $1 AND project_id = $2`,
 		groupID, projectID,
@@ -132,7 +131,7 @@ func (svc *Service) DeleteServerGroup(c *gin.Context) {
 	groupID := c.Param("id")
 	projectID := c.GetString("project_id")
 
-	result, err := database.DB.Exec(c.Request.Context(),
+	result, err := svc.activeDB().Exec(c.Request.Context(),
 		"DELETE FROM server_groups WHERE id = $1 AND project_id = $2",
 		groupID, projectID,
 	)

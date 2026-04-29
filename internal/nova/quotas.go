@@ -9,7 +9,6 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/cobaltcore-dev/o3k/internal/common"
-	"github.com/cobaltcore-dev/o3k/internal/database"
 )
 
 // UpdateQuotaRequest represents a quota update request
@@ -29,7 +28,7 @@ func (svc *Service) GetQuotaSet(c *gin.Context) {
 	}
 
 	// Fetch quota limits
-	rows, err := database.DB.Query(c.Request.Context(), `
+	rows, err := svc.activeDB().Query(c.Request.Context(), `
 		SELECT resource, hard_limit
 		FROM quotas
 		WHERE project_id = $1
@@ -83,7 +82,7 @@ func (svc *Service) GetQuotaSet(c *gin.Context) {
 
 	// Calculate usage
 	var instanceCount, coreCount, ramCount int
-	database.DB.QueryRow(c.Request.Context(), `
+	svc.activeDB().QueryRow(c.Request.Context(), `
 		SELECT COUNT(*), COALESCE(SUM(f.vcpus), 0), COALESCE(SUM(f.ram_mb), 0)
 		FROM instances i
 		LEFT JOIN flavors f ON i.flavor_id = f.id
@@ -97,7 +96,7 @@ func (svc *Service) GetQuotaSet(c *gin.Context) {
 
 	// Volume usage
 	var volumeCount, gigabyteCount int
-	database.DB.QueryRow(c.Request.Context(), `
+	svc.activeDB().QueryRow(c.Request.Context(), `
 		SELECT COUNT(*), COALESCE(SUM(size_gb), 0)
 		FROM volumes
 		WHERE project_id = $1
@@ -108,12 +107,12 @@ func (svc *Service) GetQuotaSet(c *gin.Context) {
 
 	// Network resource usage
 	var networkCount, subnetCount, portCount, routerCount, floatingipCount, sgCount int
-	database.DB.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM networks WHERE project_id = $1`, projectID).Scan(&networkCount)
-	database.DB.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM subnets WHERE project_id = $1`, projectID).Scan(&subnetCount)
-	database.DB.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM ports WHERE project_id = $1`, projectID).Scan(&portCount)
-	database.DB.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM routers WHERE project_id = $1`, projectID).Scan(&routerCount)
-	database.DB.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM floating_ips WHERE project_id = $1`, projectID).Scan(&floatingipCount)
-	database.DB.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM security_groups WHERE project_id = $1`, projectID).Scan(&sgCount)
+	svc.activeDB().QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM networks WHERE project_id = $1`, projectID).Scan(&networkCount)
+	svc.activeDB().QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM subnets WHERE project_id = $1`, projectID).Scan(&subnetCount)
+	svc.activeDB().QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM ports WHERE project_id = $1`, projectID).Scan(&portCount)
+	svc.activeDB().QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM routers WHERE project_id = $1`, projectID).Scan(&routerCount)
+	svc.activeDB().QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM floating_ips WHERE project_id = $1`, projectID).Scan(&floatingipCount)
+	svc.activeDB().QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM security_groups WHERE project_id = $1`, projectID).Scan(&sgCount)
 
 	quotaSet["networks_used"] = networkCount
 	quotaSet["subnets_used"] = subnetCount
@@ -158,7 +157,7 @@ func (svc *Service) UpdateQuotaSet(c *gin.Context) {
 			continue
 		}
 
-		_, err := database.DB.Exec(c.Request.Context(), `
+		_, err := svc.activeDB().Exec(c.Request.Context(), `
 			INSERT INTO quotas (project_id, resource, hard_limit, created_at, updated_at)
 			VALUES ($1, $2, $3, $4, $5)
 			ON CONFLICT (project_id, resource)
@@ -201,12 +200,12 @@ func (svc *Service) GetQuotaSetDefaults(c *gin.Context) {
 }
 
 // CheckQuota checks if creating a resource would exceed quota
-func CheckQuota(c *gin.Context, resource string, requestedAmount int) error {
+func (svc *Service) CheckQuota(c *gin.Context, resource string, requestedAmount int) error {
 	projectID := c.GetString("project_id")
 
 	// Get quota limit
 	var limit int
-	err := database.DB.QueryRow(c.Request.Context(), `
+	err := svc.activeDB().QueryRow(c.Request.Context(), `
 		SELECT hard_limit FROM quotas WHERE project_id = $1 AND resource = $2
 	`, projectID, resource).Scan(&limit)
 
@@ -236,29 +235,29 @@ func CheckQuota(c *gin.Context, resource string, requestedAmount int) error {
 	var usage int
 	switch resource {
 	case "instances":
-		database.DB.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM instances WHERE project_id = $1`, projectID).Scan(&usage)
+		svc.activeDB().QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM instances WHERE project_id = $1`, projectID).Scan(&usage)
 	case "cores":
-		database.DB.QueryRow(c.Request.Context(), `SELECT COALESCE(SUM(f.vcpus), 0) FROM instances i LEFT JOIN flavors f ON i.flavor_id = f.id WHERE i.project_id = $1`, projectID).Scan(&usage)
+		svc.activeDB().QueryRow(c.Request.Context(), `SELECT COALESCE(SUM(f.vcpus), 0) FROM instances i LEFT JOIN flavors f ON i.flavor_id = f.id WHERE i.project_id = $1`, projectID).Scan(&usage)
 	case "ram":
-		database.DB.QueryRow(c.Request.Context(), `SELECT COALESCE(SUM(f.ram_mb), 0) FROM instances i LEFT JOIN flavors f ON i.flavor_id = f.id WHERE i.project_id = $1`, projectID).Scan(&usage)
+		svc.activeDB().QueryRow(c.Request.Context(), `SELECT COALESCE(SUM(f.ram_mb), 0) FROM instances i LEFT JOIN flavors f ON i.flavor_id = f.id WHERE i.project_id = $1`, projectID).Scan(&usage)
 	case "volumes":
-		database.DB.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM volumes WHERE project_id = $1`, projectID).Scan(&usage)
+		svc.activeDB().QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM volumes WHERE project_id = $1`, projectID).Scan(&usage)
 	case "gigabytes":
-		database.DB.QueryRow(c.Request.Context(), `SELECT COALESCE(SUM(size_gb), 0) FROM volumes WHERE project_id = $1`, projectID).Scan(&usage)
+		svc.activeDB().QueryRow(c.Request.Context(), `SELECT COALESCE(SUM(size_gb), 0) FROM volumes WHERE project_id = $1`, projectID).Scan(&usage)
 	case "networks":
-		database.DB.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM networks WHERE project_id = $1`, projectID).Scan(&usage)
+		svc.activeDB().QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM networks WHERE project_id = $1`, projectID).Scan(&usage)
 	case "subnets":
-		database.DB.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM subnets WHERE project_id = $1`, projectID).Scan(&usage)
+		svc.activeDB().QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM subnets WHERE project_id = $1`, projectID).Scan(&usage)
 	case "ports":
-		database.DB.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM ports WHERE project_id = $1`, projectID).Scan(&usage)
+		svc.activeDB().QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM ports WHERE project_id = $1`, projectID).Scan(&usage)
 	case "routers":
-		database.DB.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM routers WHERE project_id = $1`, projectID).Scan(&usage)
+		svc.activeDB().QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM routers WHERE project_id = $1`, projectID).Scan(&usage)
 	case "floatingip":
-		database.DB.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM floating_ips WHERE project_id = $1`, projectID).Scan(&usage)
+		svc.activeDB().QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM floating_ips WHERE project_id = $1`, projectID).Scan(&usage)
 	case "security_groups":
-		database.DB.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM security_groups WHERE project_id = $1`, projectID).Scan(&usage)
+		svc.activeDB().QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM security_groups WHERE project_id = $1`, projectID).Scan(&usage)
 	case "security_group_rules":
-		database.DB.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM security_group_rules WHERE security_group_id IN (SELECT id FROM security_groups WHERE project_id = $1)`, projectID).Scan(&usage)
+		svc.activeDB().QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM security_group_rules WHERE security_group_id IN (SELECT id FROM security_groups WHERE project_id = $1)`, projectID).Scan(&usage)
 	}
 
 	// Check if adding requested amount would exceed limit
