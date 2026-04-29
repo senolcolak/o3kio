@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/cobaltcore-dev/o3k/internal/common"
-	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -35,7 +34,7 @@ func (svc *Service) CreateVolumeType(c *gin.Context) {
 		isPublic = *req.VolumeType.IsPublic
 	}
 
-	_, err := database.DB.Exec(c.Request.Context(), `
+	_, err := svc.activeDB().Exec(c.Request.Context(), `
 		INSERT INTO volume_types (id, name, description, is_public)
 		VALUES ($1, $2, $3, $4)
 	`, typeID, req.VolumeType.Name, req.VolumeType.Description, isPublic)
@@ -76,7 +75,7 @@ func (svc *Service) UpdateVolumeType(c *gin.Context) {
 
 	// Check if type exists
 	var exists bool
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT EXISTS(SELECT 1 FROM volume_types WHERE id = $1)",
 		typeID,
 	).Scan(&exists)
@@ -118,7 +117,7 @@ func (svc *Service) UpdateVolumeType(c *gin.Context) {
 	query := fmt.Sprintf("UPDATE volume_types SET %s WHERE id = $%d",
 		strings.Join(updates, ", "), argPos)
 
-	_, err = database.DB.Exec(c.Request.Context(), query, args...)
+	_, err = svc.activeDB().Exec(c.Request.Context(), query, args...)
 
 	if err != nil {
 		log.Error().Err(err).Str("operation", "update_volume_type").Msg("failed to update volume type")
@@ -134,7 +133,7 @@ func (svc *Service) UpdateVolumeType(c *gin.Context) {
 func (svc *Service) DeleteVolumeType(c *gin.Context) {
 	typeID := c.Param("id")
 
-	result, err := database.DB.Exec(c.Request.Context(),
+	result, err := svc.activeDB().Exec(c.Request.Context(),
 		"DELETE FROM volume_types WHERE id = $1",
 		typeID,
 	)
@@ -159,7 +158,7 @@ func (svc *Service) ListVolumeTypeExtraSpecs(c *gin.Context) {
 
 	// Check if type exists
 	var extraSpecs map[string]string
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT COALESCE(extra_specs, '{}'::jsonb) FROM volume_types WHERE id = $1",
 		typeID,
 	).Scan(&extraSpecs)
@@ -201,7 +200,7 @@ func (svc *Service) CreateVolumeTypeExtraSpecs(c *gin.Context) {
 		return
 	}
 
-	_, err = database.DB.Exec(c.Request.Context(),
+	_, err = svc.activeDB().Exec(c.Request.Context(),
 		"UPDATE volume_types SET extra_specs = $1 WHERE id = $2",
 		extraSpecsJSON, typeID,
 	)
@@ -220,7 +219,7 @@ func (svc *Service) GetVolumeTypeExtraSpecKey(c *gin.Context) {
 	key := c.Param("key")
 
 	var extraSpecs map[string]string
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT COALESCE(extra_specs, '{}'::jsonb) FROM volume_types WHERE id = $1",
 		typeID,
 	).Scan(&extraSpecs)
@@ -263,7 +262,7 @@ func (svc *Service) UpdateVolumeTypeExtraSpecKey(c *gin.Context) {
 
 	// Get existing extra specs
 	var extraSpecs map[string]string
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT COALESCE(extra_specs, '{}'::jsonb) FROM volume_types WHERE id = $1",
 		typeID,
 	).Scan(&extraSpecs)
@@ -293,7 +292,7 @@ func (svc *Service) UpdateVolumeTypeExtraSpecKey(c *gin.Context) {
 		return
 	}
 
-	_, err = database.DB.Exec(c.Request.Context(),
+	_, err = svc.activeDB().Exec(c.Request.Context(),
 		"UPDATE volume_types SET extra_specs = $1 WHERE id = $2",
 		extraSpecsJSON, typeID,
 	)
@@ -313,7 +312,7 @@ func (svc *Service) DeleteVolumeTypeExtraSpecKey(c *gin.Context) {
 
 	// Get existing extra specs
 	var extraSpecs map[string]string
-	err := database.DB.QueryRow(c.Request.Context(),
+	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT COALESCE(extra_specs, '{}'::jsonb) FROM volume_types WHERE id = $1",
 		typeID,
 	).Scan(&extraSpecs)
@@ -349,7 +348,7 @@ func (svc *Service) DeleteVolumeTypeExtraSpecKey(c *gin.Context) {
 		return
 	}
 
-	_, err = database.DB.Exec(c.Request.Context(),
+	_, err = svc.activeDB().Exec(c.Request.Context(),
 		"UPDATE volume_types SET extra_specs = $1 WHERE id = $2",
 		extraSpecsJSON, typeID,
 	)

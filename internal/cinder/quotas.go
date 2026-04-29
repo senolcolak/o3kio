@@ -5,7 +5,6 @@ import (
 	"net/http"
 
 	"github.com/cobaltcore-dev/o3k/internal/common"
-	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -23,7 +22,7 @@ func (svc *Service) GetQuotaSet(c *gin.Context) {
 		targetProjectID = targetProject
 	} else {
 		// Look up by name
-		err := database.DB.QueryRow(c.Request.Context(),
+		err := svc.activeDB().QueryRow(c.Request.Context(),
 			"SELECT id FROM projects WHERE name = $1",
 			targetProject).Scan(&targetProjectID)
 		if err != nil {
@@ -43,7 +42,7 @@ func (svc *Service) GetQuotaSet(c *gin.Context) {
 	}
 
 	// Load custom quotas from database
-	rows, err := database.DB.Query(c.Request.Context(), `
+	rows, err := svc.activeDB().Query(c.Request.Context(), `
 		SELECT resource, "limit"
 		FROM cinder_quotas
 		WHERE project_id = $1
@@ -80,7 +79,7 @@ func (svc *Service) UpdateQuotaSet(c *gin.Context) {
 	} else {
 		// Look up by name
 		var targetProjectID string
-		err := database.DB.QueryRow(c.Request.Context(),
+		err := svc.activeDB().QueryRow(c.Request.Context(),
 			"SELECT id FROM projects WHERE name = $1",
 			targetProject).Scan(&targetProjectID)
 		if err != nil {
@@ -122,7 +121,7 @@ func (svc *Service) UpdateQuotaSet(c *gin.Context) {
 			continue
 		}
 
-		_, err := database.DB.Exec(c.Request.Context(), `
+		_, err := svc.activeDB().Exec(c.Request.Context(), `
 			INSERT INTO cinder_quotas (project_id, resource, "limit")
 			VALUES ($1, $2, $3)
 			ON CONFLICT (project_id, resource)
@@ -145,7 +144,7 @@ func (svc *Service) UpdateQuotaSet(c *gin.Context) {
 		"per_volume_gigabytes": 1000,
 	}
 
-	rows, err := database.DB.Query(c.Request.Context(), `
+	rows, err := svc.activeDB().Query(c.Request.Context(), `
 		SELECT resource, "limit"
 		FROM cinder_quotas
 		WHERE project_id = $1
@@ -179,7 +178,7 @@ func (svc *Service) DeleteQuotaSet(c *gin.Context) {
 	if len(targetProject) == 36 && targetProject[8] == '-' {
 		targetProjectID = targetProject
 	} else {
-		err := database.DB.QueryRow(c.Request.Context(),
+		err := svc.activeDB().QueryRow(c.Request.Context(),
 			"SELECT id FROM projects WHERE name = $1",
 			targetProject).Scan(&targetProjectID)
 		if err != nil {
@@ -187,7 +186,7 @@ func (svc *Service) DeleteQuotaSet(c *gin.Context) {
 		}
 	}
 
-	_, err := database.DB.Exec(c.Request.Context(),
+	_, err := svc.activeDB().Exec(c.Request.Context(),
 		"DELETE FROM cinder_quotas WHERE project_id = $1",
 		targetProjectID)
 	if err != nil && err != pgx.ErrNoRows {
