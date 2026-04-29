@@ -55,6 +55,7 @@ func (c *Checker) Run() (*Report, error) {
 	defer srv.Shutdown(ctx)
 
 	authURL := fmt.Sprintf("http://%s/v3", srv.Addr())
+	baseURL := fmt.Sprintf("http://%s", srv.Addr())
 	env := append(os.Environ(),
 		"OS_AUTH_URL="+authURL,
 		"OS_USERNAME=admin",
@@ -64,6 +65,11 @@ func (c *Checker) Run() (*Report, error) {
 		"OS_PROJECT_DOMAIN_NAME=Default",
 		"OS_REGION_NAME=RegionOne",
 		"OS_IDENTITY_API_VERSION=3",
+		"OS_ENDPOINT_TYPE=public",
+		"OS_COMPUTE_ENDPOINT_OVERRIDE="+baseURL+"/v2.1/",
+		"OS_NETWORK_ENDPOINT_OVERRIDE="+baseURL+"/v2.0/",
+		"OS_BLOCKSTORAGE_ENDPOINT_OVERRIDE="+baseURL+"/v3/",
+		"OS_IMAGESERVICE_ENDPOINT_OVERRIDE="+baseURL+"/",
 	)
 
 	// terraform init
