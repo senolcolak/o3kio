@@ -111,18 +111,19 @@ Understand O3K's design, implementation, and OpenStack compatibility.
 
 #### Architecture
 - **[ARCHITECTURE](ARCHITECTURE.md)** - System design and component overview
+- **[COMPONENT_STATUS](COMPONENT_STATUS.md)** ⭐ **NEW** - Per-component real vs stub status matrix
 - **[KEYSTONE_AUTH_FLOW](KEYSTONE_AUTH_FLOW.md)** - JWT authentication flow
 
 #### Design Specs
-- **[superpowers/specs/2026-04-10-o3k-server-agent-scaling-design](superpowers/specs/2026-04-10-o3k-server-agent-scaling-design.md)** ⭐ **NEW**
+- **[superpowers/specs/2026-04-10-o3k-server-agent-scaling-design](superpowers/specs/2026-04-10-o3k-server-agent-scaling-design.md)**
   - Server/agent scaling architecture (k3s-style `o3k server` + `o3k agent`)
   - gRPC back-channel, mTLS join tokens, HA-aware task dispatcher
-  - Spec v1.4.0 — CEO review #2 complete, approved for implementation
+  - Spec v1.4.0 — approved for implementation
 
 #### API Compatibility
 - **[API_COVERAGE_REPORT](API_COVERAGE_REPORT.md)** - 104% coverage analysis (342/330 endpoints)
 - **[API](API.md)** - OpenStack API compatibility details
-- **[WHATS_LEFT](WHATS_LEFT.md)** - Optional enterprise features not implemented
+- **[WHATS_LEFT](WHATS_LEFT.md)** - Implementation gaps and remaining work
 
 **Key Stats**: O3K implements 342 endpoints across 5 core services, exceeding the OpenStack baseline by 12 endpoints.
 

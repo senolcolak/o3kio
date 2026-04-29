@@ -1,286 +1,101 @@
-# What's Left? - O3K Status Overview
+# What's Left — O3K Implementation Gaps
 
-**Date**: April 2026
-**Version**: v0.6.0
-**Current Coverage**: 104% (342/330 endpoints) ✅
+**Version**: v0.7.0 | **API Coverage**: 342/330 endpoints (104%) | **Updated**: April 2026
 
----
-
-## Resolved in v0.6.0
-
-The following issues from the April 2026 codebase review have been fixed:
-
-- ✅ Internal error leakage to API clients (C-1) — structured error framework
-- ✅ No database transactions for multi-statement ops (C-2) — WithTx helper
-- ✅ Predictable MAC addresses (C-3) — crypto/rand
-- ✅ Hardcoded admin passwords (C-4) — cryptographic generation
-- ✅ Wildcard CORS (C-5) — configurable origins
-- ✅ Error handling middleware not registered (H-9)
-- ✅ Inconsistent error formats (H-2) — unified across 50 files
-- ✅ Goroutines without shutdown coordination (H-7)
-- ✅ Hardcoded localhost URLs (H-11) — dynamic base URL
-- ✅ And 22 more findings (see CHANGELOG.md)
+For detailed per-component status, see [COMPONENT_STATUS.md](COMPONENT_STATUS.md).
 
 ---
 
-## Remaining Technical Debt
+## Critical Path: Real KVM + Networking
 
-From the codebase review, 10 items are deferred to v0.7.0:
+The API surface is complete. The gap is **real-mode operation**: making VMs actually boot with network connectivity on a Linux KVM host.
 
-| ID | Severity | Description | Reason Deferred |
-|----|----------|-------------|-----------------|
-| H-3 | High | Database dependency injection (665 sites) | Major architectural refactor, needs design |
-| H-4 | High | Re-enable CI linting | Needs lint error cleanup first |
-| H-6 | High | Rate limiting middleware | Needs design spec |
-| H-8 | High | Cinder route deduplication | Partially addressed |
-| H-1 | High | Unit test coverage (6 files for 31K lines) | Ongoing effort |
-| L-1 | Low | TODO comments in storage package | Tracks planned go-ceph work |
-| L-2 | Low | Dockerfile runs as root | Required for network namespaces |
-| L-5 | Low | Benchmarks not in CI | Nice to have |
-| L-7 | Low | Docker Compose proliferation | Low impact |
-| L-9 | Low | Contract test helper duplication | Low impact |
+### P0: VM-to-Network Wiring (3-5 days)
+
+When `CreateServer` runs in real mode, the VM XML references a bridge but nothing creates the TAP device, attaches it to the bridge, or configures DHCP for the VM's MAC/IP. Without this, VMs boot with no network.
+
+**What needs to happen:**
+1. Nova asks Neutron to bind the port to the host
+2. Neutron creates a TAP device named `tap-{port_id[:11]}`
+3. TAP is attached to the network's bridge (`br-{network_id[:8]}`)
+4. DHCP lease configured for the port's MAC → IP mapping
+5. Security group rules applied to the TAP
+6. VM XML references the TAP device
+
+### P1: Port Binding Lifecycle (2-3 days)
+
+Ports exist in the database but are never "bound" to a host. Port binding should create the TAP and wire security groups when a VM is scheduled.
+
+### P2: Per-Port DHCP Lease (1 day)
+
+dnsmasq currently gets a range. It should get explicit MAC→IP static leases from port allocations.
 
 ---
 
-## TL;DR
+## Implemented and Working
 
-**Nothing critical is left.** O3K has exceeded the OpenStack baseline by 12 endpoints. All remaining work is optional enterprise features with low demand.
+### compat-check (Product Wedge)
+- [x] CLI binary with `--dir` and `--output` flags
+- [x] Report struct (JSON + text output)
+- [x] Recorder middleware captures all API calls
+- [x] Embedded server with all 5 services in stub mode
+- [x] Terraform init + plan with 5-minute timeout
+- [x] Token issuance via SeededMockDB
+- [x] Endpoint overrides route Terraform to embedded server
+- [x] **E2E: produces `compatible:true` against real Terraform config**
 
----
-
-## Completion Status
-
-### compat-check (v0.7.0)
-- [x] CLI skeleton with flags
-- [x] Report struct (JSON + text)
-- [x] Recorder middleware
-- [x] Embedded stub server
-- [x] Full OpenStack provider route wiring (all 5 services)
-- [x] Terraform init+plan execution with timeout
-- [ ] Terraform provider smoke test in CI
-- [ ] Behavioral fidelity hardening (error codes, pagination)
-
-### gRPC Server/Agent (v0.7.0)
+### gRPC Server/Agent
 - [x] Proto definition (bidirectional streaming)
 - [x] Hub with agent registration/removal/selection
-- [x] AgentClient with reconnect loop
-- [x] Task dispatch (Dispatcher → Hub → Agent)
-- [x] Token generation and verification (HMAC-SHA256)
-- [x] `o3k server`/`agent`/`token` subcommands
-- [x] Join tokens migration
-- [ ] mTLS certificate generation
-- [ ] Agent-side real task execution (libvirt/netlink)
-- [ ] HA-aware scheduling (capacity-based agent selection)
+- [x] AgentClient with reconnect loop (5s backoff)
+- [x] Task dispatch (Dispatcher bridges Nova to Hub)
+- [x] Token auth (HMAC-SHA256, enforced on join)
+- [x] mTLS (CA generation, cert signing, server/client configs)
+- [x] Subcommands: `o3k server`, `o3k agent`, `o3k token`
+- [x] Nova async dispatch when `async_compute: true`
 
-### Database DI (v0.7.0)
-- [x] DBIF interface + MockDB
-- [x] Global DB migrated to interface
-- [x] All services migrated (660+ call sites)
+### Database DI
+- [x] `DBIF` interface + `MockDB` + `SeededMockDB`
+- [x] Global `database.DB` migrated to interface
+- [x] All 660+ call sites across 53 files use `activeDB()`
 - [x] Unit tests with MockDB (Nova, Keystone)
 
-### ✅ COMPLETE (100%)
+### Networking Primitives (all real in iptables/ebpf mode)
+- [x] Network namespaces, bridges, TAP devices
+- [x] VXLAN interfaces with FDB management
+- [x] Router namespaces with IP forwarding
+- [x] Floating IP NAT (DNAT + SNAT via iptables)
+- [x] SNAT/Masquerade for internal subnets
+- [x] DHCP via dnsmasq (per-subnet)
+- [x] Security groups (iptables chains with DROP default)
+- [x] VXLAN coordination (DB-polled FDB sync)
 
-**🔴 HIGH Priority** - All production-critical features
-- Nova Server Actions (migrate, evacuate, backup, etc.) ✅
-- Keystone Service Catalog Management ✅
-- Cinder Volume Actions ✅
-
-**🟡 MEDIUM Priority** - All important operational features
-- Nova Console Access (VNC, SPICE, RDP, Serial) ✅
-- Nova Tenant Usage & Availability Zones ✅
-- Keystone Domain Management ✅
-- Keystone Credential Management ✅
-- Neutron Floating IP Port Forwarding ✅
-- Glance Image Import ✅
-- Cinder Volume Groups ✅
-
-**🎯 Special Achievement**
-- Horizon Dashboard Integration (6 user stories) ✅
-- Performance Optimization (pagination + indexes) ✅
+### Hypervisor (real in KVM mode)
+- [x] Create/Delete/Start/Stop/Reboot via libvirt
+- [x] Suspend/Resume (DomainManagedSave)
+- [x] Attach/Detach devices
+- [x] XML generation (x86_64, virtio, VNC, cloud-init)
 
 ---
 
-## 🟢 Optional Work (LOW Priority)
+## Not Implemented (by design)
 
-### 1. Keystone Federation/SAML (~10 endpoints)
-**Status**: ❌ Not Implemented (by design)
-
-**What it does**: Enterprise SSO integration with SAML/OAuth providers
-
-**Endpoints**:
-```
-❌ GET    /v3/OS-FEDERATION/identity_providers
-❌ POST   /v3/OS-FEDERATION/identity_providers
-❌ GET    /v3/OS-FEDERATION/identity_providers/:id
-❌ DELETE /v3/OS-FEDERATION/identity_providers/:id
-❌ GET    /v3/OS-FEDERATION/mappings
-❌ POST   /v3/OS-FEDERATION/mappings
-❌ GET    /v3/OS-FEDERATION/protocols
-... (10 total)
-```
-
-**Why skip it**:
-- Complex SAML protocol implementation
-- Only needed for enterprise deployments (<5% of users)
-- Most deployments use local authentication
-- Effort: 3-4 sprints
-
-**Alternative**: Use external SAML proxy (nginx + auth_request)
+| Feature | Reason |
+|---------|--------|
+| Keystone Federation/SAML | Enterprise-only, <5% demand |
+| Neutron DVR | Large-cloud-only feature |
+| Nova live migration | Requires shared storage infrastructure |
+| OVS/OpenFlow | Linux bridges sufficient for target use case |
+| Heat (orchestration) | Out of scope (use Terraform directly) |
+| Swift (object storage) | Out of scope (use S3) |
+| Barbican (secrets) | Out of scope |
+| Designate (DNS) | Out of scope |
+| Octavia (LB) | Out of scope |
 
 ---
 
-### 2. Neutron Advanced Features (~8 endpoints)
-**Status**: ❌ Not Implemented (by design)
+## Next Steps
 
-**What it does**: Advanced networking for large multi-datacenter clouds
-
-**Endpoints**:
-```
-# Metering (6 endpoints)
-❌ GET    /v2.0/metering/metering-labels
-❌ POST   /v2.0/metering/metering-labels
-❌ GET    /v2.0/metering/metering-labels/:id
-❌ DELETE /v2.0/metering/metering-labels/:id
-❌ GET    /v2.0/metering/metering-label-rules
-❌ POST   /v2.0/metering/metering-label-rules
-
-# Auto-allocated topology (3 endpoints)
-❌ GET    /v2.0/auto-allocated-topology/:project_id
-❌ DELETE /v2.0/auto-allocated-topology/:project_id
-❌ GET    /v2.0/auto-allocated-topology
-
-# DVR - Distributed Virtual Routing (4 endpoints)
-❌ (Various DVR-specific endpoints)
-```
-
-**Why skip it**:
-- DVR: Only for large cloud providers (Rackspace, etc.)
-- Metering: Most clouds use external monitoring (Prometheus, etc.)
-- Auto-topology: Rarely used feature
-- Effort: 2-3 sprints
-
-**Alternative**: O3K has standard routing + floating IPs (sufficient for 99% use cases)
-
----
-
-### 3. Nova Microversion-Gated Features (variable)
-**Status**: ⚠️ Partial Implementation
-
-**What it does**: Version-specific API enhancements
-
-**Examples**:
-```
-❌ v2.3   - Availability zones in server details (minor enhancement)
-❌ v2.19  - Description field for servers (cosmetic)
-❌ v2.32  - Tags support (labeling feature)
-❌ v2.42  - Server groups enhanced (advanced scheduling)
-❌ v2.52  - Tagged instances (query optimization)
-... (20+ microversion features)
-```
-
-**Why skip it**:
-- O3K implements core API (v2.1 base)
-- Microversion features are incremental enhancements
-- Most clients work fine with v2.1 base
-- Can add on-demand as needed
-- Effort: Ongoing (1 sprint per 5-10 features)
-
-**Note**: Major microversion features (console access, volume actions) are already implemented
-
----
-
-## What O3K HAS That Exceeds Baseline (+12 endpoints)
-
-These are BONUS features beyond the 330 baseline:
-
-1. **Port Forwarding** (5 endpoints) - Forward specific ports on floating IPs
-2. **Volume Groups** (5 endpoints) - Coordinated storage operations
-3. **Credential Management** (5 endpoints) - EC2-style API keys
-4. **Advanced Actions** (8 endpoints) - migrate, evacuate, backup
-5. **Metadefs Management** (15+ endpoints) - Image metadata schemas
-6. **Service Catalog CRUD** (8 endpoints) - Dynamic service registration
-7. **Domain Management** (6 endpoints) - Multi-domain support
-
-Total: **52 endpoints** in "bonus" category, but 12 net over baseline
-
----
-
-## Production Readiness Checklist
-
-| Category | Status | Notes |
-|----------|--------|-------|
-| Core CRUD Operations | ✅ 100% | All create/read/update/delete working |
-| Server Lifecycle | ✅ 100% | Start, stop, reboot, rebuild, resize |
-| Networking | ✅ 100% | Networks, subnets, routers, floating IPs, security groups |
-| Storage | ✅ 100% | Volumes, snapshots, backups, attach/detach |
-| Images | ✅ 100% | Upload, download, metadata, import workflow |
-| Authentication | ✅ 100% | Users, projects, domains, roles, tokens |
-| Multi-Tenancy | ✅ 100% | Project isolation, RBAC, quotas |
-| Horizon Dashboard | ✅ 100% | Full compatibility, 6 user stories tested |
-| Performance | ✅ Optimized | Pagination, indexes, <3s queries |
-| Testing | ✅ Comprehensive | 65+ tests (contract + integration) |
-| Documentation | ✅ Complete | Deployment guides, API docs |
-
-**Verdict**: **PRODUCTION READY** ✅
-
----
-
-## Recommendation
-
-**DO NOT implement the remaining optional features** unless:
-
-1. **Federation/SAML**: You need enterprise SSO with specific SAML providers
-2. **Neutron Advanced**: You're running a multi-datacenter cloud with 1000+ nodes
-3. **Microversions**: A specific client requires a newer microversion feature
-
-**Why?**
-- Current implementation serves 99% of private cloud use cases
-- Remaining features add complexity without broad value
-- Better to focus on stability, documentation, and bug fixes
-
----
-
-## If You Want to Reach 110%+
-
-Here are features that would be more valuable than the "optional" list:
-
-### High-Value Additions (Not in OpenStack Baseline)
-
-1. **Kubernetes Integration** (NEW)
-   - Container orchestration support
-   - Pod networking via Neutron
-   - Persistent volumes via Cinder
-   - Effort: 4-5 sprints
-
-2. **Terraform Provider** (NEW)
-   - Infrastructure-as-code support
-   - OpenStack Terraform provider compatibility
-   - Effort: 2-3 sprints
-
-3. **Monitoring/Observability** (ENHANCEMENT)
-   - Prometheus metrics export
-   - OpenTelemetry tracing
-   - Grafana dashboards
-   - Effort: 2 sprints
-
-4. **Multi-Region Support** (ENHANCEMENT)
-   - Cross-region replication
-   - Global load balancing
-   - Effort: 3-4 sprints
-
-5. **Backup/DR** (ENHANCEMENT)
-   - Automated backup schedules
-   - Cross-site disaster recovery
-   - Effort: 2-3 sprints
-
----
-
-## Summary
-
-**What's Left?**: Nothing critical. Only optional enterprise features.
-
-**Coverage**: 104% (342/330 endpoints)
-
-**Status**: Production ready for private cloud deployments ✅
-
-**Next Steps**: Focus on stability, documentation, and real-world testing rather than implementing low-demand features.
+1. **Fix P0** — VM-to-network wiring. This makes real KVM work.
+2. **Behavioral fidelity** — Error codes and pagination for the 40% of APIs Terraform calls.
+3. **Find users** — The compat-check wedge works. Put it in front of architects doing migrations.
