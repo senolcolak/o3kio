@@ -68,6 +68,15 @@ func (h *Hub) PickAgent() *AgentInfo {
 	return nil
 }
 
+// VerifyJoin reports whether the given tokenHash is valid for nodeID.
+// When tokenSecret is empty the hub is in open enrollment mode and all joins are accepted.
+func (h *Hub) VerifyJoin(nodeID, tokenHash string) bool {
+	if h.tokenSecret == "" {
+		return true
+	}
+	return VerifyTokenHash(h.tokenSecret, nodeID, tokenHash)
+}
+
 // ListenAndServe starts the gRPC server on addr and blocks until it exits.
 func (h *Hub) ListenAndServe(addr string) error {
 	lis, err := net.Listen("tcp", addr)
@@ -89,6 +98,9 @@ func (h *Hub) AgentStream(stream grpc.BidiStreamingServer[pb.AgentMessage, pb.Se
 	join := msg.GetJoin()
 	if join == nil {
 		return fmt.Errorf("first message must be JoinMsg")
+	}
+	if !h.VerifyJoin(join.GetNodeId(), join.GetTokenHash()) {
+		return fmt.Errorf("invalid join token for node %s", join.GetNodeId())
 	}
 	h.RegisterAgent(AgentInfo{
 		NodeID:   join.GetNodeId(),

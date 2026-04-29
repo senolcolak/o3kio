@@ -44,3 +44,13 @@ func TestHubDispatchTask(t *testing.T) {
 
 	assert.NoError(t, task.Validate())
 }
+
+func TestHubVerifiesToken(t *testing.T) {
+	secret := "test-secret"
+	hub := tunnel.NewHub(secret)
+
+	validHash := tunnel.GenerateTokenHash(secret, "node-1")
+	assert.True(t, hub.VerifyJoin("node-1", validHash))
+	assert.False(t, hub.VerifyJoin("node-1", "bad-hash"))
+	assert.False(t, hub.VerifyJoin("node-2", validHash))
+}
