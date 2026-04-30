@@ -384,26 +384,30 @@ func (svc *Service) CreateServer(c *gin.Context) {
 		log.Debug().Err(err).Str("instance_id", instanceID).Msg("failed to log instance action (non-critical)")
 	}
 
-	// Dispatch async create_vm task when dispatcher is wired
+	// Async mode: insert task row for the worker to pick up
 	if svc.dispatcher != nil {
-		payload, _ := json.Marshal(map[string]string{
-			"instance_id": instanceID,
-			"flavor":      req.Server.FlavorRef,
-			"image":       req.Server.ImageRef,
+		taskPayload, _ := json.Marshal(map[string]interface{}{
+			"instance_id":      instanceID,
+			"flavor_id":        req.Server.FlavorRef,
+			"image_local_path": fmt.Sprintf("/var/lib/o3k/images/%s.qcow2", req.Server.ImageRef),
+			"vcpu":             flavor.VCPUs,
+			"ram_mb":           flavor.RAMMB,
+			"disk_gb":          flavor.DiskGB,
 		})
-		task := tunnel.Task{
-			Type:    tunnel.TaskCreateVM,
-			Payload: payload,
-		}
-		if err := svc.dispatcher.Dispatch(task); err != nil {
-			// Fire-and-forget: log but don't fail the API response.
-			// The instance is in "building" state; the reconciler will retry.
-			fmt.Printf("async dispatch failed: %v\n", err)
-		}
-	}
 
-	// Create VM asynchronously (or synchronously if libvirt is available)
-	if svc.vmManager != nil {
+		taskID := uuid.New().String()
+		_, err := svc.activeDB().Exec(c.Request.Context(), `
+			INSERT INTO tasks (id, type, resource_id, project_id, payload, timeout_sec, req_vcpu, req_ram_mb, req_disk_gb)
+			VALUES ($1, 'VM_CREATE', $2, $3, $4, 120, $5, $6, $7)`,
+			taskID, instanceID, projectID, taskPayload, flavor.VCPUs, flavor.RAMMB, flavor.DiskGB)
+
+		if err != nil {
+			log.Error().Err(err).Str("task_id", taskID).Msg("Failed to insert task")
+		} else {
+			svc.activeDB().Exec(c.Request.Context(), "SELECT pg_notify('new_task', $1)", taskID)
+		}
+		// Skip the sync VM creation goroutine — worker handles it
+	} else if svc.vmManager != nil {
 		logger.Info().Str("instance_id", instanceID).Msg("Starting VM creation via libvirt")
 		svc.wg.Add(1)
 		go func() {
