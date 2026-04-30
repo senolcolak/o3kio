@@ -96,6 +96,30 @@ func (c *AgentClient) runStream(ctx context.Context) error {
 		return fmt.Errorf("send join: %w", err)
 	}
 
+	// Start periodic heartbeat so the scheduler's stats_updated_at filter sees
+	// this agent as active (requires a report within the last 30 seconds).
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		stats := CollectHostStats("stub") // TODO: use c.mode when available
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				_ = stream.Send(&pb.AgentMessage{
+					Payload: &pb.AgentMessage_Heartbeat{
+						Heartbeat: &pb.HeartbeatMsg{
+							TimestampUnix: time.Now().Unix(),
+							VcpusFree:     int32(stats.VCPUTotal),
+							MemoryFreeMb:  stats.RAMTotalMB,
+						},
+					},
+				})
+			}
+		}
+	}()
+
 	for {
 		msg, err := stream.Recv()
 		if err != nil {
