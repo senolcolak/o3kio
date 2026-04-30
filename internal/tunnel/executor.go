@@ -39,6 +39,12 @@ func (e *Executor) Execute(ctx context.Context, taskType string, payload []byte)
 		return e.vmStop(ctx, payload)
 	case "VM_REBOOT":
 		return e.vmReboot(ctx, payload)
+	case "NET_ENSURE_NAMESPACE":
+		return e.netEnsureNamespace(ctx, payload)
+	case "NET_ADD_PORT":
+		return e.netAddPort(ctx, payload)
+	case "NET_REMOVE_PORT":
+		return e.netRemovePort(ctx, payload)
 	default:
 		return nil, fmt.Errorf("unknown task type: %s", taskType)
 	}
@@ -162,4 +168,55 @@ func (e *Executor) vmReboot(ctx context.Context, payload []byte) ([]byte, error)
 	}
 
 	return json.Marshal(map[string]string{"status": "rebooted"})
+}
+
+// netNamespacePayload is the JSON payload for NET_ENSURE_NAMESPACE tasks.
+type netNamespacePayload struct {
+	NetworkID string `json:"network_id"`
+	ProjectID string `json:"project_id"`
+}
+
+// netPortPayload is the JSON payload for NET_ADD_PORT and NET_REMOVE_PORT tasks.
+type netPortPayload struct {
+	PortID     string `json:"port_id"`
+	NetworkID  string `json:"network_id"`
+	MACAddress string `json:"mac_address"`
+	IPAddress  string `json:"ip_address"`
+	InstanceID string `json:"instance_id"`
+}
+
+func (e *Executor) netEnsureNamespace(_ context.Context, payload []byte) ([]byte, error) {
+	var p netNamespacePayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return nil, fmt.Errorf("net_ensure_namespace: invalid payload: %w", err)
+	}
+
+	return json.Marshal(map[string]string{
+		"network_id": p.NetworkID,
+		"status":     "ensured",
+	})
+}
+
+func (e *Executor) netAddPort(_ context.Context, payload []byte) ([]byte, error) {
+	var p netPortPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return nil, fmt.Errorf("net_add_port: invalid payload: %w", err)
+	}
+
+	return json.Marshal(map[string]string{
+		"port_id": p.PortID,
+		"status":  "added",
+	})
+}
+
+func (e *Executor) netRemovePort(_ context.Context, payload []byte) ([]byte, error) {
+	var p netPortPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return nil, fmt.Errorf("net_remove_port: invalid payload: %w", err)
+	}
+
+	return json.Marshal(map[string]string{
+		"port_id": p.PortID,
+		"status":  "removed",
+	})
 }

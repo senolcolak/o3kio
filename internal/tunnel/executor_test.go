@@ -32,3 +32,27 @@ func TestExecutorUnknownType(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown task type")
 }
+
+func TestExecutorNetEnsureNamespace(t *testing.T) {
+	exec := tunnel.NewExecutor("stub")
+	payload := []byte(`{"network_id":"net-12345678","project_id":"proj-1"}`)
+	result, err := exec.Execute(t.Context(), "NET_ENSURE_NAMESPACE", payload)
+	assert.NoError(t, err)
+	assert.Contains(t, string(result), "network_id")
+}
+
+func TestExecutorNetAddPort(t *testing.T) {
+	exec := tunnel.NewExecutor("stub")
+	payload := []byte(`{"port_id":"port-1","network_id":"net-12345678","mac_address":"fa:16:3e:aa:bb:cc","ip_address":"192.168.1.10","instance_id":"inst-1"}`)
+	result, err := exec.Execute(t.Context(), "NET_ADD_PORT", payload)
+	assert.NoError(t, err)
+	assert.Contains(t, string(result), "port_id")
+}
+
+func TestExecutorNetRemovePort(t *testing.T) {
+	exec := tunnel.NewExecutor("stub")
+	payload := []byte(`{"port_id":"port-1","network_id":"net-12345678","mac_address":"fa:16:3e:aa:bb:cc","ip_address":"192.168.1.10","instance_id":"inst-1"}`)
+	result, err := exec.Execute(t.Context(), "NET_REMOVE_PORT", payload)
+	assert.NoError(t, err)
+	assert.Contains(t, string(result), "removed")
+}
