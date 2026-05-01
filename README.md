@@ -1,38 +1,36 @@
 # O3K - OpenStack Lightweight Cloud Platform
 
-[![CI Pipeline](https://github.com/cobaltcore-dev/o3k/actions/workflows/ci.yml/badge.svg)](https://github.com/cobaltcore-dev/o3k/actions/workflows/ci.yml)
+[![CI](https://github.com/senolcolak/o3kio/actions/workflows/ci.yml/badge.svg)](https://github.com/senolcolak/o3kio/actions/workflows/ci.yml)
 
-**Status**: v0.6.0 - Production Ready | 104% API Coverage (342/330 endpoints) | 100% Terraform Compatible
-**Last Updated**: April 7, 2026
+**Version**: v0.8.0 | **API Coverage**: 342/330 endpoints (104%) | **Terraform Compatible**: Yes | **PostgreSQL**: 17
 
-**O3K** (OpenStack 3 Kubernetes-style) is a lightweight, high-performance implementation of OpenStack APIs in pure Go, inspired by how K3s simplified Kubernetes.
+O3K is a lightweight OpenStack implementation in Go. Single binary, 5 services, drop-in compatible with Terraform, Horizon, and the OpenStack CLI.
 
 ---
 
-## 🎉 Milestone: 104% API Coverage - Full Terraform Compatibility!
+## 🆕 Current Release: v0.8.0
 
-With **104% API coverage (342/330 endpoints)**, O3K delivers complete OpenStack Terraform provider compatibility. Users can use existing Terraform scripts, Horizon UI, and OpenStack CLI without any modifications - zero difference between OpenStack and O3K.
+### Production Status
 
-## 🎯 What is O3K?
+| Capability | Status | Notes |
+|-----------|--------|-------|
+| API Surface | Production | 342 endpoints across 5 services |
+| Terraform Compatibility | Production | `o3k compat-check` validates E2E |
+| Stub Mode (any OS) | Production | Full API without KVM/libvirt |
+| KVM Real Mode (Linux) | Beta | VM lifecycle works, networking wiring in progress |
+| Server/Agent (multi-node) | Alpha | Task queue + executor functional, single-server only |
+| Multi-server HA | Not implemented | Deferred to v0.9.0 |
 
-Just as **K3s** is to Kubernetes, **O3K** is to OpenStack:
-- **Lightweight**: Single ~35MB binary vs multi-GB Python distributions
-- **Fast**: Go-based synchronous architecture (10x faster than traditional OpenStack)
-- **Simple**: One process, one database, zero message queues
-- **Drop-in Compatible**: Use existing Terraform scripts, Horizon UI, and OpenStack CLI unchanged
-- **Production Ready**: All HIGH and MEDIUM priority features complete
-- **Modern**: Supports OpenStack Flamingo (2025.2) and later versions only
+### What's in v0.8.0
 
-## 🆕 What's New in v0.6.0
+- **Server/Agent Execution Loop**: `o3k server` + `o3k agent` dispatch and execute VM tasks via PostgreSQL-coordinated task queue
+- **compat-check**: `o3k compat-check --dir <terraform>` produces `compatible:true` against real Terraform configs
+- **Database DI**: All 660+ DB call sites migrated to injectable interface — every service unit-testable
+- **mTLS**: CA generation, cert signing, mutual TLS for gRPC tunnel
+- **VM Networking**: BindPort/UnbindPort wires DHCP leases before VM boot
+- **Reconciler**: Detects stalled tasks past 2x timeout, requeues or fails them
 
-**Code Quality Overhaul** — 39 commits fixing 32 of 42 findings from a comprehensive codebase review:
-
-- **Security**: Cryptographic random for MAC addresses and passwords, configurable CORS, SQL injection hardening
-- **Error Handling**: 1,200 inline errors migrated to structured OpenStack-compatible framework — zero internal error leakage
-- **Reliability**: Database transactions for multi-statement ops, goroutine lifecycle with graceful shutdown
-- **Observability**: Unified structured logging with zerolog, scan error logging, swallowed error fixes
-
-See [CHANGELOG.md](CHANGELOG.md) for the full list.
+See [CHANGELOG.md](CHANGELOG.md) for complete release history.
 
 ## 📦 What's Included
 
@@ -45,14 +43,13 @@ See [CHANGELOG.md](CHANGELOG.md) for the full list.
 
 **Total: 342 implemented endpoints** across all five core services (+12 beyond baseline).
 
-### Development Velocity
-- **69+ Sprints Completed** (Sprint 1-70, excluding 43)
-- **+241 Endpoints Added** (from 101 to 342)
-- **+71% Coverage Gain** (from 33% to 104%)
-- **Recent Achievements**:
-  - Sprint 66-68: Horizon integration + performance optimization
-  - Sprint 56-57: Nova server actions complete
-  - Final Audit: Verified 104% coverage
+### Key Properties
+- **Single ~35MB binary** — all 5 services in one process
+- **PostgreSQL 17** — unified state, 62 migrations
+- **Synchronous by default** — no message queues (async opt-in for multi-node)
+- **libvirt/KVM** — real compute with stub mode fallback
+- **Fail-fast** — 1-second timeouts on external dependencies
+- **Multi-mode** — stub (dev) → iptables/eBPF (prod) per service
 
 ### Client Compatibility
 
@@ -68,7 +65,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full list.
 
 ### Architecture
 - **Single Binary**: All services in one process (~35MB)
-- **PostgreSQL 18+**: Unified state management (55 migrations, 35+ tables)
+- **PostgreSQL 17**: Unified state management (62 migrations)
 - **Synchronous Architecture**: No RabbitMQ/message queues (10x faster)
 - **libvirt/KVM**: Real compute virtualization (stub mode for development)
 - **Storage Backends**: Ceph RBD, AWS S3, MinIO, local filesystem (hybrid failover support)
@@ -184,7 +181,7 @@ open http://localhost/dashboard
 ```
 
 **What's included**:
-- PostgreSQL 18 database
+- PostgreSQL 17 database
 - O3K services (Keystone, Nova, Neutron, Cinder, Glance)
 - Horizon Dashboard (OpenStack Flamingo 2025.2)
 - noVNC console proxy
@@ -345,15 +342,18 @@ o3k/
 │   ├── neutron/                # Network service (98 endpoints)
 │   ├── cinder/                 # Block storage (73 endpoints)
 │   ├── glance/                 # Image service (38 endpoints)
-│   ├── database/               # DB models and migrations (55 migrations)
+│   ├── database/               # DB models and migrations
+│   ├── scheduler/              # Task worker, reconciler
+│   ├── tunnel/                 # gRPC agent tunnel, executor
 │   ├── middleware/             # Auth, logging, CORS, recovery
 │   └── common/                 # Shared utilities
 ├── pkg/                         # Public/reusable packages
 │   ├── hypervisor/             # libvirt abstraction (real + stub modes)
 │   ├── networking/             # netlink, VXLAN, security groups
 │   └── storage/                # Storage backends (RBD, S3, local)
-├── migrations/                  # SQL migrations (110 files - 55 up/down pairs)
-├── test/contract/              # Contract tests (71 test files, TDD-first)
+├── proto/                       # gRPC protocol definitions
+├── migrations/                  # SQL migrations (62 files)
+├── test/contract/              # Contract tests (gophercloud SDK)
 ├── test/*.sh                   # Integration tests (20+ bash scripts)
 ├── config/                     # Configuration files (YAML)
 ├── docs/                       # Documentation
@@ -470,32 +470,23 @@ The seed data creates:
 
 ### Roadmap
 
-**Completed (v0.1-v0.6.0):**
-- ✅ All 5 core OpenStack services (Keystone, Nova, Neutron, Cinder, Glance)
-- ✅ 104% API coverage (342/330 endpoints) - EXCEEDS BASELINE
-- ✅ All HIGH and MEDIUM priority features
-- ✅ Real libvirt/KVM integration with stub mode fallback
-- ✅ Multi-backend storage (Ceph RBD, S3, hybrid failover)
-- ✅ VXLAN multi-node networking
-- ✅ L3 routing, floating IPs, and port forwarding
-- ✅ Horizon dashboard 100% compatibility
-- ✅ Comprehensive test coverage (71 contract test files, 20+ integration tests)
-- ✅ Production deployments validated
-- ✅ Performance optimization (pagination, indexes)
+**Completed:**
+- ✅ v0.6.0: All 5 core services, 342 endpoints, code quality overhaul
+- ✅ v0.7.0: compat-check CLI, DB DI migration, gRPC tunnel skeleton, mTLS
+- ✅ v0.8.0: Task queue, worker, executor, reconciler, blocking dispatch, agent stats
 
-**Current Focus (v0.6.x - Stability & Polish):**
-- 🔧 Bug fixes and error handling improvements
-- 🔧 Performance monitoring and optimization
-- 🔧 Documentation enhancements
-- 🔧 Community feedback integration
+**Current Focus (v0.9.0):**
+- Behavioral fidelity (error codes, pagination matching real OpenStack)
+- Multi-server HA (dispatch ownership check, cross-server fallback)
+- Image prefetch (download images to agent before VM create)
+- Agent-side real networking (netlink calls for NET_* tasks)
 
-**Future Considerations (on-demand):**
-- [ ] Additional services (Barbican, Designate, Octavia) - based on user requests
-- [ ] Optional enterprise features (Federation/SAML, DVR) - if demanded
-- [ ] eBPF-based security groups (kernel-space filtering performance boost)
-- [ ] High availability (multi-node control plane)
+**Future:**
+- [ ] Live migration (requires shared storage)
+- [ ] eBPF security groups (kernel-space packet filtering)
+- [ ] Additional services (Barbican, Designate, Octavia) — on demand
 
-**Philosophy**: O3K has exceeded the OpenStack baseline. Focus is now on stability, performance, and real-world production hardening rather than speculative feature additions.
+**Philosophy**: Ship what users need. The compat-check tool validates Terraform compatibility. The server/agent architecture makes multi-node real. Everything else is on-demand.
 
 ## 🤝 Contributing
 
@@ -578,7 +569,6 @@ Apache License 2.0 - See [LICENSE](LICENSE)
 
 ---
 
-**Status**: ✅ v0.6.0 Production Ready | **Coverage**: 104% (342/330 endpoints) | **Horizon**: 100% Compatible
-**Build**: ✅ SUCCESS (35MB) | **Tests**: ✅ 157/191 Contract Tests PASS (82%)
-**Achievement**: 🎉 Exceeds OpenStack Baseline by 12 Endpoints
-**Updated**: March 17, 2026
+**Version**: v0.8.0 | **Coverage**: 342/330 endpoints (104%) | **Terraform**: Compatible
+**Binary**: ~35MB | **Tests**: 14 packages passing | **PostgreSQL**: 17
+**Updated**: May 2026
