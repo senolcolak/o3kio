@@ -23,6 +23,7 @@ import (
 	"github.com/cobaltcore-dev/o3k/internal/neutron"
 	"github.com/cobaltcore-dev/o3k/internal/nova"
 	"github.com/cobaltcore-dev/o3k/internal/placement"
+	"github.com/cobaltcore-dev/o3k/internal/scheduler"
 	"github.com/cobaltcore-dev/o3k/internal/tunnel"
 	"github.com/cobaltcore-dev/o3k/pkg/cache"
 	"github.com/cobaltcore-dev/o3k/pkg/networking"
@@ -79,6 +80,7 @@ func runServer(args []string) {
 
 	// Connect to database with optimized pool settings
 	ctx := context.Background()
+	workerCtx, workerCancel := context.WithCancel(ctx)
 	poolConfig := &database.PoolConfig{
 		MaxConns:          int32(cfg.Database.MaxConnections),
 		MinConns:          int32(cfg.Database.MinConnections),
@@ -184,6 +186,29 @@ func runServer(args []string) {
 		dispatcher := tunnel.NewDispatcher(hub)
 		novaService.SetDispatcher(dispatcher)
 		log.Printf("Nova async compute enabled — dispatching to agents via tunnel")
+	}
+
+	// Start task worker pool and reconciler when async compute is enabled
+	if cfg.Nova.AsyncCompute && hub != nil {
+		maxWorkers := cfg.Tasks.MaxWorkers
+		if maxWorkers == 0 {
+			maxWorkers = 10
+		}
+		reconcileInterval := cfg.Tasks.ReconcilerInterval
+		if reconcileInterval == 0 {
+			reconcileInterval = 30
+		}
+
+		hubAdapter := scheduler.NewHubAdapter(hub)
+		for i := 0; i < maxWorkers; i++ {
+			w := scheduler.NewWorker(database.DB, hubAdapter)
+			go w.Run(workerCtx)
+		}
+
+		r := scheduler.NewReconciler(database.DB, reconcileInterval)
+		go r.Run(workerCtx)
+
+		log.Printf("Task scheduler started: %d workers, reconciler every %ds", maxWorkers, reconcileInterval)
 	}
 
 	// Initialize VXLAN if enabled
@@ -300,6 +325,9 @@ func runServer(args []string) {
 	<-quit
 
 	log.Println("Shutting down servers...")
+
+	// Stop task workers and reconciler
+	workerCancel()
 
 	// Stop service background goroutines before closing HTTP servers
 	novaService.Shutdown()

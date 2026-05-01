@@ -20,6 +20,13 @@ type Config struct {
 	Cache    CacheConfig    `yaml:"cache"`
 	Server   ServerConfig   `yaml:"server"`
 	Tunnel   TunnelConfig   `yaml:"tunnel"`
+	Tasks    TaskConfig     `yaml:"tasks"`
+}
+
+// TaskConfig holds tuning knobs for the async task worker pool and reconciler.
+type TaskConfig struct {
+	MaxWorkers         int `yaml:"max_workers"`
+	ReconcilerInterval int `yaml:"reconciler_interval_sec"`
 }
 
 type ServerConfig struct {

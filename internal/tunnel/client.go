@@ -19,6 +19,7 @@ type AgentClient struct {
 	nodeID     string
 	tokenHash  string
 	tlsConfig  *tls.Config
+	executor   *Executor
 }
 
 // NewAgentClient creates an AgentClient that will connect to serverAddr.
@@ -27,6 +28,16 @@ func NewAgentClient(serverAddr, nodeID, tokenHash string) *AgentClient {
 		serverAddr: serverAddr,
 		nodeID:     nodeID,
 		tokenHash:  tokenHash,
+	}
+}
+
+// NewAgentClientWithExecutor creates an AgentClient with a real Executor for the given mode.
+func NewAgentClientWithExecutor(serverAddr, nodeID, tokenHash, mode string) *AgentClient {
+	return &AgentClient{
+		serverAddr: serverAddr,
+		nodeID:     nodeID,
+		tokenHash:  tokenHash,
+		executor:   NewExecutor(mode),
 	}
 }
 
@@ -85,6 +96,30 @@ func (c *AgentClient) runStream(ctx context.Context) error {
 		return fmt.Errorf("send join: %w", err)
 	}
 
+	// Start periodic heartbeat so the scheduler's stats_updated_at filter sees
+	// this agent as active (requires a report within the last 30 seconds).
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		stats := CollectHostStats("stub") // TODO: use c.mode when available
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				_ = stream.Send(&pb.AgentMessage{
+					Payload: &pb.AgentMessage_Heartbeat{
+						Heartbeat: &pb.HeartbeatMsg{
+							TimestampUnix: time.Now().Unix(),
+							VcpusFree:     int32(stats.VCPUTotal),
+							MemoryFreeMb:  stats.RAMTotalMB,
+						},
+					},
+				})
+			}
+		}
+	}()
+
 	for {
 		msg, err := stream.Recv()
 		if err != nil {
@@ -97,12 +132,27 @@ func (c *AgentClient) runStream(ctx context.Context) error {
 }
 
 func (c *AgentClient) executeTask(ctx context.Context, stream pb.TunnelHub_AgentStreamClient, task *pb.TaskMsg) {
-	fmt.Printf("agent: received task %s type=%s\n", task.GetTaskId(), task.GetTaskType())
+	var result []byte
+	var errMsg string
+
+	if c.executor != nil {
+		var err error
+		result, err = c.executor.Execute(ctx, task.GetTaskType(), task.GetPayload())
+		if err != nil {
+			errMsg = err.Error()
+			result = nil
+		}
+	} else {
+		fmt.Printf("agent: no executor, stub response for task %s\n", task.GetTaskId())
+	}
+
 	_ = stream.Send(&pb.AgentMessage{
 		Payload: &pb.AgentMessage_TaskResult{
 			TaskResult: &pb.TaskResultMsg{
 				TaskId:  task.GetTaskId(),
-				Success: true,
+				Success: errMsg == "",
+				Error:   errMsg,
+				Result:  result,
 			},
 		},
 	})

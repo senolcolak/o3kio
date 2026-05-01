@@ -11,6 +11,14 @@ import (
 	"google.golang.org/grpc/credentials"
 )
 
+// ResultMsg carries the outcome of a task dispatched to a tunnel agent.
+type ResultMsg struct {
+	TaskID  string
+	Success bool
+	Error   string
+	Result  []byte
+}
+
 // AgentInfo holds metadata and the active stream for a connected tunnel agent.
 type AgentInfo struct {
 	NodeID   string
@@ -26,6 +34,10 @@ type Hub struct {
 	tlsConfig   *tls.Config
 	mu          sync.RWMutex
 	agents      map[string]*AgentInfo
+	inflight    map[string]int
+	maxInflight int
+	resultChs   map[string]chan ResultMsg
+	resultMu    sync.Mutex
 }
 
 // NewHub creates a new Hub with the given JWT token secret.
@@ -33,6 +45,30 @@ func NewHub(tokenSecret string) *Hub {
 	return &Hub{
 		tokenSecret: tokenSecret,
 		agents:      make(map[string]*AgentInfo),
+		inflight:    make(map[string]int),
+		maxInflight: 1,
+		resultChs:   make(map[string]chan ResultMsg),
+	}
+}
+
+// TryAcquireInflight increments the inflight counter for nodeID and returns true.
+// Returns false without modifying the counter if the node is already at maxInflight.
+func (h *Hub) TryAcquireInflight(nodeID string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.inflight[nodeID] >= h.maxInflight {
+		return false
+	}
+	h.inflight[nodeID]++
+	return true
+}
+
+// ReleaseInflight decrements the inflight counter for nodeID.
+func (h *Hub) ReleaseInflight(nodeID string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.inflight[nodeID] > 0 {
+		h.inflight[nodeID]--
 	}
 }
 
@@ -105,6 +141,33 @@ func (h *Hub) ListenAndServe(addr string) error {
 	return s.Serve(lis)
 }
 
+// RegisterResultChan creates and registers a buffered channel for the given taskID.
+// The caller must receive from the returned channel to collect the result.
+func (h *Hub) RegisterResultChan(taskID string) chan ResultMsg {
+	h.resultMu.Lock()
+	defer h.resultMu.Unlock()
+	ch := make(chan ResultMsg, 1)
+	h.resultChs[taskID] = ch
+	return ch
+}
+
+// DeliverResult routes a ResultMsg to the channel registered for its TaskID.
+// The entry is removed after delivery; a second call for the same TaskID is a no-op.
+func (h *Hub) DeliverResult(msg ResultMsg) {
+	h.resultMu.Lock()
+	ch, ok := h.resultChs[msg.TaskID]
+	if ok {
+		delete(h.resultChs, msg.TaskID)
+	}
+	h.resultMu.Unlock()
+	if ok {
+		select {
+		case ch <- msg:
+		default:
+		}
+	}
+}
+
 // AgentStream handles a bidirectional gRPC stream from a tunnel agent.
 func (h *Hub) AgentStream(stream grpc.BidiStreamingServer[pb.AgentMessage, pb.ServerMessage]) error {
 	msg, err := stream.Recv()
@@ -127,8 +190,18 @@ func (h *Hub) AgentStream(stream grpc.BidiStreamingServer[pb.AgentMessage, pb.Se
 	defer h.RemoveAgent(join.GetNodeId())
 
 	for {
-		if _, err := stream.Recv(); err != nil {
+		msg, err := stream.Recv()
+		if err != nil {
 			return err
+		}
+		if tr := msg.GetTaskResult(); tr != nil {
+			h.DeliverResult(ResultMsg{
+				TaskID:  tr.GetTaskId(),
+				Success: tr.GetSuccess(),
+				Error:   tr.GetError(),
+				Result:  tr.GetResult(),
+			})
+			h.ReleaseInflight(join.GetNodeId())
 		}
 	}
 }
