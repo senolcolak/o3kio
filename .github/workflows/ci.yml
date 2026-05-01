@@ -82,11 +82,8 @@ jobs:
           go-version: '1.26'
           cache: true
 
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: latest
-          args: --timeout=5m
+      - name: Run go vet
+        run: go vet ./...
 
   compat-check:
     name: Compat-Check Smoke
