@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.8.0] - 2026-05-01
+
+### 🚀 Server/Agent Execution Loop
+
+The gRPC tunnel is now a real task execution system. A single `o3k server` + `o3k agent` can dispatch and execute VM lifecycle tasks end-to-end.
+
+#### Task Queue (PostgreSQL-coordinated)
+- **`tasks` table**: Full DDL with status CHECK constraints, retry limits, idempotency, timeout tracking
+- **`compute_nodes` scheduling columns**: total/reserved vcpu/ram/disk for capacity-based agent selection
+- **Task worker**: Atomic `BeginTx` claim (task + agent in one transaction), `FOR UPDATE SKIP LOCKED` for concurrent workers
+- **Reconciler**: Scans dispatched tasks past 2x timeout, requeues (retries < 3) or fails (retries exhausted)
+- **pg_notify wakeup**: Immediate worker notification on task insert, 500ms fallback poll
+
+#### Agent Executor
+- **VM tasks**: VM_CREATE, VM_DELETE, VM_START, VM_STOP, VM_REBOOT via libvirt
+- **Network tasks**: NET_ENSURE_NAMESPACE, NET_ADD_PORT, NET_REMOVE_PORT (stub handlers)
+- **Idempotent delete**: "VM not found" treated as already-deleted (no error)
+
+#### Dispatch Correctness
+- **Blocking dispatch**: HubAdapter waits for TaskResult via channel (not fire-and-forget)
+- **Inflight semaphore**: Max 1 in-flight task per agent enforced (`TryAcquireInflight`/`ReleaseInflight`)
+- **Result routing**: TaskResult messages delivered to waiting worker via registered channels
+- **Agent stats**: Periodic heartbeat with vcpu/ram so scheduler capacity filter works
+
+#### Nova Integration
+- **Async mode**: When `async_compute: true`, CreateServer inserts task row + pg_notify instead of direct libvirt call
+- **Sync fallback**: Without dispatcher, existing synchronous goroutine path unchanged
+
+---
+
 ## [0.7.0] - 2026-04-27
 
 ### 🚀 New Features

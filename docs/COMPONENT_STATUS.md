@@ -147,15 +147,21 @@ Functional with configured backends.
 | Component | Status | Notes |
 |-----------|--------|-------|
 | Proto definition | Real | Bidirectional streaming, AgentMessage/ServerMessage |
-| Hub (server) | Real | Agent registration, removal, selection |
+| Hub (server) | Real | Agent registration, removal, selection, inflight tracking |
 | Token auth (HMAC) | Real | GenerateTokenHash, VerifyTokenHash, enforced on join |
 | mTLS | Real | CA generation, cert signing, server/client TLS configs |
-| AgentClient | Real | Reconnect loop with 5s backoff |
-| Task dispatch | Real | Dispatcher bridges Nova to Hub |
+| AgentClient | Real | Reconnect loop, heartbeat stats, real executor |
+| Task dispatch (blocking) | Real | HubAdapter waits for TaskResult via channel |
+| Inflight semaphore | Real | Max 1 per agent, TryAcquireInflight/ReleaseInflight |
+| Result channel routing | Real | TaskResult routed to waiting worker goroutine |
 | Subcommands | Real | `o3k server`, `o3k agent`, `o3k token` |
-| Agent-side execution | STUB | Prints task and returns success |
-| HA scheduling | NOT IMPLEMENTED | PickAgent returns first available |
-| Task status tracking | NOT IMPLEMENTED | No acknowledgment/retry |
+| Agent executor (VM) | Real | VM_CREATE/DELETE/START/STOP/REBOOT via libvirt |
+| Agent executor (NET) | Stub | NET_ENSURE_NAMESPACE/ADD_PORT/REMOVE_PORT (returns success) |
+| Agent stats reporting | Real | Periodic heartbeat with vcpu/ram totals |
+| Task worker | Real | BeginTx claim, capacity-based scheduling, retry logic |
+| Reconciler | Real | Detects stalled tasks, requeues or fails |
+| HA scheduling | NOT IMPLEMENTED | Single-server only (multi-server dispatch deferred) |
+| StatsStream (separate RPC) | NOT IMPLEMENTED | Stats sent via heartbeat on main stream |
 
 ---
 

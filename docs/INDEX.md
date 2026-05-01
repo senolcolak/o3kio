@@ -27,6 +27,7 @@ Choose your deployment strategy based on your use case.
 
 #### Development & Testing
 - **[INSTALLATION](INSTALLATION.md)** - General installation guide (Docker + binary)
+- **[TEST_ENVIRONMENT](TEST_ENVIRONMENT.md)** ⭐ **NEW** - Complete guide to running server/agent in test environments
 - **[DOCKER_DEPLOYMENT](DOCKER_DEPLOYMENT.md)** - Docker-specific deployment guide
 - **[MULTIARCH](MULTIARCH.md)** - ARM64 and AMD64 platform support
 
@@ -296,7 +297,7 @@ Analysis of dashboard compatibility and integration options.
 **O3K Project**:
 - GitHub: https://github.com/cobaltcore-dev/o3k
 - License: Apache 2.0
-- Current Version: v0.7.0 (Implementation Release)
+- Current Version: v0.8.0 (Server/Agent Execution Loop)
 - API Coverage: 104% (342/330 endpoints)
 
 ---
