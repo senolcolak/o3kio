@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc"
@@ -84,7 +85,14 @@ func (c *AgentClient) runStream(ctx context.Context) error {
 		return fmt.Errorf("open stream: %w", err)
 	}
 
-	if err := stream.Send(&pb.AgentMessage{
+	var sendMu sync.Mutex
+	safeSend := func(msg *pb.AgentMessage) error {
+		sendMu.Lock()
+		defer sendMu.Unlock()
+		return stream.Send(msg)
+	}
+
+	if err := safeSend(&pb.AgentMessage{
 		Payload: &pb.AgentMessage_Join{
 			Join: &pb.JoinMsg{
 				NodeId:    c.nodeID,
@@ -107,7 +115,7 @@ func (c *AgentClient) runStream(ctx context.Context) error {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				_ = stream.Send(&pb.AgentMessage{
+				_ = safeSend(&pb.AgentMessage{
 					Payload: &pb.AgentMessage_Heartbeat{
 						Heartbeat: &pb.HeartbeatMsg{
 							TimestampUnix: time.Now().Unix(),
@@ -126,12 +134,12 @@ func (c *AgentClient) runStream(ctx context.Context) error {
 			return fmt.Errorf("recv: %w", err)
 		}
 		if task := msg.GetTask(); task != nil {
-			go c.executeTask(ctx, stream, task)
+			go c.executeTask(ctx, safeSend, task)
 		}
 	}
 }
 
-func (c *AgentClient) executeTask(ctx context.Context, stream pb.TunnelHub_AgentStreamClient, task *pb.TaskMsg) {
+func (c *AgentClient) executeTask(ctx context.Context, safeSend func(*pb.AgentMessage) error, task *pb.TaskMsg) {
 	var result []byte
 	var errMsg string
 
@@ -146,7 +154,7 @@ func (c *AgentClient) executeTask(ctx context.Context, stream pb.TunnelHub_Agent
 		fmt.Printf("agent: no executor, stub response for task %s\n", task.GetTaskId())
 	}
 
-	_ = stream.Send(&pb.AgentMessage{
+	_ = safeSend(&pb.AgentMessage{
 		Payload: &pb.AgentMessage_TaskResult{
 			TaskResult: &pb.TaskResultMsg{
 				TaskId:  task.GetTaskId(),

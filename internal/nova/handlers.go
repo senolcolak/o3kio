@@ -2,6 +2,7 @@ package nova
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -695,15 +696,26 @@ func (svc *Service) ListServersDetail(c *gin.Context) {
 
 	var servers []gin.H
 	for rows.Next() {
-		var id, name, status, projectID, userID, flavorID, imageID, flavorName string
+		var id, name, status, projectID, userID, flavorID, flavorName string
+		var imageID *string
 		var powerState, vcpus, ramMB, diskGB int
-		var createdAt, updatedAt, launchedAt time.Time
+		var createdAt, updatedAt time.Time
+		var launchedAt *time.Time
 
 		if err := rows.Scan(&id, &name, &status, &powerState, &projectID, &userID,
 			&flavorID, &imageID, &createdAt, &updatedAt, &launchedAt,
 			&vcpus, &ramMB, &diskGB, &flavorName); err != nil {
 			log.Warn().Err(err).Msg("failed to scan server detail row")
 			continue
+		}
+
+		imageIDStr := ""
+		if imageID != nil {
+			imageIDStr = *imageID
+		}
+		launchedAtStr := ""
+		if launchedAt != nil {
+			launchedAtStr = launchedAt.Format(time.RFC3339)
 		}
 
 		// Get addresses for this instance
@@ -719,14 +731,14 @@ func (svc *Service) ListServersDetail(c *gin.Context) {
 			"updated":    updatedAt.Format(time.RFC3339),
 			"addresses":  addresses,
 			"OS-EXT-STS:power_state": powerState,
-			"OS-SRV-USG:launched_at": launchedAt.Format(time.RFC3339),
+			"OS-SRV-USG:launched_at": launchedAtStr,
 			"flavor": gin.H{
 				"id":    flavorID,
 				"vcpus": vcpus,
 				"ram":   ramMB,
 				"disk":  diskGB,
 			},
-			"image": gin.H{"id": imageID},
+			"image": gin.H{"id": imageIDStr},
 		})
 	}
 
@@ -909,6 +921,11 @@ func (svc *Service) DeleteServer(c *gin.Context) {
 			}
 		}
 	}
+
+	// Delete orphaned ports for this instance
+	svc.activeDB().Exec(c.Request.Context(),
+		"DELETE FROM ports WHERE device_id = $1",
+		instanceID)
 
 	// Delete from database (support lookup by ID or name)
 	queryStart = time.Now()
@@ -1859,17 +1876,23 @@ func (svc *Service) RebuildInstanceAction(c *gin.Context, rebuildData interface{
 
 	// Return updated server details
 	var server gin.H
-	var flavorID, userID, imageID, serverName, status string
+	var flavorID, userID, serverName, status string
+	var nullImageID sql.NullString
 	var createdAt, updatedAt time.Time
 	err = svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT id, name, flavor_id, image_id, user_id, status, created_at, updated_at FROM instances WHERE id = $1 AND project_id = $2",
 		instanceID, projectID,
-	).Scan(&instanceID, &serverName, &flavorID, &imageID, &userID, &status, &createdAt, &updatedAt)
+	).Scan(&instanceID, &serverName, &flavorID, &nullImageID, &userID, &status, &createdAt, &updatedAt)
 
 	if err != nil {
 		log.Error().Err(err).Str("operation", "get_instance_after_rebuild").Msg("database error")
 		common.SendError(c, common.NewInternalServerError("failed to get instance after rebuild"))
 		return
+	}
+
+	imageResponse := gin.H{"id": ""}
+	if nullImageID.Valid {
+		imageResponse["id"] = nullImageID.String
 	}
 
 	server = gin.H{
@@ -1880,9 +1903,7 @@ func (svc *Service) RebuildInstanceAction(c *gin.Context, rebuildData interface{
 		"user_id":    userID,
 		"created":    createdAt.Format(time.RFC3339),
 		"updated":    updatedAt.Format(time.RFC3339),
-		"image": gin.H{
-			"id": imageID,
-		},
+		"image":      imageResponse,
 		"flavor": gin.H{
 			"id": flavorID,
 		},

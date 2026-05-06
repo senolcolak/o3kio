@@ -532,10 +532,11 @@ func (svc *Service) DeleteVolume(c *gin.Context) {
 
 	// Check if volume is attached (support lookup by ID or name)
 	var attachedTo sql.NullString
+	var actualVolumeID string
 	err := svc.activeDB().QueryRow(c.Request.Context(),
-		"SELECT attached_to_instance_id FROM volumes WHERE project_id = $2 AND ((id::text = $1) OR (name = $1))",
+		"SELECT id, attached_to_instance_id FROM volumes WHERE project_id = $2 AND ((id::text = $1) OR (name = $1))",
 		volumeID, projectID,
-	).Scan(&attachedTo)
+	).Scan(&actualVolumeID, &attachedTo)
 
 	if err == pgx.ErrNoRows {
 		common.SendError(c, common.NewNotFoundError("volume"))
@@ -548,8 +549,8 @@ func (svc *Service) DeleteVolume(c *gin.Context) {
 	}
 
 	// Delete from Ceph
-	if err := svc.cephClient.DeleteVolume(c.Request.Context(), volumeID); err != nil {
-		log.Error().Err(err).Str("operation", "delete_volume_ceph").Str("volume_id", volumeID).Msg("failed to delete volume from Ceph")
+	if err := svc.cephClient.DeleteVolume(c.Request.Context(), actualVolumeID); err != nil {
+		log.Error().Err(err).Str("operation", "delete_volume_ceph").Str("volume_id", actualVolumeID).Msg("failed to delete volume from Ceph")
 		common.SendError(c, common.NewServiceUnavailableError("failed to delete volume from Ceph"))
 		return
 	}
@@ -557,7 +558,7 @@ func (svc *Service) DeleteVolume(c *gin.Context) {
 	// Delete from database
 	_, err = svc.activeDB().Exec(c.Request.Context(),
 		"DELETE FROM volumes WHERE id = $1 AND project_id = $2",
-		volumeID, projectID,
+		actualVolumeID, projectID,
 	)
 	if err != nil {
 		log.Error().Err(err).Str("operation", "delete_volume_db").Str("volume_id", volumeID).Msg("failed to delete volume from database")
@@ -585,8 +586,16 @@ func (svc *Service) VolumeAction(c *gin.Context) {
 
 	// Handle attach action
 	if attachData, ok := req["os-attach"]; ok {
-		attachMap := attachData.(map[string]interface{})
-		instanceID := attachMap["instance_uuid"].(string)
+		attachMap, ok := attachData.(map[string]interface{})
+		if !ok {
+			common.SendError(c, common.NewBadRequestError("invalid os-attach payload"))
+			return
+		}
+		instanceID, ok := attachMap["instance_uuid"].(string)
+		if !ok || instanceID == "" {
+			common.SendError(c, common.NewBadRequestError("instance_uuid is required"))
+			return
+		}
 
 		// Update volume to attached status
 		_, err := svc.activeDB().Exec(c.Request.Context(), `
@@ -626,7 +635,11 @@ func (svc *Service) VolumeAction(c *gin.Context) {
 
 	// Handle extend action
 	if extendData, ok := req["os-extend"]; ok {
-		extendMap := extendData.(map[string]interface{})
+		extendMap, ok := extendData.(map[string]interface{})
+		if !ok {
+			common.SendError(c, common.NewBadRequestError("invalid os-extend payload"))
+			return
+		}
 		var newSize int
 
 		// Handle different JSON number types
@@ -676,8 +689,16 @@ func (svc *Service) VolumeAction(c *gin.Context) {
 
 	// Handle retype action
 	if retypeData, ok := req["os-retype"]; ok {
-		retypeMap := retypeData.(map[string]interface{})
-		newType := retypeMap["new_type"].(string)
+		retypeMap, ok := retypeData.(map[string]interface{})
+		if !ok {
+			common.SendError(c, common.NewBadRequestError("invalid os-retype payload"))
+			return
+		}
+		newType, ok := retypeMap["new_type"].(string)
+		if !ok || newType == "" {
+			common.SendError(c, common.NewBadRequestError("new_type is required"))
+			return
+		}
 
 		// Get or create volume type
 		var typeID string
@@ -725,8 +746,16 @@ func (svc *Service) VolumeAction(c *gin.Context) {
 
 	// Handle update readonly flag action
 	if readonlyData, ok := req["os-update_readonly_flag"]; ok {
-		readonlyMap := readonlyData.(map[string]interface{})
-		readonly := readonlyMap["readonly"].(bool)
+		readonlyMap, ok := readonlyData.(map[string]interface{})
+		if !ok {
+			common.SendError(c, common.NewBadRequestError("invalid os-update_readonly_flag payload"))
+			return
+		}
+		readonly, ok := readonlyMap["readonly"].(bool)
+		if !ok {
+			common.SendError(c, common.NewBadRequestError("readonly must be a boolean"))
+			return
+		}
 
 		// Update volume readonly flag (stored in metadata or separate field)
 		// For now, update in volume_metadata table
@@ -748,8 +777,16 @@ func (svc *Service) VolumeAction(c *gin.Context) {
 
 	// Handle set image metadata action (make volume bootable)
 	if imageMetadataData, ok := req["os-set_image_metadata"]; ok {
-		imageMetadataMap := imageMetadataData.(map[string]interface{})
-		metadata := imageMetadataMap["metadata"].(map[string]interface{})
+		imageMetadataMap, ok := imageMetadataData.(map[string]interface{})
+		if !ok {
+			common.SendError(c, common.NewBadRequestError("invalid os-set_image_metadata payload"))
+			return
+		}
+		metadata, ok := imageMetadataMap["metadata"].(map[string]interface{})
+		if !ok {
+			common.SendError(c, common.NewBadRequestError("metadata must be an object"))
+			return
+		}
 
 		// Store image metadata to make volume bootable
 		for key, value := range metadata {
@@ -773,8 +810,16 @@ func (svc *Service) VolumeAction(c *gin.Context) {
 
 	// Handle unset image metadata action
 	if unsetImageMetadata, ok := req["os-unset_image_metadata"]; ok {
-		unsetMap := unsetImageMetadata.(map[string]interface{})
-		key := unsetMap["key"].(string)
+		unsetMap, ok := unsetImageMetadata.(map[string]interface{})
+		if !ok {
+			common.SendError(c, common.NewBadRequestError("invalid os-unset_image_metadata payload"))
+			return
+		}
+		key, ok := unsetMap["key"].(string)
+		if !ok || key == "" {
+			common.SendError(c, common.NewBadRequestError("key is required"))
+			return
+		}
 
 		// Delete metadata entry with prefixed key
 		metadataKey := "volume_image_" + key
@@ -795,8 +840,16 @@ func (svc *Service) VolumeAction(c *gin.Context) {
 
 	// Handle reimage volume action
 	if reimageData, ok := req["os-reimage"]; ok {
-		reimageMap := reimageData.(map[string]interface{})
-		imageID := reimageMap["image_id"].(string)
+		reimageMap, ok := reimageData.(map[string]interface{})
+		if !ok {
+			common.SendError(c, common.NewBadRequestError("invalid os-reimage payload"))
+			return
+		}
+		imageID, ok := reimageMap["image_id"].(string)
+		if !ok || imageID == "" {
+			common.SendError(c, common.NewBadRequestError("image_id is required"))
+			return
+		}
 
 		// Update volume to bootable and store image ID
 		_, err := svc.activeDB().Exec(c.Request.Context(), `
@@ -873,8 +926,16 @@ func (svc *Service) VolumeAction(c *gin.Context) {
 			return
 		}
 
-		resetStatusMap := resetStatusData.(map[string]interface{})
-		newStatus := resetStatusMap["status"].(string)
+		resetStatusMap, ok := resetStatusData.(map[string]interface{})
+		if !ok {
+			common.SendError(c, common.NewBadRequestError("invalid os-reset_status payload"))
+			return
+		}
+		newStatus, ok := resetStatusMap["status"].(string)
+		if !ok || newStatus == "" {
+			common.SendError(c, common.NewBadRequestError("status is required"))
+			return
+		}
 
 		// Admin operation to manually set volume status
 		_, err := svc.activeDB().Exec(c.Request.Context(), `

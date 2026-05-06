@@ -23,7 +23,7 @@ func TestDispatcherNoAgents(t *testing.T) {
 
 func TestDispatcherWithAgent(t *testing.T) {
 	hub := tunnel.NewHub("secret")
-	hub.RegisterAgent(tunnel.AgentInfo{NodeID: "node-1", Hostname: "w1", TunnelIP: "10.0.0.2"})
+	hub.RegisterAgent(&tunnel.AgentInfo{NodeID: "node-1", Hostname: "w1", TunnelIP: "10.0.0.2"})
 	dispatcher := tunnel.NewDispatcher(hub)
 
 	task := tunnel.Task{

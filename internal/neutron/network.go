@@ -504,7 +504,7 @@ func (svc *Service) CreateNetwork(c *gin.Context) {
 			"admin_state_up":  adminStateUp,
 			"status":          "ACTIVE",
 			"shared":          shared,
-			"mtu":             1500,
+			"mtu":             mtu,
 			"created_at":      now.Format(time.RFC3339),
 			"updated_at":      now.Format(time.RFC3339),
 		},

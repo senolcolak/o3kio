@@ -67,7 +67,11 @@ func (rm *RouterManager) DeleteRouterNamespace(routerID string) error {
 
 // GetRouterNamespaceName returns the namespace name for a router
 func (rm *RouterManager) GetRouterNamespaceName(routerID string) string {
-	return "qrouter-" + routerID[:11] // OpenStack convention: qrouter-{uuid[:11]}
+	id := routerID
+	if len(id) > 11 {
+		id = id[:11]
+	}
+	return "qrouter-" + id
 }
 
 // AttachInterfaceToRouter creates a veth pair and attaches one end to the router namespace
@@ -77,7 +81,11 @@ func (rm *RouterManager) AttachInterfaceToRouter(routerID, interfaceName, ipAddr
 	}
 
 	nsName := rm.GetRouterNamespaceName(routerID)
-	vethPeer := "qr-" + interfaceName[:9] // Router-side interface
+	ifName := interfaceName
+	if len(ifName) > 9 {
+		ifName = ifName[:9]
+	}
+	vethPeer := "qr-" + ifName
 
 	// Create veth pair
 	cmd := exec.Command("ip", "link", "add", interfaceName, "type", "veth", "peer", "name", vethPeer)
@@ -355,7 +363,13 @@ func (rm *RouterManager) namespaceExists(nsName string) bool {
 	if err != nil {
 		return false
 	}
-	return strings.Contains(string(output), nsName)
+	for _, line := range strings.Split(string(output), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) > 0 && fields[0] == nsName {
+			return true
+		}
+	}
+	return false
 }
 
 func (rm *RouterManager) enableIPForwarding(nsName string) error {

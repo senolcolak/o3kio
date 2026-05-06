@@ -14,6 +14,9 @@ func WithTx(ctx context.Context, fn func(tx pgx.Tx) error) error {
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
+	if tx == nil {
+		return fmt.Errorf("begin transaction: got nil tx")
+	}
 	if err := fn(tx); err != nil {
 		if rbErr := tx.Rollback(ctx); rbErr != nil {
 			return fmt.Errorf("rollback failed: %v (original: %w)", rbErr, err)

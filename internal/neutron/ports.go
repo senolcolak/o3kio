@@ -921,11 +921,15 @@ func (svc *Service) CreateSecurityGroupRule(c *gin.Context) {
 
 // ListSecurityGroupRules lists all security group rules
 func (svc *Service) ListSecurityGroupRules(c *gin.Context) {
+	projectID := c.GetString("project_id")
+
 	rows, err := svc.activeDB().Query(c.Request.Context(), `
-		SELECT id, security_group_id, direction, ethertype, protocol, port_range_min, port_range_max, remote_ip_prefix, remote_group_id, created_at
-		FROM security_group_rules
-		ORDER BY created_at DESC
-	`)
+		SELECT sgr.id, sgr.security_group_id, sgr.direction, sgr.ethertype, sgr.protocol, sgr.port_range_min, sgr.port_range_max, sgr.remote_ip_prefix, sgr.remote_group_id, sgr.created_at
+		FROM security_group_rules sgr
+		JOIN security_groups sg ON sgr.security_group_id = sg.id
+		WHERE sg.project_id = $1
+		ORDER BY sgr.created_at DESC
+	`, projectID)
 
 	if err != nil {
 		log.Error().Err(err).Str("operation", "list_sg_rules").Msg("database error")
@@ -1010,10 +1014,11 @@ func (svc *Service) DeleteSecurityGroupRule(c *gin.Context) {
 		svc.sgManager.RemoveRule(sgID, rule)
 	}
 
-	// Delete from database
+	// Delete from database (with ownership check)
+	projectID := c.GetString("project_id")
 	_, err = svc.activeDB().Exec(c.Request.Context(),
-		"DELETE FROM security_group_rules WHERE id = $1",
-		ruleID,
+		"DELETE FROM security_group_rules WHERE id = $1 AND security_group_id IN (SELECT id FROM security_groups WHERE project_id = $2)",
+		ruleID, projectID,
 	)
 	if err != nil {
 		log.Error().Err(err).Str("operation", "delete_sg_rule").Str("rule_id", ruleID).Msg("database error")

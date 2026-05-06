@@ -37,10 +37,16 @@ func (svc *Service) StageImageData(c *gin.Context) {
 		return
 	}
 
-	// Read staged data (in real implementation, would save to staging area)
-	stagedData, err := io.ReadAll(c.Request.Body)
+	// Read staged data with size limit (5GB max)
+	const maxUploadSize = 5 * 1024 * 1024 * 1024
+	limitedReader := io.LimitReader(c.Request.Body, maxUploadSize+1)
+	stagedData, err := io.ReadAll(limitedReader)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "Failed to read image data"})
+		return
+	}
+	if int64(len(stagedData)) > maxUploadSize {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"message": "Image data exceeds maximum upload size"})
 		return
 	}
 

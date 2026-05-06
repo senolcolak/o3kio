@@ -40,7 +40,7 @@ func (d *Dispatcher) Dispatch(task Task) error {
 			},
 		},
 	}
-	if err := agent.Stream.Send(msg); err != nil {
+	if err := agent.SafeSend(msg); err != nil {
 		return fmt.Errorf("failed to send task to agent %s: %w", agent.NodeID, err)
 	}
 	return nil

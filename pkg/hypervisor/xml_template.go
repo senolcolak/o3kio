@@ -5,8 +5,18 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
+
+func xmlEscape(s string) string {
+	s = strings.ReplaceAll(s, "&", "&amp;")
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	s = strings.ReplaceAll(s, "'", "&apos;")
+	s = strings.ReplaceAll(s, "\"", "&quot;")
+	return s
+}
 
 // VMSpec defines VM specifications
 type VMSpec struct {
@@ -84,7 +94,7 @@ func GenerateVMXML(spec VMSpec) string {
   <devices>
     <emulator>/usr/bin/qemu-system-x86_64</emulator>
 `,
-		spec.Name, spec.UUID, spec.MemoryMB, spec.MemoryMB, spec.VCPUs))
+		xmlEscape(spec.Name), xmlEscape(spec.UUID), spec.MemoryMB, spec.MemoryMB, spec.VCPUs))
 
 	// Boot disk (RBD-backed or local)
 	if strings.HasPrefix(spec.ImagePath, "rbd:") {
@@ -101,7 +111,7 @@ func GenerateVMXML(spec VMSpec) string {
       </source>
       <target dev='vda' bus='virtio'/>
     </disk>
-`, pool, image))
+`, xmlEscape(pool), xmlEscape(image)))
 	} else {
 		// Local file
 		sb.WriteString(fmt.Sprintf(`
@@ -110,7 +120,7 @@ func GenerateVMXML(spec VMSpec) string {
       <source file='%s'/>
       <target dev='vda' bus='virtio'/>
     </disk>
-`, spec.ImagePath))
+`, xmlEscape(spec.ImagePath)))
 	}
 
 	// Attached volumes
@@ -128,7 +138,7 @@ func GenerateVMXML(spec VMSpec) string {
       </source>
       <target dev='%s' bus='virtio'/>
     </disk>
-`, vol.RBDPool, vol.RBDImage, device))
+`, xmlEscape(vol.RBDPool), xmlEscape(vol.RBDImage), xmlEscape(device)))
 	}
 
 	// Network interfaces
@@ -139,7 +149,7 @@ func GenerateVMXML(spec VMSpec) string {
       <source bridge='%s'/>
       <model type='virtio'/>
     </interface>
-`, net.MACAddress, net.BridgeName))
+`, xmlEscape(net.MACAddress), xmlEscape(net.BridgeName)))
 	}
 
 	// Serial console
@@ -245,9 +255,11 @@ func GenerateCloudInitISO(uuid string, config *CloudInitConfig) (string, error) 
 
 // DefaultCloudInitConfig returns default cloud-init configuration
 func DefaultCloudInitConfig(hostname, sshKey string) *CloudInitConfig {
+	safeHostname := sanitizeHostname(hostname)
+
 	metaData := fmt.Sprintf(`instance-id: %s
 local-hostname: %s
-`, hostname, hostname)
+`, safeHostname, safeHostname)
 
 	userData := `#cloud-config
 packages:
@@ -257,7 +269,7 @@ runcmd:
   - echo "O3K VM booted successfully" > /var/log/o3k.log
 `
 
-	if sshKey != "" {
+	if sshKey != "" && !strings.ContainsAny(sshKey, "\n\r") {
 		userData += fmt.Sprintf(`
 ssh_authorized_keys:
   - %s
@@ -268,6 +280,18 @@ ssh_authorized_keys:
 		MetaData: metaData,
 		UserData: userData,
 	}
+}
+
+var validHostnameRe = regexp.MustCompile(`[^a-zA-Z0-9\-.]`)
+
+func sanitizeHostname(h string) string {
+	h = strings.ReplaceAll(h, "\n", "")
+	h = strings.ReplaceAll(h, "\r", "")
+	h = validHostnameRe.ReplaceAllString(h, "-")
+	if len(h) > 63 {
+		h = h[:63]
+	}
+	return h
 }
 
 // DiskSpec defines disk device configuration
@@ -296,14 +320,14 @@ func GenerateDiskXML(spec DiskSpec) string {
     <host name='127.0.0.1' port='6789'/>
   </source>
   <target dev='%s' bus='virtio'/>
-</disk>`, spec.Source, device))
+</disk>`, xmlEscape(spec.Source), xmlEscape(device)))
 	} else {
 		// Local file disk
 		sb.WriteString(fmt.Sprintf(`<disk type='file' device='disk'>
   <driver name='qemu' type='qcow2' cache='writeback'/>
   <source file='%s'/>
   <target dev='%s' bus='virtio'/>
-</disk>`, spec.Source, device))
+</disk>`, xmlEscape(spec.Source), xmlEscape(device)))
 	}
 
 	return sb.String()

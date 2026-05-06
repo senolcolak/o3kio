@@ -419,11 +419,13 @@ func (svc *Service) AddRouterInterface(c *gin.Context) {
 		return
 	}
 
-	// Get subnet information
+	// Get subnet information (must belong to same project via network ownership)
 	var subnetID, networkID, cidr, gatewayIP string
 	err = svc.activeDB().QueryRow(c.Request.Context(),
-		"SELECT id, network_id, cidr, gateway_ip FROM subnets WHERE id = $1",
-		req.SubnetID,
+		`SELECT s.id, s.network_id, s.cidr, s.gateway_ip FROM subnets s
+		 JOIN networks n ON n.id = s.network_id
+		 WHERE s.id = $1 AND n.project_id = $2`,
+		req.SubnetID, projectID,
 	).Scan(&subnetID, &networkID, &cidr, &gatewayIP)
 
 	if err == pgx.ErrNoRows {

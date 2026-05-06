@@ -11,7 +11,7 @@ import (
 func TestHubTracksConnectedAgents(t *testing.T) {
 	hub := tunnel.NewHub("test-token-secret")
 
-	hub.RegisterAgent(tunnel.AgentInfo{
+	hub.RegisterAgent(&tunnel.AgentInfo{
 		NodeID:   "node-1",
 		Hostname: "worker-1",
 		TunnelIP: "10.0.0.2",
@@ -24,14 +24,14 @@ func TestHubTracksConnectedAgents(t *testing.T) {
 
 func TestHubRemovesDisconnectedAgents(t *testing.T) {
 	hub := tunnel.NewHub("test-token-secret")
-	hub.RegisterAgent(tunnel.AgentInfo{NodeID: "node-1", Hostname: "worker-1", TunnelIP: "10.0.0.2"})
+	hub.RegisterAgent(&tunnel.AgentInfo{NodeID: "node-1", Hostname: "worker-1", TunnelIP: "10.0.0.2"})
 	hub.RemoveAgent("node-1")
 	assert.Len(t, hub.ListAgents(), 0)
 }
 
 func TestHubDispatchTask(t *testing.T) {
 	hub := tunnel.NewHub("secret")
-	hub.RegisterAgent(tunnel.AgentInfo{NodeID: "node-1", Hostname: "w1", TunnelIP: "10.0.0.2"})
+	hub.RegisterAgent(&tunnel.AgentInfo{NodeID: "node-1", Hostname: "w1", TunnelIP: "10.0.0.2"})
 
 	task := tunnel.Task{
 		ID:      "task-abc",
@@ -84,7 +84,7 @@ func TestAgentClientSetTLSConfig(t *testing.T) {
 
 func TestHubInflightTracking(t *testing.T) {
 	hub := tunnel.NewHub("secret")
-	hub.RegisterAgent(tunnel.AgentInfo{NodeID: "node-1", Hostname: "w1", TunnelIP: "10.0.0.2"})
+	hub.RegisterAgent(&tunnel.AgentInfo{NodeID: "node-1", Hostname: "w1", TunnelIP: "10.0.0.2"})
 
 	assert.True(t, hub.TryAcquireInflight("node-1"))
 	assert.False(t, hub.TryAcquireInflight("node-1"))
