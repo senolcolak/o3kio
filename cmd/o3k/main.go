@@ -281,7 +281,9 @@ func runServer(args []string) {
 	log.Printf("Glance initialized in %s mode", glanceStorageMode)
 
 	// Initialize metadata service
-	metadataService := metadata.NewService("localhost:8775")
+	// testMode=true when libvirt is in stub mode (development); allows X-Instance-ID header
+	metadataTestMode := libvirtMode == "stub"
+	metadataService := metadata.NewService("localhost:8775", metadataTestMode)
 	log.Println("Metadata service initialized")
 
 	// Initialize placement service
@@ -290,7 +292,7 @@ func runServer(args []string) {
 
 	// Create HTTP servers for each service
 	servers := []*http.Server{
-		createKeystoneServer(cfg, keystoneService),
+		createKeystoneServer(cfg, keystoneService, authService),
 		createNovaServer(cfg, novaService, authService),
 		createNeutronServer(cfg, neutronService, authService),
 		createCinderServer(cfg, cinderService, authService),
@@ -406,12 +408,13 @@ func runTokenCmd(args []string) {
 	fmt.Println(hash)
 }
 
-func createKeystoneServer(cfg *common.Config, svc *keystone.Service) *http.Server {
+func createKeystoneServer(cfg *common.Config, svc *keystone.Service, authService *keystone.AuthService) *http.Server {
 	r := gin.New()
 	r.Use(middleware.ErrorHandlingMiddleware())
 	r.Use(middleware.LoggingMiddleware())
 	r.Use(middleware.RecoveryMiddleware())
 	r.Use(middleware.CORSMiddlewareWithConfig(cfg.Server.CORSAllowedOrigins))
+	r.Use(middleware.AuthMiddleware(authService))
 	r.NoRoute(middleware.NotFoundHandler())
 	r.HandleMethodNotAllowed = true
 	r.NoMethod(middleware.MethodNotAllowedHandler())
@@ -433,7 +436,7 @@ func createKeystoneServer(cfg *common.Config, svc *keystone.Service) *http.Serve
 		})
 	})
 
-	svc.RegisterRoutes(r.Group(""))
+	svc.RegisterRoutes(r.Group(""), middleware.RequireRole("admin"))
 
 	return &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.Keystone.Port),

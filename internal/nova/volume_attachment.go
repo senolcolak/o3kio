@@ -54,26 +54,27 @@ func (svc *Service) AttachVolume(c *gin.Context) {
 		return
 	}
 
-	// Verify volume exists and is available
-	var volumeStatus string
-	var attachedToInstance interface{}
-	err = svc.activeDB().QueryRow(c.Request.Context(),
-		"SELECT status, attached_to_instance_id FROM volumes WHERE id = $1 AND project_id = $2",
-		req.VolumeAttachment.VolumeID, projectID,
-	).Scan(&volumeStatus, &attachedToInstance)
+	volumeID := req.VolumeAttachment.VolumeID
 
-	if err == pgx.ErrNoRows {
-		common.SendError(c, common.NewNotFoundError("volume"))
+	// Atomically claim the volume — only succeeds if status is 'available'.
+	// This eliminates the check-then-act race: two concurrent requests cannot
+	// both pass the availability guard because exactly one UPDATE will match
+	// the WHERE clause.
+	now := time.Now()
+	tag, err := svc.activeDB().Exec(c.Request.Context(),
+		`UPDATE volumes
+		 SET status = 'in-use', attached_to_instance_id = $1, updated_at = $2
+		 WHERE id = $3 AND project_id = $4 AND status = 'available'`,
+		instanceID, now, volumeID, projectID,
+	)
+	if err != nil {
+		log.Error().Err(err).Str("operation", "atomic_claim_volume").Msg("database error")
+		common.SendError(c, common.NewInternalServerError("failed to attach volume"))
 		return
 	}
-
-	if volumeStatus != "available" {
-		common.SendError(c, common.NewBadRequestError(fmt.Sprintf("volume status is %s, must be available", volumeStatus)))
-		return
-	}
-
-	if attachedToInstance != nil {
-		common.SendError(c, common.NewBadRequestError("volume is already attached to an instance"))
+	if tag.RowsAffected() == 0 {
+		// Volume doesn't exist, belongs to another project, or is already in use.
+		common.SendError(c, common.NewConflictError("volume is not available for attachment"))
 		return
 	}
 
@@ -83,6 +84,11 @@ func (svc *Service) AttachVolume(c *gin.Context) {
 		device, err = svc.getNextAvailableDevice(c.Request.Context(), instanceID)
 		if err != nil {
 			log.Error().Err(err).Str("operation", "get_next_device").Msg("device assignment error")
+			// Roll back the atomic status change so the volume is available again.
+			svc.activeDB().Exec(c.Request.Context(),
+				"UPDATE volumes SET status = 'available', attached_to_instance_id = NULL WHERE id = $1",
+				volumeID,
+			)
 			common.SendError(c, common.NewInternalServerError("failed to assign device"))
 			return
 		}
@@ -90,31 +96,20 @@ func (svc *Service) AttachVolume(c *gin.Context) {
 
 	// Create attachment record
 	attachmentID := uuid.New().String()
-	now := time.Now()
 
 	_, err = svc.activeDB().Exec(c.Request.Context(), `
 		INSERT INTO volume_attachments (id, volume_id, instance_id, device, attached_at)
 		VALUES ($1, $2, $3, $4, $5)
-	`, attachmentID, req.VolumeAttachment.VolumeID, instanceID, device, now)
+	`, attachmentID, volumeID, instanceID, device, now)
 
 	if err != nil {
 		log.Error().Err(err).Str("operation", "create_volume_attachment").Msg("database error")
+		// Roll back the atomic status change so the volume is available again.
+		svc.activeDB().Exec(c.Request.Context(),
+			"UPDATE volumes SET status = 'available', attached_to_instance_id = NULL WHERE id = $1",
+			volumeID,
+		)
 		common.SendError(c, common.NewInternalServerError("failed to create volume attachment"))
-		return
-	}
-
-	// Update volume status
-	_, err = svc.activeDB().Exec(c.Request.Context(), `
-		UPDATE volumes
-		SET attached_to_instance_id = $1, status = $2, updated_at = $3
-		WHERE id = $4
-	`, instanceID, "in-use", now, req.VolumeAttachment.VolumeID)
-
-	if err != nil {
-		// Rollback attachment
-		svc.activeDB().Exec(c.Request.Context(), "DELETE FROM volume_attachments WHERE id = $1", attachmentID)
-		log.Error().Err(err).Str("operation", "update_volume_status").Msg("database error")
-		common.SendError(c, common.NewInternalServerError("failed to update volume status"))
 		return
 	}
 

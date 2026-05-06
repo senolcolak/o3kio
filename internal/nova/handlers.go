@@ -35,6 +35,8 @@ type Service struct {
 	wg            sync.WaitGroup
 	ctx           context.Context
 	cancel        context.CancelFunc
+	// quotaMu serialises quota check + INSERT per project to prevent TOCTOU races.
+	quotaMu sync.Map // map[projectID]*sync.Mutex
 }
 
 const (
@@ -79,6 +81,13 @@ func (svc *Service) activeDB() database.DBIF {
 		return svc.db
 	}
 	return database.DB
+}
+
+// projectQuotaMu returns (or lazily creates) the per-project mutex used to
+// serialise quota check + resource INSERT and prevent TOCTOU races.
+func (svc *Service) projectQuotaMu(projectID string) *sync.Mutex {
+	v, _ := svc.quotaMu.LoadOrStore(projectID, &sync.Mutex{})
+	return v.(*sync.Mutex)
 }
 
 // Shutdown signals all background goroutines to stop and waits for them.
@@ -312,8 +321,15 @@ func (svc *Service) CreateServer(c *gin.Context) {
 		return
 	}
 
+	// Serialise quota check + INSERT per project to prevent TOCTOU races.
+	// The mutex is held until the instance row is committed, so concurrent
+	// requests for the same project cannot both pass the quota check.
+	mu := svc.projectQuotaMu(projectID)
+	mu.Lock()
+
 	// Check quotas before creating instance
 	if err := svc.CheckQuota(c, "instances", 1); err != nil {
+		mu.Unlock()
 		if _, ok := err.(*QuotaExceededError); ok {
 			common.SendError(c, common.NewQuotaExceededError("instances"))
 			return
@@ -325,6 +341,7 @@ func (svc *Service) CreateServer(c *gin.Context) {
 
 	// Check cores quota
 	if err := svc.CheckQuota(c, "cores", flavor.VCPUs); err != nil {
+		mu.Unlock()
 		if _, ok := err.(*QuotaExceededError); ok {
 			common.SendError(c, common.NewQuotaExceededError("cores"))
 			return
@@ -336,6 +353,7 @@ func (svc *Service) CreateServer(c *gin.Context) {
 
 	// Check RAM quota
 	if err := svc.CheckQuota(c, "ram", flavor.RAMMB); err != nil {
+		mu.Unlock()
 		if _, ok := err.(*QuotaExceededError); ok {
 			common.SendError(c, common.NewQuotaExceededError("ram"))
 			return
@@ -364,6 +382,8 @@ func (svc *Service) CreateServer(c *gin.Context) {
 		INSERT INTO instances (id, name, project_id, user_id, flavor_id, image_id, status, power_state, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 	`, instanceID, req.Server.Name, projectID, userID, flavor.ID, imageID, "BUILD", 0, now, now)
+	// Release the quota lock as soon as the row is committed (or failed).
+	mu.Unlock()
 	middleware.LogDatabaseQuery(c, "INSERT instance", time.Since(queryStart), err)
 
 	if err != nil {
@@ -551,6 +571,14 @@ func (svc *Service) CreateServer(c *gin.Context) {
 		}()
 	} else {
 		logger.Debug().Msg("Stub mode: skipping libvirt VM creation")
+		// In pure stub mode, auto-transition to ACTIVE after a brief delay
+		go func() {
+			time.Sleep(100 * time.Millisecond)
+			svc.activeDB().Exec(context.Background(),
+				"UPDATE instances SET status = 'ACTIVE', power_state = 1, task_state = '', updated_at = $1 WHERE id = $2 AND status = 'BUILD'",
+				time.Now(), instanceID,
+			)
+		}()
 	}
 
 	middleware.LogOperationEnd(c, "create", "server", instanceID, time.Since(start), nil)
@@ -907,8 +935,8 @@ func (svc *Service) DeleteServer(c *gin.Context) {
 	if svc.neutronSvc != nil {
 		ctx := c.Request.Context()
 		rows, portErr := svc.activeDB().Query(ctx,
-			"SELECT id, mac_address, network_id FROM ports WHERE device_id = $1",
-			instanceID)
+			"SELECT id, mac_address, network_id FROM ports WHERE device_id = $1 AND project_id = $2",
+			instanceID, projectID)
 		if portErr == nil {
 			defer rows.Close()
 			for rows.Next() {
@@ -924,8 +952,8 @@ func (svc *Service) DeleteServer(c *gin.Context) {
 
 	// Delete orphaned ports for this instance
 	svc.activeDB().Exec(c.Request.Context(),
-		"DELETE FROM ports WHERE device_id = $1",
-		instanceID)
+		"DELETE FROM ports WHERE device_id = $1 AND project_id = $2",
+		instanceID, projectID)
 
 	// Delete from database (support lookup by ID or name)
 	queryStart = time.Now()
@@ -1667,11 +1695,11 @@ func (svc *Service) ListServices(c *gin.Context) {
 func (svc *Service) GetServerMetadata(c *gin.Context) {
 	serverID := c.Param("id")
 
-	// Check if server exists
+	// Check if server exists and belongs to this project
 	var exists bool
 	err := svc.activeDB().QueryRow(c.Request.Context(),
-		"SELECT EXISTS(SELECT 1 FROM instances WHERE id = $1)",
-		serverID,
+		"SELECT EXISTS(SELECT 1 FROM instances WHERE id = $1 AND project_id = $2)",
+		serverID, c.GetString("project_id"),
 	).Scan(&exists)
 
 	if err != nil || !exists {
@@ -1718,11 +1746,11 @@ func (svc *Service) UpdateServerMetadata(c *gin.Context) {
 		return
 	}
 
-	// Check if server exists
+	// Check if server exists and belongs to this project
 	var exists bool
 	err := svc.activeDB().QueryRow(c.Request.Context(),
-		"SELECT EXISTS(SELECT 1 FROM instances WHERE id = $1)",
-		serverID,
+		"SELECT EXISTS(SELECT 1 FROM instances WHERE id = $1 AND project_id = $2)",
+		serverID, c.GetString("project_id"),
 	).Scan(&exists)
 
 	if err != nil || !exists {

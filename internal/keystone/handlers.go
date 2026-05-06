@@ -46,93 +46,114 @@ func (svc *Service) activeDB() database.DBIF {
 	return database.DB
 }
 
-// RegisterRoutes registers Keystone routes
-func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
+// RegisterRoutes registers Keystone routes.
+// adminMiddleware is applied to all destructive/admin write operations; pass nil to skip.
+func (svc *Service) RegisterRoutes(r *gin.RouterGroup, adminMiddleware ...gin.HandlerFunc) {
 	v3 := r.Group("/v3")
 	{
-		// Version discovery
+		// Version discovery (unauthenticated — AuthMiddleware skips /v3)
 		v3.GET("", svc.GetVersion)
 
-		// Authentication
+		// Authentication (unauthenticated — AuthMiddleware skips POST /v3/auth/tokens)
 		v3.POST("/auth/tokens", svc.AuthenticateToken)
 		v3.GET("/auth/tokens", svc.ValidateToken)
 		v3.DELETE("/auth/tokens", svc.RevokeToken)
 		v3.GET("/auth/projects", svc.ListAuthProjects)
 
-		// Users
+		// Users — read (any authenticated user)
 		v3.GET("/users", svc.ListUsers)
-		v3.POST("/users", svc.CreateUser)
 		v3.GET("/users/:id", svc.GetUser)
-		v3.PATCH("/users/:id", svc.UpdateUser)
-		v3.DELETE("/users/:id", svc.DeleteUser)
 		v3.POST("/users/:id/password", svc.ChangePassword)
 		v3.GET("/users/:id/projects", svc.GetUserProjects)
 		v3.GET("/users/:id/groups", svc.GetUserGroups)
-		v3.POST("/users/:id/application_credentials", svc.CreateApplicationCredential)
 		v3.GET("/users/:id/application_credentials", svc.ListApplicationCredentials)
 		v3.GET("/users/:id/application_credentials/:cred_id", svc.GetApplicationCredential)
+		v3.POST("/users/:id/application_credentials", svc.CreateApplicationCredential)
 		v3.DELETE("/users/:id/application_credentials/:cred_id", svc.DeleteApplicationCredential)
 
-		// Projects (role assignments must come before /projects/:id to avoid conflicts)
+		// Projects — read (any authenticated user)
 		v3.GET("/projects", svc.ListProjects)
-		v3.POST("/projects", svc.CreateProject)
-		v3.PUT("/projects/:id/users/:user_id/roles/:role_id", svc.AssignRole)
-		v3.DELETE("/projects/:id/users/:user_id/roles/:role_id", svc.UnassignRole)
+		v3.GET("/projects/:id", svc.GetProject)
 		v3.GET("/projects/:id/users/:user_id/roles", svc.ListUserProjectRoles)
 		v3.GET("/projects/:id/users/:user_id/roles/:role_id", svc.CheckRoleAssignment)
-		v3.GET("/projects/:id", svc.GetProject)
-		v3.PATCH("/projects/:id", svc.UpdateProject)
-		v3.DELETE("/projects/:id", svc.DeleteProject)
 
-		// Groups
+		// Groups — read (any authenticated user)
 		v3.GET("/groups", svc.ListGroups)
-		v3.POST("/groups", svc.CreateGroup)
 		v3.GET("/groups/:id", svc.GetGroup)
-		v3.PATCH("/groups/:id", svc.UpdateGroup)
-		v3.DELETE("/groups/:id", svc.DeleteGroup)
 		v3.GET("/groups/:id/users", svc.ListGroupUsers)
-		v3.PUT("/groups/:id/users/:user_id", svc.AddUserToGroup)
-		v3.DELETE("/groups/:id/users/:user_id", svc.RemoveUserFromGroup)
 
-		// Roles
+		// Roles — read (any authenticated user)
 		v3.GET("/roles", svc.ListRoles)
-		v3.POST("/roles", svc.CreateRole)
 		v3.GET("/roles/:id", svc.GetRole)
-		v3.PATCH("/roles/:id", svc.UpdateRole)
-		v3.DELETE("/roles/:id", svc.DeleteRole)
 
-		// Role Assignments (additional endpoint)
+		// Role Assignments — read (any authenticated user)
 		v3.GET("/role_assignments", svc.ListRoleAssignments)
 
-		// Domains
+		// Domains — read (any authenticated user)
 		v3.GET("/domains", svc.ListDomains)
-		v3.POST("/domains", svc.CreateDomain)
 		v3.GET("/domains/:id", svc.GetDomain)
-		v3.PATCH("/domains/:id", svc.UpdateDomain)
-		v3.DELETE("/domains/:id", svc.DeleteDomain)
 		v3.GET("/domains/:id/config", svc.GetDomainConfig)
 
-		// Services (catalog management)
+		// Services (catalog) — read (any authenticated user)
 		v3.GET("/services", svc.ListServices)
-		v3.POST("/services", svc.CreateService)
 		v3.GET("/services/:id", svc.GetService)
-		v3.PATCH("/services/:id", svc.UpdateService)
-		v3.DELETE("/services/:id", svc.DeleteService)
 
-		// Endpoints
+		// Endpoints — read (any authenticated user)
 		v3.GET("/endpoints", svc.ListEndpoints)
-		v3.POST("/endpoints", svc.CreateEndpoint)
-		v3.DELETE("/endpoints/:id", svc.DeleteEndpoint)
 
-		// Credentials
+		// Credentials — read (any authenticated user)
 		v3.GET("/credentials", svc.ListCredentials)
-		v3.POST("/credentials", svc.CreateCredential)
 		v3.GET("/credentials/:id", svc.GetCredential)
-		v3.PATCH("/credentials/:id", svc.UpdateCredential)
-		v3.DELETE("/credentials/:id", svc.DeleteCredential)
 
-		// Application Credentials (lookup by ID without user_id)
+		// Application Credentials (lookup by ID without user_id) — read
 		v3.GET("/application_credentials/:id", svc.GetApplicationCredentialByID)
+	}
+
+	// Admin-only write operations
+	admin := r.Group("/v3", adminMiddleware...)
+	{
+		// Users — write
+		admin.POST("/users", svc.CreateUser)
+		admin.PATCH("/users/:id", svc.UpdateUser)
+		admin.DELETE("/users/:id", svc.DeleteUser)
+
+		// Projects — write
+		admin.POST("/projects", svc.CreateProject)
+		admin.PATCH("/projects/:id", svc.UpdateProject)
+		admin.DELETE("/projects/:id", svc.DeleteProject)
+		admin.PUT("/projects/:id/users/:user_id/roles/:role_id", svc.AssignRole)
+		admin.DELETE("/projects/:id/users/:user_id/roles/:role_id", svc.UnassignRole)
+
+		// Groups — write
+		admin.POST("/groups", svc.CreateGroup)
+		admin.PATCH("/groups/:id", svc.UpdateGroup)
+		admin.DELETE("/groups/:id", svc.DeleteGroup)
+		admin.PUT("/groups/:id/users/:user_id", svc.AddUserToGroup)
+		admin.DELETE("/groups/:id/users/:user_id", svc.RemoveUserFromGroup)
+
+		// Roles — write
+		admin.POST("/roles", svc.CreateRole)
+		admin.PATCH("/roles/:id", svc.UpdateRole)
+		admin.DELETE("/roles/:id", svc.DeleteRole)
+
+		// Domains — write
+		admin.POST("/domains", svc.CreateDomain)
+		admin.PATCH("/domains/:id", svc.UpdateDomain)
+		admin.DELETE("/domains/:id", svc.DeleteDomain)
+
+		// Services (catalog) — write
+		admin.POST("/services", svc.CreateService)
+		admin.PATCH("/services/:id", svc.UpdateService)
+		admin.DELETE("/services/:id", svc.DeleteService)
+
+		// Endpoints — write
+		admin.POST("/endpoints", svc.CreateEndpoint)
+		admin.DELETE("/endpoints/:id", svc.DeleteEndpoint)
+
+		// Credentials — write
+		admin.POST("/credentials", svc.CreateCredential)
+		admin.PATCH("/credentials/:id", svc.UpdateCredential)
+		admin.DELETE("/credentials/:id", svc.DeleteCredential)
 	}
 }
 

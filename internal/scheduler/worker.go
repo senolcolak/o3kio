@@ -6,6 +6,7 @@ import (
 
 	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/jackc/pgx/v5"
+	"github.com/rs/zerolog/log"
 )
 
 // Dispatcher sends a task to the agent identified by agentID and returns the
@@ -146,18 +147,30 @@ func (w *Worker) recordResult(ctx context.Context, taskID, agentID, resourceID s
 			errorText = dispatchErr.Error()
 		}
 		if retries >= maxTaskRetries {
-			w.db.Exec(ctx, `UPDATE tasks SET status='failed', error=$1, completed_at=now() WHERE id=$2`, errorText, taskID) //nolint:errcheck
-			w.db.Exec(ctx, `UPDATE instances SET status='ERROR', task_state=NULL WHERE id=$1`, resourceID)                  //nolint:errcheck
+			if _, err := w.db.Exec(ctx, `UPDATE tasks SET status='failed', error=$1, completed_at=now() WHERE id=$2`, errorText, taskID); err != nil {
+				log.Error().Err(err).Str("task_id", taskID).Msg("CRITICAL: failed to update task status to failed")
+			}
+			if _, err := w.db.Exec(ctx, `UPDATE instances SET status='ERROR', task_state=NULL WHERE id=$1`, resourceID); err != nil {
+				log.Error().Err(err).Str("resource_id", resourceID).Msg("CRITICAL: failed to update instance status to ERROR")
+			}
 		} else {
 			backoff := time.Duration((retries+1)*5) * time.Second
-			w.db.Exec(ctx, `UPDATE tasks SET status='pending', agent_id=NULL, next_retry_at=$1, error=$2, retries=retries+1 WHERE id=$3`, //nolint:errcheck
-				time.Now().Add(backoff), errorText, taskID)
+			if _, err := w.db.Exec(ctx, `UPDATE tasks SET status='pending', agent_id=NULL, next_retry_at=$1, error=$2, retries=retries+1 WHERE id=$3`,
+				time.Now().Add(backoff), errorText, taskID); err != nil {
+				log.Error().Err(err).Str("task_id", taskID).Msg("CRITICAL: failed to requeue task for retry")
+			}
 		}
 	} else {
-		w.db.Exec(ctx, `UPDATE tasks SET status='completed', completed_at=now() WHERE id=$1`, taskID)                   //nolint:errcheck
-		w.db.Exec(ctx, `UPDATE instances SET status='ACTIVE', task_state=NULL, power_state=1 WHERE id=$1`, resourceID) //nolint:errcheck
+		if _, err := w.db.Exec(ctx, `UPDATE tasks SET status='completed', completed_at=now() WHERE id=$1`, taskID); err != nil {
+			log.Error().Err(err).Str("task_id", taskID).Msg("CRITICAL: failed to mark task completed")
+		}
+		if _, err := w.db.Exec(ctx, `UPDATE instances SET status='ACTIVE', task_state=NULL, power_state=1 WHERE id=$1`, resourceID); err != nil {
+			log.Error().Err(err).Str("resource_id", resourceID).Msg("CRITICAL: failed to update instance status to ACTIVE")
+		}
 	}
 
-	w.db.Exec(ctx, `UPDATE compute_nodes SET reserved_vcpu=GREATEST(0,reserved_vcpu-$1), reserved_ram_mb=GREATEST(0,reserved_ram_mb-$2), reserved_disk_gb=GREATEST(0,reserved_disk_gb-$3) WHERE id=$4`, //nolint:errcheck
-		reqVcpu, reqRam, reqDisk, agentID)
+	if _, err := w.db.Exec(ctx, `UPDATE compute_nodes SET reserved_vcpu=GREATEST(0,reserved_vcpu-$1), reserved_ram_mb=GREATEST(0,reserved_ram_mb-$2), reserved_disk_gb=GREATEST(0,reserved_disk_gb-$3) WHERE id=$4`,
+		reqVcpu, reqRam, reqDisk, agentID); err != nil {
+		log.Error().Err(err).Str("agent_id", agentID).Msg("CRITICAL: failed to release compute node resources")
+	}
 }

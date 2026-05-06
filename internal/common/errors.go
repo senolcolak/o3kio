@@ -3,6 +3,7 @@ package common
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -144,7 +145,7 @@ func NewMissingFieldError(fields ...string) *OpenStackError {
 	if len(fields) == 1 {
 		fieldList = fields[0]
 	} else {
-		fieldList = fmt.Sprintf("%s", fields)
+		fieldList = strings.Join(fields, ", ")
 	}
 	return &OpenStackError{
 		StatusCode: http.StatusBadRequest,

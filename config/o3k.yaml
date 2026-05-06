@@ -8,7 +8,7 @@ database:
 
 keystone:
   port: 35357
-  jwt_secret: "change-me-in-production"
+  jwt_secret: "change-me-in-production"  # DEV ONLY — override via O3K_JWT_SECRET in production
   token_ttl: 24h
   admin_user: admin
   admin_password: secret

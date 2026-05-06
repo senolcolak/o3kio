@@ -1,7 +1,9 @@
 package metadata
 
 import (
+	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 
@@ -18,12 +20,14 @@ type Service struct {
 	// For testing, it runs on localhost:8775
 	bindAddr string
 	db       database.DBIF
+	testMode bool
 }
 
 // NewService creates a new metadata service
-func NewService(bindAddr string) *Service {
+func NewService(bindAddr string, testMode bool) *Service {
 	return &Service{
 		bindAddr: bindAddr,
+		testMode: testMode,
 	}
 }
 
@@ -32,6 +36,7 @@ func NewServiceWithDB(db database.DBIF, bindAddr string) *Service {
 	return &Service{
 		bindAddr: bindAddr,
 		db:       db,
+		testMode: true,
 	}
 }
 
@@ -71,21 +76,26 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 	r.GET("/", svc.ListVersions)
 }
 
-// instanceFromIP looks up instance by source IP address
-// In a real deployment, this would check which network namespace the request came from
-// For testing, we'll use a header: X-Instance-ID
+// instanceFromRequest looks up the instance for the current request.
+// In test mode, the X-Instance-ID header is accepted directly.
+// In production, the source IP is used to look up the port's device_id.
 func (svc *Service) instanceFromRequest(c *gin.Context) (string, error) {
-	// Check for test header first
-	if instanceID := c.GetHeader("X-Instance-ID"); instanceID != "" {
-		return instanceID, nil
+	if svc.testMode {
+		if instanceID := c.GetHeader("X-Instance-ID"); instanceID != "" {
+			return instanceID, nil
+		}
 	}
 
-	// In production, we would:
-	// 1. Get source IP from c.ClientIP()
-	// 2. Query ports table to find port with that IP
-	// 3. Return instance_id from port
-	// For now, return error for real deployments
-	return "", fmt.Errorf("cannot determine instance ID from request")
+	clientIP := c.ClientIP()
+	var instanceID string
+	err := svc.activeDB().QueryRow(c.Request.Context(),
+		`SELECT device_id FROM ports WHERE fixed_ips @> jsonb_build_array(jsonb_build_object('ip_address', $1::text)) LIMIT 1`,
+		clientIP,
+	).Scan(&instanceID)
+	if err != nil {
+		return "", fmt.Errorf("no instance found for IP %s", clientIP)
+	}
+	return instanceID, nil
 }
 
 // GetMetaDataJSON returns instance metadata in JSON format (OpenStack style)
@@ -128,7 +138,7 @@ func (svc *Service) GetMetaDataJSON(c *gin.Context) {
 
 	// Fetch custom metadata
 	rows, err := svc.activeDB().Query(c.Request.Context(), `
-		SELECT key, value
+		SELECT meta_key, meta_value
 		FROM instance_metadata
 		WHERE instance_id = $1
 	`, instanceID)
@@ -179,7 +189,7 @@ func (svc *Service) GetUserData(c *gin.Context) {
 
 	var userData string
 	err = svc.activeDB().QueryRow(c.Request.Context(), `
-		SELECT user_data
+		SELECT userdata
 		FROM instance_userdata
 		WHERE instance_id = $1
 	`, instanceID).Scan(&userData)
@@ -208,7 +218,7 @@ func (svc *Service) GetNetworkDataJSON(c *gin.Context) {
 
 	// Query all ports for this instance
 	rows, err := svc.activeDB().Query(c.Request.Context(), `
-		SELECT p.id, p.mac_address, p.fixed_ip, p.network_id, n.name, s.cidr, s.gateway_ip, s.dns_nameservers
+		SELECT p.id, p.mac_address, p.fixed_ips, p.network_id, n.name, s.cidr, s.gateway_ip, s.dns_nameservers
 		FROM ports p
 		JOIN networks n ON p.network_id = n.id
 		LEFT JOIN subnets s ON p.network_id = s.network_id
@@ -223,33 +233,43 @@ func (svc *Service) GetNetworkDataJSON(c *gin.Context) {
 	}
 	defer rows.Close()
 
-	var links []gin.H
-	var networks []gin.H
+	links := []gin.H{}
+	networks := []gin.H{}
 
 	linkID := 0
 	for rows.Next() {
-		var portID, mac, ip, networkID, networkName, cidr, gateway string
+		var portID, mac, networkID, networkName, cidr, gateway string
+		var fixedIPsJSON []byte
 		var dnsServers []string
 
-		if err := rows.Scan(&portID, &mac, &ip, &networkID, &networkName, &cidr, &gateway, &dnsServers); err != nil {
+		if err := rows.Scan(&portID, &mac, &fixedIPsJSON, &networkID, &networkName, &cidr, &gateway, &dnsServers); err != nil {
 			continue
+		}
+
+		// Extract IP from JSONB fixed_ips array: [{"ip_address": "...", "subnet_id": "..."}]
+		ip := ""
+		var fixedIPs []map[string]any
+		if err := json.Unmarshal(fixedIPsJSON, &fixedIPs); err == nil && len(fixedIPs) > 0 {
+			if v, ok := fixedIPs[0]["ip_address"].(string); ok {
+				ip = v
+			}
 		}
 
 		// Create link (interface)
 		links = append(links, gin.H{
-			"id":                  fmt.Sprintf("tap%d", linkID),
-			"type":                "bridge",
+			"id":                   fmt.Sprintf("tap%d", linkID),
+			"type":                 "bridge",
 			"ethernet_mac_address": mac,
-			"mtu":                 1500,
+			"mtu":                  1500,
 		})
 
 		// Create network config
 		netConfig := gin.H{
-			"id":       fmt.Sprintf("network%d", linkID),
-			"link":     fmt.Sprintf("tap%d", linkID),
-			"type":     "ipv4",
+			"id":         fmt.Sprintf("network%d", linkID),
+			"link":       fmt.Sprintf("tap%d", linkID),
+			"type":       "ipv4",
 			"ip_address": ip,
-			"netmask":  strings.Split(cidr, "/")[1], // Extract netmask from CIDR
+			"netmask":    prefixToNetmask(cidr),
 		}
 
 		if gateway != "" {
@@ -325,11 +345,18 @@ func (svc *Service) GetMetaDataKey(c *gin.Context) {
 			c.String(http.StatusNotFound, "")
 		}
 	case "local-ipv4":
-		var ip string
+		var fixedIPsJSON []byte
 		err := svc.activeDB().QueryRow(c.Request.Context(), `
-			SELECT fixed_ip FROM ports WHERE device_id = $1 LIMIT 1
-		`, instanceID).Scan(&ip)
+			SELECT fixed_ips FROM ports WHERE device_id = $1 LIMIT 1
+		`, instanceID).Scan(&fixedIPsJSON)
 		if err == nil {
+			ip := ""
+			var fixedIPs []map[string]any
+			if err := json.Unmarshal(fixedIPsJSON, &fixedIPs); err == nil && len(fixedIPs) > 0 {
+				if v, ok := fixedIPs[0]["ip_address"].(string); ok {
+					ip = v
+				}
+			}
 			c.String(http.StatusOK, ip)
 		} else {
 			c.String(http.StatusNotFound, "")
@@ -346,4 +373,15 @@ func (svc *Service) ListVersions(c *gin.Context) {
 		"openstack",
 	}
 	c.String(http.StatusOK, strings.Join(versions, "\n"))
+}
+
+// prefixToNetmask converts a CIDR string (e.g. "10.0.0.0/24") to a dotted netmask
+// (e.g. "255.255.255.0"). Returns "255.255.255.0" on parse error.
+func prefixToNetmask(cidr string) string {
+	_, ipNet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return "255.255.255.0"
+	}
+	m := ipNet.Mask
+	return fmt.Sprintf("%d.%d.%d.%d", m[0], m[1], m[2], m[3])
 }
