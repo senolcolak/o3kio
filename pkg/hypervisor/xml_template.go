@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -254,9 +255,11 @@ func GenerateCloudInitISO(uuid string, config *CloudInitConfig) (string, error) 
 
 // DefaultCloudInitConfig returns default cloud-init configuration
 func DefaultCloudInitConfig(hostname, sshKey string) *CloudInitConfig {
+	safeHostname := sanitizeHostname(hostname)
+
 	metaData := fmt.Sprintf(`instance-id: %s
 local-hostname: %s
-`, hostname, hostname)
+`, safeHostname, safeHostname)
 
 	userData := `#cloud-config
 packages:
@@ -266,7 +269,7 @@ runcmd:
   - echo "O3K VM booted successfully" > /var/log/o3k.log
 `
 
-	if sshKey != "" {
+	if sshKey != "" && !strings.ContainsAny(sshKey, "\n\r") {
 		userData += fmt.Sprintf(`
 ssh_authorized_keys:
   - %s
@@ -277,6 +280,18 @@ ssh_authorized_keys:
 		MetaData: metaData,
 		UserData: userData,
 	}
+}
+
+var validHostnameRe = regexp.MustCompile(`[^a-zA-Z0-9\-.]`)
+
+func sanitizeHostname(h string) string {
+	h = strings.ReplaceAll(h, "\n", "")
+	h = strings.ReplaceAll(h, "\r", "")
+	h = validHostnameRe.ReplaceAllString(h, "-")
+	if len(h) > 63 {
+		h = h[:63]
+	}
+	return h
 }
 
 // DiskSpec defines disk device configuration

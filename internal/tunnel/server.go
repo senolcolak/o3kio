@@ -81,10 +81,10 @@ func (h *Hub) ReleaseInflight(nodeID string) {
 }
 
 // RegisterAgent adds or updates an agent entry in the hub.
-func (h *Hub) RegisterAgent(info AgentInfo) {
+func (h *Hub) RegisterAgent(info *AgentInfo) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.agents[info.NodeID] = &info
+	h.agents[info.NodeID] = info
 }
 
 // RemoveAgent removes the agent with the given nodeID from the hub.
@@ -94,13 +94,13 @@ func (h *Hub) RemoveAgent(nodeID string) {
 	delete(h.agents, nodeID)
 }
 
-// ListAgents returns a snapshot of all currently registered agents.
-func (h *Hub) ListAgents() []AgentInfo {
+// ListAgents returns all currently registered agents.
+func (h *Hub) ListAgents() []*AgentInfo {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	out := make([]AgentInfo, 0, len(h.agents))
+	out := make([]*AgentInfo, 0, len(h.agents))
 	for _, a := range h.agents {
-		out = append(out, *a)
+		out = append(out, a)
 	}
 	return out
 }
@@ -189,7 +189,7 @@ func (h *Hub) AgentStream(stream grpc.BidiStreamingServer[pb.AgentMessage, pb.Se
 	if !h.VerifyJoin(join.GetNodeId(), join.GetTokenHash()) {
 		return fmt.Errorf("invalid join token for node %s", join.GetNodeId())
 	}
-	h.RegisterAgent(AgentInfo{
+	h.RegisterAgent(&AgentInfo{
 		NodeID:   join.GetNodeId(),
 		Hostname: join.GetHostname(),
 		TunnelIP: join.GetTunnelIp(),

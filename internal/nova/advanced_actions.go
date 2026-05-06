@@ -2,6 +2,7 @@ package nova
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"net/http"
 	"strings"
@@ -21,7 +22,8 @@ func (svc *Service) SuspendInstance(c *gin.Context) {
 	projectID := c.GetString("project_id")
 
 	// Get instance and libvirt domain ID
-	var libvirtDomainID, status string
+	var libvirtDomainID sql.NullString
+	var status string
 	var powerState int
 	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT libvirt_domain_id, status, power_state FROM instances WHERE id = $1 AND project_id = $2",
@@ -44,7 +46,7 @@ func (svc *Service) SuspendInstance(c *gin.Context) {
 		UPDATE instances
 		SET status = $1, power_state = $2, task_state = $3, updated_at = $4
 		WHERE id = $5
-	`, "SUSPENDED", 4, "", time.Now(), instanceID) // power_state 4 = SUSPENDED
+	`, "SUSPENDED", 7, "", time.Now(), instanceID) // power_state 7 = SUSPENDED (per Nova spec)
 
 	if err != nil {
 		log.Error().Err(err).Str("operation", "suspend_instance").Msg("database error")
@@ -53,14 +55,14 @@ func (svc *Service) SuspendInstance(c *gin.Context) {
 	}
 
 	// Suspend VM in libvirt (asynchronously)
-	if svc.vmManager != nil && libvirtDomainID != "" {
+	if svc.vmManager != nil && libvirtDomainID.Valid && libvirtDomainID.String != "" {
 		svc.wg.Add(1)
 		go func() {
 			defer svc.wg.Done()
 			ctx, cancel := context.WithTimeout(svc.ctx, 30*time.Second)
 			defer cancel()
 
-			if err := svc.vmManager.SuspendVM(ctx, libvirtDomainID); err != nil {
+			if err := svc.vmManager.SuspendVM(ctx, libvirtDomainID.String); err != nil {
 				// On failure, revert to ERROR state
 				dbCtx, dbCancel := context.WithTimeout(svc.ctx, 5*time.Second)
 				defer dbCancel()
@@ -80,7 +82,8 @@ func (svc *Service) ResumeInstance(c *gin.Context) {
 	projectID := c.GetString("project_id")
 
 	// Get instance and libvirt domain ID
-	var libvirtDomainID, status string
+	var libvirtDomainID sql.NullString
+	var status string
 	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT libvirt_domain_id, status FROM instances WHERE id = $1 AND project_id = $2",
 		instanceID, projectID,
@@ -111,14 +114,14 @@ func (svc *Service) ResumeInstance(c *gin.Context) {
 	}
 
 	// Resume VM in libvirt (asynchronously)
-	if svc.vmManager != nil && libvirtDomainID != "" {
+	if svc.vmManager != nil && libvirtDomainID.Valid && libvirtDomainID.String != "" {
 		svc.wg.Add(1)
 		go func() {
 			defer svc.wg.Done()
 			ctx, cancel := context.WithTimeout(svc.ctx, 30*time.Second)
 			defer cancel()
 
-			if err := svc.vmManager.ResumeVM(ctx, libvirtDomainID); err != nil {
+			if err := svc.vmManager.ResumeVM(ctx, libvirtDomainID.String); err != nil {
 				// On failure, revert to ERROR state
 				dbCtx, dbCancel := context.WithTimeout(svc.ctx, 5*time.Second)
 				defer dbCancel()
@@ -138,7 +141,8 @@ func (svc *Service) ShelveInstance(c *gin.Context) {
 	projectID := c.GetString("project_id")
 
 	// Get instance
-	var libvirtDomainID, status string
+	var libvirtDomainID sql.NullString
+	var status string
 	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT libvirt_domain_id, status FROM instances WHERE id = $1 AND project_id = $2",
 		instanceID, projectID,
@@ -184,7 +188,7 @@ func (svc *Service) ShelveInstance(c *gin.Context) {
 	}
 
 	// Stop and undefine VM in libvirt (asynchronously)
-	if svc.vmManager != nil && libvirtDomainID != "" {
+	if svc.vmManager != nil && libvirtDomainID.Valid && libvirtDomainID.String != "" {
 		svc.wg.Add(1)
 		go func() {
 			defer svc.wg.Done()
@@ -192,7 +196,7 @@ func (svc *Service) ShelveInstance(c *gin.Context) {
 			defer cancel()
 
 			// Stop VM
-			_ = svc.vmManager.StopVM(ctx, libvirtDomainID)
+			_ = svc.vmManager.StopVM(ctx, libvirtDomainID.String)
 			// In real mode, would also snapshot disk and delete instance
 		}()
 	}

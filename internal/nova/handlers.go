@@ -2,6 +2,7 @@ package nova
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -920,6 +921,11 @@ func (svc *Service) DeleteServer(c *gin.Context) {
 			}
 		}
 	}
+
+	// Delete orphaned ports for this instance
+	svc.activeDB().Exec(c.Request.Context(),
+		"DELETE FROM ports WHERE device_id = $1",
+		instanceID)
 
 	// Delete from database (support lookup by ID or name)
 	queryStart = time.Now()
@@ -1870,17 +1876,23 @@ func (svc *Service) RebuildInstanceAction(c *gin.Context, rebuildData interface{
 
 	// Return updated server details
 	var server gin.H
-	var flavorID, userID, imageID, serverName, status string
+	var flavorID, userID, serverName, status string
+	var nullImageID sql.NullString
 	var createdAt, updatedAt time.Time
 	err = svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT id, name, flavor_id, image_id, user_id, status, created_at, updated_at FROM instances WHERE id = $1 AND project_id = $2",
 		instanceID, projectID,
-	).Scan(&instanceID, &serverName, &flavorID, &imageID, &userID, &status, &createdAt, &updatedAt)
+	).Scan(&instanceID, &serverName, &flavorID, &nullImageID, &userID, &status, &createdAt, &updatedAt)
 
 	if err != nil {
 		log.Error().Err(err).Str("operation", "get_instance_after_rebuild").Msg("database error")
 		common.SendError(c, common.NewInternalServerError("failed to get instance after rebuild"))
 		return
+	}
+
+	imageResponse := gin.H{"id": ""}
+	if nullImageID.Valid {
+		imageResponse["id"] = nullImageID.String
 	}
 
 	server = gin.H{
@@ -1891,9 +1903,7 @@ func (svc *Service) RebuildInstanceAction(c *gin.Context, rebuildData interface{
 		"user_id":    userID,
 		"created":    createdAt.Format(time.RFC3339),
 		"updated":    updatedAt.Format(time.RFC3339),
-		"image": gin.H{
-			"id": imageID,
-		},
+		"image":      imageResponse,
 		"flavor": gin.H{
 			"id": flavorID,
 		},

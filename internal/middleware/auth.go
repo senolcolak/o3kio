@@ -67,7 +67,11 @@ func RequireRole(role string) gin.HandlerFunc {
 			return
 		}
 
-		roleList := roles.([]string)
+		roleList, ok := roles.([]string)
+		if !ok {
+			common.AbortWithError(c, common.NewForbiddenError("insufficient privileges"))
+			return
+		}
 		for _, r := range roleList {
 			if r == role || r == "admin" {
 				c.Next()

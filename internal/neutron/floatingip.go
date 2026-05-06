@@ -475,11 +475,19 @@ func (svc *Service) UpdateFloatingIP(c *gin.Context) {
 					fixedIP, _ = fixedIPAddr.(string)
 				}
 				if fixedIP == "" {
-					// Look up the port's actual fixed IP from the database
-					svc.activeDB().QueryRow(c.Request.Context(),
-						"SELECT ip_address FROM ports WHERE id = $1",
+					// Look up the port's actual fixed IP from the fixed_ips JSONB column
+					var fixedIPsJSON string
+					if err := svc.activeDB().QueryRow(c.Request.Context(),
+						"SELECT fixed_ips FROM ports WHERE id = $1",
 						newPortID,
-					).Scan(&fixedIP)
+					).Scan(&fixedIPsJSON); err == nil {
+						var fixedIPs []map[string]interface{}
+						if json.Unmarshal([]byte(fixedIPsJSON), &fixedIPs) == nil && len(fixedIPs) > 0 {
+							if ipAddr, ok := fixedIPs[0]["ip_address"].(string); ok {
+								fixedIP = ipAddr
+							}
+						}
+					}
 				}
 				if fixedIP == "" {
 					common.SendError(c, common.NewBadRequestError("could not determine fixed IP for port"))

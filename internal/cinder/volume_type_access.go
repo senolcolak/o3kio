@@ -22,8 +22,16 @@ func (svc *Service) VolumeTypeAction(c *gin.Context) {
 
 	// Handle addProjectAccess action
 	if addAccess, ok := req["addProjectAccess"]; ok {
-		addMap := addAccess.(map[string]interface{})
-		projectID := addMap["project"].(string)
+		addMap, ok := addAccess.(map[string]interface{})
+		if !ok {
+			common.SendError(c, common.NewBadRequestError("addProjectAccess must be an object"))
+			return
+		}
+		projectID, ok := addMap["project"].(string)
+		if !ok || projectID == "" {
+			common.SendError(c, common.NewBadRequestError("project must be a non-empty string"))
+			return
+		}
 
 		// Verify volume type exists and is private
 		var isPublic bool
@@ -61,8 +69,16 @@ func (svc *Service) VolumeTypeAction(c *gin.Context) {
 
 	// Handle removeProjectAccess action
 	if removeAccess, ok := req["removeProjectAccess"]; ok {
-		removeMap := removeAccess.(map[string]interface{})
-		projectID := removeMap["project"].(string)
+		removeMap, ok := removeAccess.(map[string]interface{})
+		if !ok {
+			common.SendError(c, common.NewBadRequestError("removeProjectAccess must be an object"))
+			return
+		}
+		projectID, ok := removeMap["project"].(string)
+		if !ok || projectID == "" {
+			common.SendError(c, common.NewBadRequestError("project must be a non-empty string"))
+			return
+		}
 
 		// Remove access
 		result, err := svc.activeDB().Exec(c.Request.Context(),

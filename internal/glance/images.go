@@ -3,6 +3,7 @@ package glance
 import (
 	"database/sql"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -262,8 +263,8 @@ func (svc *Service) ListImages(c *gin.Context) {
 	if marker := c.Query("marker"); marker != "" {
 		var markerCreatedAt time.Time
 		err := svc.activeDB().QueryRow(c.Request.Context(),
-			"SELECT created_at FROM images WHERE id = $1",
-			marker,
+			"SELECT created_at FROM images WHERE id = $1 AND (visibility = 'public' OR project_id = $2)",
+			marker, projectID,
 		).Scan(&markerCreatedAt)
 		if err == nil {
 			markerCondition = fmt.Sprintf(" AND created_at < $%d", argIdx)
@@ -342,7 +343,7 @@ func (svc *Service) GetImage(c *gin.Context) {
 
 	// Try cache first
 	if svc.cache != nil {
-		cacheKey := "image:" + imageID
+		cacheKey := "image:" + projectID + ":" + imageID
 		var cached gin.H
 		if err := svc.cache.Get(ctx, cacheKey, &cached); err == nil {
 			c.JSON(http.StatusOK, cached)
@@ -422,7 +423,7 @@ func (svc *Service) GetImage(c *gin.Context) {
 
 	// Store in cache (1h TTL per config)
 	if svc.cache != nil {
-		svc.cache.Set(ctx, "image:"+id, image, 1*time.Hour)
+		svc.cache.Set(ctx, "image:"+projectID+":"+id, image, 1*time.Hour)
 	}
 
 	c.JSON(http.StatusOK, image)
@@ -512,7 +513,7 @@ func (svc *Service) UpdateImage(c *gin.Context) {
 				continue
 			}
 			// field is now a validated column name from the allowlist
-			query := fmt.Sprintf("UPDATE images SET %s = $1, updated_at = $2 WHERE id = $3 AND (visibility != 'public' OR project_id = $4)", field)
+			query := fmt.Sprintf("UPDATE images SET %s = $1, updated_at = $2 WHERE id = $3 AND project_id = $4", field)
 			if _, err := svc.activeDB().Exec(c.Request.Context(), query, value, time.Now(), imageID, projectID); err != nil {
 				log.Error().Err(err).Str("field", field).Str("image_id", imageID).Msg("failed to update image field")
 				common.SendError(c, common.NewInternalServerError("failed to update image"))
@@ -533,7 +534,7 @@ func (svc *Service) UploadImageData(c *gin.Context) {
 	// Check if image exists and is in queued status
 	var status string
 	err := svc.activeDB().QueryRow(c.Request.Context(),
-		"SELECT status FROM images WHERE id = $1 AND (visibility = 'public' OR project_id = $2)",
+		"SELECT status FROM images WHERE id = $1 AND project_id = $2",
 		imageID, projectID,
 	).Scan(&status)
 
@@ -552,8 +553,10 @@ func (svc *Service) UploadImageData(c *gin.Context) {
 		"UPDATE images SET status = $1, updated_at = $2 WHERE id = $3",
 		"saving", time.Now(), imageID)
 
-	// Upload to storage
-	size, err := svc.imageStore.UploadImage(c.Request.Context(), imageID, c.Request.Body)
+	// Upload to storage (limit to 5GB)
+	const maxImageUpload int64 = 5 * 1024 * 1024 * 1024
+	limitedBody := io.LimitReader(c.Request.Body, maxImageUpload)
+	size, err := svc.imageStore.UploadImage(c.Request.Context(), imageID, limitedBody)
 	if err != nil {
 		svc.activeDB().Exec(c.Request.Context(),
 			"UPDATE images SET status = $1 WHERE id = $2",

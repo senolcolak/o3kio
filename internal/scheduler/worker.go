@@ -146,8 +146,8 @@ func (w *Worker) recordResult(ctx context.Context, taskID, agentID, resourceID s
 			errorText = dispatchErr.Error()
 		}
 		if retries >= maxTaskRetries {
-			w.db.Exec(ctx, `UPDATE tasks SET status='failed', error=$1, completed_at=now(), retries=retries+1 WHERE id=$2`, errorText, taskID) //nolint:errcheck
-			w.db.Exec(ctx, `UPDATE instances SET status='ERROR', task_state=NULL WHERE id=$1`, resourceID)                                     //nolint:errcheck
+			w.db.Exec(ctx, `UPDATE tasks SET status='failed', error=$1, completed_at=now() WHERE id=$2`, errorText, taskID) //nolint:errcheck
+			w.db.Exec(ctx, `UPDATE instances SET status='ERROR', task_state=NULL WHERE id=$1`, resourceID)                  //nolint:errcheck
 		} else {
 			backoff := time.Duration((retries+1)*5) * time.Second
 			w.db.Exec(ctx, `UPDATE tasks SET status='pending', agent_id=NULL, next_retry_at=$1, error=$2, retries=retries+1 WHERE id=$3`, //nolint:errcheck
