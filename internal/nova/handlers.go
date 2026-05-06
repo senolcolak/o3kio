@@ -1803,6 +1803,7 @@ func (svc *Service) UpdateServerMetadata(c *gin.Context) {
 // ResetServerMetadata replaces all server metadata (PUT /v2.1/servers/:id/metadata)
 func (svc *Service) ResetServerMetadata(c *gin.Context) {
 	serverID := c.Param("id")
+	projectID := c.GetString("project_id")
 
 	var req struct {
 		Metadata map[string]string `json:"metadata" binding:"required"`
@@ -1813,11 +1814,11 @@ func (svc *Service) ResetServerMetadata(c *gin.Context) {
 		return
 	}
 
-	// Check if server exists
+	// Check if server exists and belongs to this project
 	var exists bool
 	err := svc.activeDB().QueryRow(c.Request.Context(),
-		"SELECT EXISTS(SELECT 1 FROM instances WHERE id = $1)",
-		serverID,
+		"SELECT EXISTS(SELECT 1 FROM instances WHERE id = $1 AND project_id = $2)",
+		serverID, projectID,
 	).Scan(&exists)
 
 	if err != nil || !exists {

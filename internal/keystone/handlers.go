@@ -1207,6 +1207,23 @@ func (svc *Service) DeleteUser(c *gin.Context) {
 func (svc *Service) ChangePassword(c *gin.Context) {
 	userID := c.Param("id")
 
+	callerID := c.GetString("user_id")
+	if callerID != userID {
+		roles, _ := c.Get("roles")
+		roleList, _ := roles.([]string)
+		isAdmin := false
+		for _, r := range roleList {
+			if r == "admin" {
+				isAdmin = true
+				break
+			}
+		}
+		if !isAdmin {
+			common.SendError(c, common.NewForbiddenError("cannot change another user's password"))
+			return
+		}
+	}
+
 	var req struct {
 		User struct {
 			OriginalPassword string `json:"original_password" binding:"required"`

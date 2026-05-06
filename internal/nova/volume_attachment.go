@@ -73,8 +73,17 @@ func (svc *Service) AttachVolume(c *gin.Context) {
 		return
 	}
 	if tag.RowsAffected() == 0 {
-		// Volume doesn't exist, belongs to another project, or is already in use.
-		common.SendError(c, common.NewConflictError("volume is not available for attachment"))
+		// Distinguish: not found vs. not available
+		var volStatus string
+		checkErr := svc.activeDB().QueryRow(c.Request.Context(),
+			"SELECT status FROM volumes WHERE id = $1 AND project_id = $2",
+			volumeID, projectID,
+		).Scan(&volStatus)
+		if checkErr != nil {
+			common.SendError(c, common.NewNotFoundError("volume"))
+			return
+		}
+		common.SendError(c, common.NewBadRequestError("volume is not available for attachment (current status: "+volStatus+")"))
 		return
 	}
 

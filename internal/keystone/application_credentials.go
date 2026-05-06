@@ -16,6 +16,23 @@ import (
 func (svc *Service) ListApplicationCredentials(c *gin.Context) {
 	userID := c.Param("id")
 
+	callerID := c.GetString("user_id")
+	if callerID != userID {
+		roles, _ := c.Get("roles")
+		roleList, _ := roles.([]string)
+		isAdmin := false
+		for _, r := range roleList {
+			if r == "admin" {
+				isAdmin = true
+				break
+			}
+		}
+		if !isAdmin {
+			common.SendError(c, common.NewForbiddenError("access denied"))
+			return
+		}
+	}
+
 	rows, err := svc.activeDB().Query(c.Request.Context(), `
 		SELECT id, user_id, project_id, name, description, expires_at, unrestricted, created_at
 		FROM application_credentials
@@ -89,6 +106,23 @@ func (svc *Service) ListApplicationCredentials(c *gin.Context) {
 // CreateApplicationCredential creates a new application credential
 func (svc *Service) CreateApplicationCredential(c *gin.Context) {
 	userID := c.Param("id")
+
+	callerID := c.GetString("user_id")
+	if callerID != userID {
+		roles, _ := c.Get("roles")
+		roleList, _ := roles.([]string)
+		isAdmin := false
+		for _, r := range roleList {
+			if r == "admin" {
+				isAdmin = true
+				break
+			}
+		}
+		if !isAdmin {
+			common.SendError(c, common.NewForbiddenError("access denied"))
+			return
+		}
+	}
 
 	var req struct {
 		ApplicationCredential struct {
@@ -184,6 +218,23 @@ func (svc *Service) GetApplicationCredential(c *gin.Context) {
 	userID := c.Param("id")
 	credID := c.Param("cred_id")
 
+	callerID := c.GetString("user_id")
+	if callerID != userID {
+		roles, _ := c.Get("roles")
+		roleList, _ := roles.([]string)
+		isAdmin := false
+		for _, r := range roleList {
+			if r == "admin" {
+				isAdmin = true
+				break
+			}
+		}
+		if !isAdmin {
+			common.SendError(c, common.NewForbiddenError("access denied"))
+			return
+		}
+	}
+
 	var id, userIDVal, name string
 	var projectID, description *string
 	var expiresAt *time.Time
@@ -251,6 +302,23 @@ func (svc *Service) GetApplicationCredential(c *gin.Context) {
 func (svc *Service) DeleteApplicationCredential(c *gin.Context) {
 	userID := c.Param("id")
 	credID := c.Param("cred_id")
+
+	callerID := c.GetString("user_id")
+	if callerID != userID {
+		roles, _ := c.Get("roles")
+		roleList, _ := roles.([]string)
+		isAdmin := false
+		for _, r := range roleList {
+			if r == "admin" {
+				isAdmin = true
+				break
+			}
+		}
+		if !isAdmin {
+			common.SendError(c, common.NewForbiddenError("access denied"))
+			return
+		}
+	}
 
 	result, err := svc.activeDB().Exec(c.Request.Context(),
 		"DELETE FROM application_credentials WHERE id = $1 AND user_id = $2",

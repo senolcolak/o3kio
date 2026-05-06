@@ -325,8 +325,16 @@ func (svc *Service) resizeInstance(c *gin.Context, instanceID, projectID, flavor
 		return
 	}
 
-	// Update instance with new flavor
-	_, err = svc.activeDB().Exec(c.Request.Context(), `
+	// Update instance flavor and store old flavor atomically
+	tx, err := svc.activeDB().BeginTx(c.Request.Context(), pgx.TxOptions{})
+	if err != nil {
+		log.Error().Err(err).Str("operation", "resize_instance").Msg("failed to begin transaction")
+		common.SendError(c, common.NewInternalServerError("failed to resize instance"))
+		return
+	}
+	defer tx.Rollback(c.Request.Context())
+
+	_, err = tx.Exec(c.Request.Context(), `
 		UPDATE instances
 		SET flavor_id = $1, status = $2, task_state = $3, updated_at = $4
 		WHERE id = $5
@@ -338,14 +346,22 @@ func (svc *Service) resizeInstance(c *gin.Context, instanceID, projectID, flavor
 		return
 	}
 
-	// Store old flavor for revert
-	if _, err := svc.activeDB().Exec(c.Request.Context(),
+	_, err = tx.Exec(c.Request.Context(),
 		`INSERT INTO instance_metadata (instance_id, meta_key, meta_value)
 		 VALUES ($1, '_old_flavor_id', $2)
 		 ON CONFLICT (instance_id, meta_key) DO UPDATE SET meta_value = $2`,
 		instanceID, currentFlavorID,
-	); err != nil {
-		log.Error().Err(err).Str("operation", "store_old_flavor").Msg("failed to store old flavor id for revert")
+	)
+	if err != nil {
+		log.Error().Err(err).Str("operation", "store_old_flavor").Msg("failed to store old flavor id")
+		common.SendError(c, common.NewInternalServerError("failed to resize instance"))
+		return
+	}
+
+	if err = tx.Commit(c.Request.Context()); err != nil {
+		log.Error().Err(err).Str("operation", "resize_instance_commit").Msg("failed to commit resize")
+		common.SendError(c, common.NewInternalServerError("failed to resize instance"))
+		return
 	}
 
 	// In real mode, would rebuild VM with new flavor
@@ -391,6 +407,12 @@ func (svc *Service) ConfirmResizeInstance(c *gin.Context) {
 		common.SendError(c, common.NewInvalidStateError("instance not in resize-verify state"))
 		return
 	}
+
+	// Clean up old flavor metadata
+	svc.activeDB().Exec(c.Request.Context(),
+		"DELETE FROM instance_metadata WHERE instance_id = $1 AND meta_key = '_old_flavor_id'",
+		instanceID,
+	)
 
 	c.Status(http.StatusNoContent)
 }
