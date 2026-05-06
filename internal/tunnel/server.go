@@ -25,6 +25,14 @@ type AgentInfo struct {
 	Hostname string
 	TunnelIP string
 	Stream   grpc.BidiStreamingServer[pb.AgentMessage, pb.ServerMessage]
+	sendMu   sync.Mutex
+}
+
+// SafeSend sends a message on the agent's stream under a mutex to prevent concurrent writes.
+func (a *AgentInfo) SafeSend(msg *pb.ServerMessage) error {
+	a.sendMu.Lock()
+	defer a.sendMu.Unlock()
+	return a.Stream.Send(msg)
 }
 
 // Hub tracks connected tunnel agents and provides agent selection.

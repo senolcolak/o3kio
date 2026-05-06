@@ -255,7 +255,11 @@ func (svc *Service) CreateFloatingIP(c *gin.Context) {
 			routerID = &rID
 
 			// Configure DNAT/SNAT rules for floating IP
-			externalInterface := "qg-ext-" + rID[:7]
+			rid := rID
+			if len(rid) > 7 {
+				rid = rid[:7]
+			}
+			externalInterface := "qg-ext-" + rid
 			if err := svc.routerManager.AddFloatingIP(rID, floatingIP, *fixedIP, externalInterface); err != nil {
 				fmt.Printf("Warning: failed to configure floating IP NAT: %v\n", err)
 			}
@@ -410,7 +414,11 @@ func (svc *Service) UpdateFloatingIP(c *gin.Context) {
 
 			// Remove old NAT rules if there was a previous association
 			if currentPortID.Valid && currentFixedIP.Valid && currentRouterID.Valid {
-				externalInterface := "qg-ext-" + currentRouterID.String[:7]
+				rid := currentRouterID.String
+				if len(rid) > 7 {
+					rid = rid[:7]
+				}
+				externalInterface := "qg-ext-" + rid
 				svc.routerManager.RemoveFloatingIP(currentRouterID.String, currentFloatingIP.String, currentFixedIP.String, externalInterface)
 			}
 
@@ -465,12 +473,25 @@ func (svc *Service) UpdateFloatingIP(c *gin.Context) {
 				var fixedIP string
 				if fixedIPAddr, ok := floatingIPData["fixed_ip_address"]; ok && fixedIPAddr != nil {
 					fixedIP, _ = fixedIPAddr.(string)
-				} else {
-					fixedIP = "10.0.1.10" // Default, should parse from port
+				}
+				if fixedIP == "" {
+					// Look up the port's actual fixed IP from the database
+					svc.activeDB().QueryRow(c.Request.Context(),
+						"SELECT ip_address FROM ports WHERE id = $1",
+						newPortID,
+					).Scan(&fixedIP)
+				}
+				if fixedIP == "" {
+					common.SendError(c, common.NewBadRequestError("could not determine fixed IP for port"))
+					return
 				}
 
 				// Configure NAT rules
-				externalInterface := "qg-ext-" + routerID[:7]
+				rid := routerID
+				if len(rid) > 7 {
+					rid = rid[:7]
+				}
+				externalInterface := "qg-ext-" + rid
 				if err := svc.routerManager.AddFloatingIP(routerID, currentFloatingIP.String, fixedIP, externalInterface); err != nil {
 					log.Error().Err(err).Str("operation", "configure_nat").Msg("failed to configure NAT rules")
 					common.SendError(c, common.NewInternalServerError("failed to configure NAT"))
@@ -551,7 +572,11 @@ func (svc *Service) DeleteFloatingIP(c *gin.Context) {
 
 	// Remove NAT rules if associated
 	if portID.Valid && fixedIP.Valid && routerID.Valid {
-		externalInterface := "qg-ext-" + routerID.String[:7]
+		rid := routerID.String
+		if len(rid) > 7 {
+			rid = rid[:7]
+		}
+		externalInterface := "qg-ext-" + rid
 		if err := svc.routerManager.RemoveFloatingIP(routerID.String, floatingIP.String, fixedIP.String, externalInterface); err != nil {
 			fmt.Printf("Warning: failed to remove floating IP NAT rules: %v\n", err)
 		}

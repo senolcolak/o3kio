@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -1041,12 +1042,7 @@ func (svc *Service) ResetStateAction(c *gin.Context) {
 	}
 
 	// Update instance state (convert lowercase to uppercase)
-	statusUpper := fmt.Sprintf("%s", state)
-	if state == "error" {
-		statusUpper = "ERROR"
-	} else if state == "active" {
-		statusUpper = "ACTIVE"
-	}
+	statusUpper := strings.ToUpper(state)
 
 	_, err = svc.activeDB().Exec(c.Request.Context(), `
 		UPDATE instances

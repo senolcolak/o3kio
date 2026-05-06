@@ -111,7 +111,11 @@ func (svc *Service) CreateApplicationCredential(c *gin.Context) {
 
 	// Generate random secret
 	secretBytes := make([]byte, 32)
-	rand.Read(secretBytes)
+	if _, err := rand.Read(secretBytes); err != nil {
+		log.Error().Err(err).Msg("failed to generate random secret")
+		common.SendError(c, common.NewInternalServerError("failed to generate credential secret"))
+		return
+	}
 	secret := base64.URLEncoding.EncodeToString(secretBytes)
 
 	var projectID interface{}
@@ -139,7 +143,10 @@ func (svc *Service) CreateApplicationCredential(c *gin.Context) {
 
 	// Associate roles
 	for _, role := range req.ApplicationCredential.Roles {
-		roleID := role["id"].(string)
+		roleID, ok := role["id"].(string)
+		if !ok || roleID == "" {
+			continue
+		}
 		svc.activeDB().Exec(c.Request.Context(), `
 			INSERT INTO application_credential_roles (application_credential_id, role_id)
 			VALUES ($1, $2)

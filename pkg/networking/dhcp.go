@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"text/template"
 )
 
@@ -115,7 +116,9 @@ func (m *DHCPManager) StartDHCP(config DHCPConfig, nsName string) error {
 		return fmt.Errorf("failed to start dnsmasq for network %s: %w", config.NetworkID, err)
 	}
 
+	m.mu.Lock()
 	m.runningPIDs[config.NetworkID] = cmd.Process.Pid
+	m.mu.Unlock()
 	return nil
 }
 
@@ -145,7 +148,9 @@ func (m *DHCPManager) StopDHCP(networkID string) error {
 	_ = os.Remove(filepath.Join(m.leasePath, networkID+".leases"))
 	_ = os.Remove(filepath.Join(m.configPath, networkID+".conf"))
 
+	m.mu.Lock()
 	delete(m.runningPIDs, networkID)
+	m.mu.Unlock()
 	return nil
 }
 
@@ -220,7 +225,9 @@ func (m *DHCPManager) ReloadConfig(networkID string) error {
 
 // IsRunning checks if DHCP server is running for a network
 func (m *DHCPManager) IsRunning(networkID string) bool {
+	m.mu.Lock()
 	pid, exists := m.runningPIDs[networkID]
+	m.mu.Unlock()
 	if !exists {
 		return false
 	}
@@ -231,6 +238,6 @@ func (m *DHCPManager) IsRunning(networkID string) bool {
 		return false
 	}
 
-	err = proc.Signal(os.Signal(nil))
+	err = proc.Signal(syscall.Signal(0))
 	return err == nil
 }

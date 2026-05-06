@@ -1,6 +1,7 @@
 package neutron
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 
@@ -235,25 +236,25 @@ func (svc *Service) UpdateTrunk(c *gin.Context) {
 	argPos := 1
 
 	if name, ok := req.Trunk["name"].(string); ok {
-		updates = append(updates, "name = $"+string(rune(argPos+'0')))
+		updates = append(updates, fmt.Sprintf("name = $%d", argPos))
 		args = append(args, name)
 		argPos++
 	}
 
 	if description, ok := req.Trunk["description"].(string); ok {
-		updates = append(updates, "description = $"+string(rune(argPos+'0')))
+		updates = append(updates, fmt.Sprintf("description = $%d", argPos))
 		args = append(args, description)
 		argPos++
 	}
 
 	if adminStateUp, ok := req.Trunk["admin_state_up"].(bool); ok {
-		updates = append(updates, "admin_state_up = $"+string(rune(argPos+'0')))
+		updates = append(updates, fmt.Sprintf("admin_state_up = $%d", argPos))
 		args = append(args, adminStateUp)
 		argPos++
 	}
 
 	if len(updates) > 0 {
-		updates = append(updates, "updated_at = $"+string(rune(argPos+'0')))
+		updates = append(updates, fmt.Sprintf("updated_at = $%d", argPos))
 		args = append(args, time.Now())
 		argPos++
 
@@ -263,7 +264,7 @@ func (svc *Service) UpdateTrunk(c *gin.Context) {
 		for i := 1; i < len(updates); i++ {
 			query += ", " + updates[i]
 		}
-		query += " WHERE id = $" + string(rune(argPos+'0')) + " AND project_id = $" + string(rune(argPos+'1'))
+		query += fmt.Sprintf(" WHERE id = $%d AND project_id = $%d", argPos, argPos+1)
 
 		_, err = svc.activeDB().Exec(c.Request.Context(), query, args...)
 		if err != nil {

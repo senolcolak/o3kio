@@ -317,22 +317,18 @@ func (m *SecurityGroupManager) removeFromInterfaceStub(interfaceName, securityGr
 
 // removeFromInterfaceIPTables removes security group from interface using iptables
 func (m *SecurityGroupManager) removeFromInterfaceIPTables(interfaceName, securityGroupID string, direction string) error {
-	chainName := "O3K-SG-" + securityGroupID[:8]
+	chainName := sgChainName(securityGroupID)
 
-	var baseChain string
 	var ifaceFlag string
-
 	if direction == "ingress" {
-		baseChain = "INPUT"
 		ifaceFlag = "-i"
 	} else {
-		baseChain = "OUTPUT"
 		ifaceFlag = "-o"
 	}
 
 	ruleSpec := []string{ifaceFlag, interfaceName, "-j", chainName}
 
-	return m.ipt.Delete("filter", baseChain, ruleSpec...)
+	return m.ipt.Delete("filter", "FORWARD", ruleSpec...)
 }
 
 // removeFromInterfaceEBPF removes security group from interface using eBPF
@@ -384,7 +380,7 @@ func (m *SecurityGroupManager) buildRuleSpec(rule SecurityGroupRule) []string {
 
 // ListRules lists all rules in a security group chain
 func (m *SecurityGroupManager) ListRules(securityGroupID string) ([]string, error) {
-	chainName := "O3K-SG-" + securityGroupID[:8]
+	chainName := sgChainName(securityGroupID)
 
 	rules, err := m.ipt.List("filter", chainName)
 	if err != nil {
@@ -396,7 +392,7 @@ func (m *SecurityGroupManager) ListRules(securityGroupID string) ([]string, erro
 
 // FlushRules removes all rules from a security group chain
 func (m *SecurityGroupManager) FlushRules(securityGroupID string) error {
-	chainName := "O3K-SG-" + securityGroupID[:8]
+	chainName := sgChainName(securityGroupID)
 
 	return m.ipt.ClearChain("filter", chainName)
 }

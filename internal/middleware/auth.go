@@ -1,8 +1,6 @@
 package middleware
 
 import (
-	"strings"
-
 	"github.com/cobaltcore-dev/o3k/internal/common"
 	"github.com/cobaltcore-dev/o3k/internal/keystone"
 	"github.com/gin-gonic/gin"
@@ -11,17 +9,15 @@ import (
 // AuthMiddleware validates OpenStack tokens
 func AuthMiddleware(authService *keystone.AuthService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Skip auth for version discovery endpoints
-		if strings.HasSuffix(c.Request.URL.Path, "/v3") ||
-			strings.HasSuffix(c.Request.URL.Path, "/v2.1") ||
-			strings.HasSuffix(c.Request.URL.Path, "/v2.0") ||
-			c.Request.URL.Path == "/" {
+		path := c.Request.URL.Path
+		// Skip auth for version discovery endpoints (exact path match)
+		if path == "/v3" || path == "/v2.1" || path == "/v2.0" || path == "/" {
 			c.Next()
 			return
 		}
 
 		// Skip auth for token issuance endpoint
-		if c.Request.Method == "POST" && strings.HasSuffix(c.Request.URL.Path, "/auth/tokens") {
+		if c.Request.Method == "POST" && path == "/v3/auth/tokens" {
 			c.Next()
 			return
 		}

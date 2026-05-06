@@ -499,8 +499,11 @@ func (svc *Service) UpdateImage(c *gin.Context) {
 
 	// Apply updates (simplified - only handles replace operations)
 	for _, update := range updates {
-		op := update["op"].(string)
-		path := update["path"].(string)
+		op, ok1 := update["op"].(string)
+		path, ok2 := update["path"].(string)
+		if !ok1 || !ok2 {
+			continue
+		}
 		value := update["value"]
 
 		if op == "replace" {
@@ -510,7 +513,11 @@ func (svc *Service) UpdateImage(c *gin.Context) {
 			}
 			// field is now a validated column name from the allowlist
 			query := fmt.Sprintf("UPDATE images SET %s = $1, updated_at = $2 WHERE id = $3 AND (visibility != 'public' OR project_id = $4)", field)
-			svc.activeDB().Exec(c.Request.Context(), query, value, time.Now(), imageID, projectID)
+			if _, err := svc.activeDB().Exec(c.Request.Context(), query, value, time.Now(), imageID, projectID); err != nil {
+				log.Error().Err(err).Str("field", field).Str("image_id", imageID).Msg("failed to update image field")
+				common.SendError(c, common.NewInternalServerError("failed to update image"))
+				return
+			}
 		}
 	}
 
