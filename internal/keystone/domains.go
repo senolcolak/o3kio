@@ -1,6 +1,7 @@
 package keystone
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/cobaltcore-dev/o3k/internal/common"
@@ -164,24 +165,24 @@ func (svc *Service) UpdateDomain(c *gin.Context) {
 	argCount := 1
 
 	if name, ok := req.Domain["name"].(string); ok {
-		updates = append(updates, "name = $"+string(rune('0'+argCount)))
+		updates = append(updates, fmt.Sprintf("name = $%d", argCount))
 		args = append(args, name)
 		argCount++
 	}
 
 	if description, ok := req.Domain["description"].(string); ok {
-		updates = append(updates, "description = $"+string(rune('0'+argCount)))
+		updates = append(updates, fmt.Sprintf("description = $%d", argCount))
 		args = append(args, description)
 		argCount++
 	}
 
 	if enabled, ok := req.Domain["enabled"].(bool); ok {
-		updates = append(updates, "enabled = $"+string(rune('0'+argCount)))
+		updates = append(updates, fmt.Sprintf("enabled = $%d", argCount))
 		args = append(args, enabled)
 		argCount++
 	}
 
-	updates = append(updates, "updated_at = $"+string(rune('0'+argCount)))
+	updates = append(updates, fmt.Sprintf("updated_at = $%d", argCount))
 	args = append(args, time.Now())
 	argCount++
 
@@ -195,7 +196,7 @@ func (svc *Service) UpdateDomain(c *gin.Context) {
 			}
 			query += update
 		}
-		query += " WHERE id = $" + string(rune('0'+argCount))
+		query += fmt.Sprintf(" WHERE id = $%d", argCount)
 
 		_, err = svc.activeDB().Exec(c.Request.Context(), query, args...)
 		if err != nil {

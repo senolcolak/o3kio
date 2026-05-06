@@ -227,26 +227,37 @@ func (svc *Service) AcceptVolumeTransfer(c *gin.Context) {
 		return
 	}
 
-	// Transfer volume ownership
-	_, err = svc.activeDB().Exec(c.Request.Context(),
+	// Transfer volume ownership atomically
+	tx, err := svc.activeDB().BeginTx(c.Request.Context(), pgx.TxOptions{})
+	if err != nil {
+		log.Error().Err(err).Str("operation", "accept_transfer").Msg("failed to begin transaction")
+		common.SendError(c, common.NewInternalServerError("failed to accept transfer"))
+		return
+	}
+	defer func() { _ = tx.Rollback(c.Request.Context()) }()
+
+	_, err = tx.Exec(c.Request.Context(),
 		"UPDATE volumes SET project_id = $1 WHERE id = $2",
 		projectID, volumeID,
 	)
-
 	if err != nil {
 		log.Error().Err(err).Str("operation", "accept_transfer").Msg("failed to transfer volume ownership")
 		common.SendError(c, common.NewInternalServerError("failed to accept transfer"))
 		return
 	}
 
-	// Mark transfer as accepted
-	_, err = svc.activeDB().Exec(c.Request.Context(),
+	_, err = tx.Exec(c.Request.Context(),
 		"UPDATE volume_transfers SET accepted = true, destination_project_id = $1 WHERE id = $2",
 		projectID, transferID,
 	)
-
 	if err != nil {
 		log.Error().Err(err).Str("operation", "accept_transfer").Msg("failed to mark transfer as accepted")
+		common.SendError(c, common.NewInternalServerError("failed to accept transfer"))
+		return
+	}
+
+	if err := tx.Commit(c.Request.Context()); err != nil {
+		log.Error().Err(err).Str("operation", "accept_transfer").Msg("failed to commit transfer")
 		common.SendError(c, common.NewInternalServerError("failed to accept transfer"))
 		return
 	}

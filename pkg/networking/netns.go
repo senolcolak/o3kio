@@ -125,7 +125,8 @@ func (m *NetworkNamespaceManager) NamespaceExists(nsName string) bool {
 	log.Printf("DEBUG: Checking if namespace %s exists, output: %q", nsName, string(output))
 	namespaces := strings.Split(string(output), "\n")
 	for _, ns := range namespaces {
-		if strings.HasPrefix(ns, nsName) {
+		fields := strings.Fields(ns)
+		if len(fields) > 0 && fields[0] == nsName {
 			log.Printf("DEBUG: Namespace %s found in list", nsName)
 			return true
 		}

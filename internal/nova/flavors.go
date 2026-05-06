@@ -140,6 +140,7 @@ func (svc *Service) GetFlavorExtraSpecs(c *gin.Context) {
 			log.Warn().Err(err).Msg("failed to scan flavor extra spec row")
 			continue
 		}
+		extraSpecs[key] = value
 	}
 
 	c.JSON(http.StatusOK, gin.H{"extra_specs": extraSpecs})

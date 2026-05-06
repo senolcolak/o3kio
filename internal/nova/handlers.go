@@ -695,15 +695,26 @@ func (svc *Service) ListServersDetail(c *gin.Context) {
 
 	var servers []gin.H
 	for rows.Next() {
-		var id, name, status, projectID, userID, flavorID, imageID, flavorName string
+		var id, name, status, projectID, userID, flavorID, flavorName string
+		var imageID *string
 		var powerState, vcpus, ramMB, diskGB int
-		var createdAt, updatedAt, launchedAt time.Time
+		var createdAt, updatedAt time.Time
+		var launchedAt *time.Time
 
 		if err := rows.Scan(&id, &name, &status, &powerState, &projectID, &userID,
 			&flavorID, &imageID, &createdAt, &updatedAt, &launchedAt,
 			&vcpus, &ramMB, &diskGB, &flavorName); err != nil {
 			log.Warn().Err(err).Msg("failed to scan server detail row")
 			continue
+		}
+
+		imageIDStr := ""
+		if imageID != nil {
+			imageIDStr = *imageID
+		}
+		launchedAtStr := ""
+		if launchedAt != nil {
+			launchedAtStr = launchedAt.Format(time.RFC3339)
 		}
 
 		// Get addresses for this instance
@@ -719,14 +730,14 @@ func (svc *Service) ListServersDetail(c *gin.Context) {
 			"updated":    updatedAt.Format(time.RFC3339),
 			"addresses":  addresses,
 			"OS-EXT-STS:power_state": powerState,
-			"OS-SRV-USG:launched_at": launchedAt.Format(time.RFC3339),
+			"OS-SRV-USG:launched_at": launchedAtStr,
 			"flavor": gin.H{
 				"id":    flavorID,
 				"vcpus": vcpus,
 				"ram":   ramMB,
 				"disk":  diskGB,
 			},
-			"image": gin.H{"id": imageID},
+			"image": gin.H{"id": imageIDStr},
 		})
 	}
 

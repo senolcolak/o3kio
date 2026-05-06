@@ -98,6 +98,9 @@ func NewEmbeddedRouter() (http.Handler, func()) {
 		routers: []serviceRouter{
 			{prefix: "/v2.1", handler: novaGin},
 			{prefix: "/v2.0", handler: neutronGin},
+			{prefix: "/v3/volumes", handler: cinderGin},
+			{prefix: "/v3/snapshots", handler: cinderGin},
+			{prefix: "/v3/types", handler: cinderGin},
 			{prefix: "/images", handler: glanceGin},
 			{prefix: "/schemas", handler: glanceGin},
 			{prefix: "/tasks", handler: glanceGin},

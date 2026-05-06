@@ -18,6 +18,14 @@ type SecurityGroupManager struct {
 	stubRules  map[string][]SecurityGroupRule // For stub mode
 }
 
+func sgChainName(securityGroupID string) string {
+	id := securityGroupID
+	if len(id) > 8 {
+		id = id[:8]
+	}
+	return "O3K-SG-" + id
+}
+
 // NewSecurityGroupManager creates a new security group manager
 func NewSecurityGroupManager(mode string, ebpfObjectPath string) (*SecurityGroupManager, error) {
 	mgr := &SecurityGroupManager{
@@ -74,14 +82,14 @@ func (m *SecurityGroupManager) CreateSecurityGroupChain(securityGroupID string) 
 func (m *SecurityGroupManager) createSecurityGroupChainStub(securityGroupID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	chainName := "O3K-SG-" + securityGroupID[:8]
+	chainName := sgChainName(securityGroupID)
 	m.stubChains[chainName] = true
 	return nil
 }
 
 // createSecurityGroupChainIPTables creates an iptables chain
 func (m *SecurityGroupManager) createSecurityGroupChainIPTables(securityGroupID string) error {
-	chainName := "O3K-SG-" + securityGroupID[:8]
+	chainName := sgChainName(securityGroupID)
 
 	// Create chain in filter table
 	if err := m.ipt.NewChain("filter", chainName); err != nil {
@@ -123,7 +131,7 @@ func (m *SecurityGroupManager) DeleteSecurityGroupChain(securityGroupID string) 
 func (m *SecurityGroupManager) deleteSecurityGroupChainStub(securityGroupID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	chainName := "O3K-SG-" + securityGroupID[:8]
+	chainName := sgChainName(securityGroupID)
 	delete(m.stubChains, chainName)
 	delete(m.stubRules, chainName)
 	return nil
@@ -131,7 +139,7 @@ func (m *SecurityGroupManager) deleteSecurityGroupChainStub(securityGroupID stri
 
 // deleteSecurityGroupChainIPTables deletes an iptables chain
 func (m *SecurityGroupManager) deleteSecurityGroupChainIPTables(securityGroupID string) error {
-	chainName := "O3K-SG-" + securityGroupID[:8]
+	chainName := sgChainName(securityGroupID)
 
 	// Flush chain first
 	_ = m.ipt.ClearChain("filter", chainName)
@@ -165,14 +173,14 @@ func (m *SecurityGroupManager) AddRule(securityGroupID string, rule SecurityGrou
 func (m *SecurityGroupManager) addRuleStub(securityGroupID string, rule SecurityGroupRule) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	chainName := "O3K-SG-" + securityGroupID[:8]
+	chainName := sgChainName(securityGroupID)
 	m.stubRules[chainName] = append(m.stubRules[chainName], rule)
 	return nil
 }
 
 // addRuleIPTables adds a rule to iptables
 func (m *SecurityGroupManager) addRuleIPTables(securityGroupID string, rule SecurityGroupRule) error {
-	chainName := "O3K-SG-" + securityGroupID[:8]
+	chainName := sgChainName(securityGroupID)
 
 	// Build iptables rule
 	ruleSpec := m.buildRuleSpec(rule)
@@ -210,7 +218,7 @@ func (m *SecurityGroupManager) RemoveRule(securityGroupID string, rule SecurityG
 func (m *SecurityGroupManager) removeRuleStub(securityGroupID string, rule SecurityGroupRule) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	chainName := "O3K-SG-" + securityGroupID[:8]
+	chainName := sgChainName(securityGroupID)
 	rules := m.stubRules[chainName]
 	for i, r := range rules {
 		if r.ID == rule.ID {
@@ -223,7 +231,7 @@ func (m *SecurityGroupManager) removeRuleStub(securityGroupID string, rule Secur
 
 // removeRuleIPTables removes a rule from iptables
 func (m *SecurityGroupManager) removeRuleIPTables(securityGroupID string, rule SecurityGroupRule) error {
-	chainName := "O3K-SG-" + securityGroupID[:8]
+	chainName := sgChainName(securityGroupID)
 
 	ruleSpec := m.buildRuleSpec(rule)
 
@@ -258,23 +266,18 @@ func (m *SecurityGroupManager) applyToInterfaceStub(interfaceName, securityGroup
 
 // applyToInterfaceIPTables applies security group to interface using iptables
 func (m *SecurityGroupManager) applyToInterfaceIPTables(interfaceName, securityGroupID string, direction string) error {
-	chainName := "O3K-SG-" + securityGroupID[:8]
+	chainName := sgChainName(securityGroupID)
 
-	var baseChain string
 	var ifaceFlag string
-
 	if direction == "ingress" {
-		baseChain = "INPUT"
 		ifaceFlag = "-i"
 	} else {
-		baseChain = "OUTPUT"
 		ifaceFlag = "-o"
 	}
 
-	// Add jump rule from INPUT/OUTPUT to security group chain
 	ruleSpec := []string{ifaceFlag, interfaceName, "-j", chainName}
 
-	if err := m.ipt.AppendUnique("filter", baseChain, ruleSpec...); err != nil {
+	if err := m.ipt.AppendUnique("filter", "FORWARD", ruleSpec...); err != nil {
 		return fmt.Errorf("failed to apply security group to interface: %w", err)
 	}
 

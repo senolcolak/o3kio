@@ -8,6 +8,15 @@ import (
 	"strings"
 )
 
+func xmlEscape(s string) string {
+	s = strings.ReplaceAll(s, "&", "&amp;")
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	s = strings.ReplaceAll(s, "'", "&apos;")
+	s = strings.ReplaceAll(s, "\"", "&quot;")
+	return s
+}
+
 // VMSpec defines VM specifications
 type VMSpec struct {
 	UUID        string
@@ -84,7 +93,7 @@ func GenerateVMXML(spec VMSpec) string {
   <devices>
     <emulator>/usr/bin/qemu-system-x86_64</emulator>
 `,
-		spec.Name, spec.UUID, spec.MemoryMB, spec.MemoryMB, spec.VCPUs))
+		xmlEscape(spec.Name), xmlEscape(spec.UUID), spec.MemoryMB, spec.MemoryMB, spec.VCPUs))
 
 	// Boot disk (RBD-backed or local)
 	if strings.HasPrefix(spec.ImagePath, "rbd:") {
@@ -101,7 +110,7 @@ func GenerateVMXML(spec VMSpec) string {
       </source>
       <target dev='vda' bus='virtio'/>
     </disk>
-`, pool, image))
+`, xmlEscape(pool), xmlEscape(image)))
 	} else {
 		// Local file
 		sb.WriteString(fmt.Sprintf(`
@@ -110,7 +119,7 @@ func GenerateVMXML(spec VMSpec) string {
       <source file='%s'/>
       <target dev='vda' bus='virtio'/>
     </disk>
-`, spec.ImagePath))
+`, xmlEscape(spec.ImagePath)))
 	}
 
 	// Attached volumes
@@ -128,7 +137,7 @@ func GenerateVMXML(spec VMSpec) string {
       </source>
       <target dev='%s' bus='virtio'/>
     </disk>
-`, vol.RBDPool, vol.RBDImage, device))
+`, xmlEscape(vol.RBDPool), xmlEscape(vol.RBDImage), xmlEscape(device)))
 	}
 
 	// Network interfaces
@@ -139,7 +148,7 @@ func GenerateVMXML(spec VMSpec) string {
       <source bridge='%s'/>
       <model type='virtio'/>
     </interface>
-`, net.MACAddress, net.BridgeName))
+`, xmlEscape(net.MACAddress), xmlEscape(net.BridgeName)))
 	}
 
 	// Serial console
@@ -296,14 +305,14 @@ func GenerateDiskXML(spec DiskSpec) string {
     <host name='127.0.0.1' port='6789'/>
   </source>
   <target dev='%s' bus='virtio'/>
-</disk>`, spec.Source, device))
+</disk>`, xmlEscape(spec.Source), xmlEscape(device)))
 	} else {
 		// Local file disk
 		sb.WriteString(fmt.Sprintf(`<disk type='file' device='disk'>
   <driver name='qemu' type='qcow2' cache='writeback'/>
   <source file='%s'/>
   <target dev='%s' bus='virtio'/>
-</disk>`, spec.Source, device))
+</disk>`, xmlEscape(spec.Source), xmlEscape(device)))
 	}
 
 	return sb.String()

@@ -1,6 +1,7 @@
 package keystone
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/cobaltcore-dev/o3k/internal/common"
@@ -156,7 +157,7 @@ func (svc *Service) UpdateCredential(c *gin.Context) {
 	argCount := 1
 
 	if blob, ok := req.Credential["blob"].(string); ok {
-		updates = append(updates, "blob = $"+string(rune('0'+argCount)))
+		updates = append(updates, fmt.Sprintf("blob = $%d", argCount))
 		args = append(args, blob)
 		argCount++
 	}
@@ -166,7 +167,7 @@ func (svc *Service) UpdateCredential(c *gin.Context) {
 		return
 	}
 
-	updates = append(updates, "updated_at = $"+string(rune('0'+argCount)))
+	updates = append(updates, fmt.Sprintf("updated_at = $%d", argCount))
 	args = append(args, time.Now())
 	argCount++
 
@@ -177,7 +178,7 @@ func (svc *Service) UpdateCredential(c *gin.Context) {
 	for i := 1; i < len(updates); i++ {
 		query += ", " + updates[i]
 	}
-	query += " WHERE id = $" + string(rune('0'+argCount))
+	query += fmt.Sprintf(" WHERE id = $%d", argCount)
 
 	result, err := svc.activeDB().Exec(c.Request.Context(), query, args...)
 	if err != nil {
