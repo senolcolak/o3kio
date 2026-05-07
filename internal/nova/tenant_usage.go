@@ -2,6 +2,7 @@ package nova
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -21,6 +22,22 @@ func (svc *Service) buildServerUsages(ctx context.Context, projectID, startParam
 		LEFT JOIN flavors f ON i.flavor_id = f.id
 		WHERE i.project_id = $1`
 	args := []interface{}{projectID}
+	argIdx := 2
+
+	if startParam != "" {
+		if t, err := time.Parse("2006-01-02T15:04:05.000000", startParam); err == nil {
+			query += fmt.Sprintf(" AND i.created_at >= $%d", argIdx)
+			args = append(args, t)
+			argIdx++
+		}
+	}
+	if stopParam != "" {
+		if t, err := time.Parse("2006-01-02T15:04:05.000000", stopParam); err == nil {
+			query += fmt.Sprintf(" AND i.created_at <= $%d", argIdx)
+			args = append(args, t)
+			argIdx++
+		}
+	}
 
 	rows, err := svc.activeDB().Query(ctx, query, args...)
 	if err != nil {
@@ -77,6 +94,8 @@ func isAdminContext(c *gin.Context) bool {
 // Admins see all projects; non-admins see only their own project.
 func (svc *Service) ListTenantUsage(c *gin.Context) {
 	ctx := c.Request.Context()
+	startParam := c.Query("start")
+	stopParam := c.Query("end")
 
 	var (
 		rows pgx.Rows
@@ -136,9 +155,9 @@ func (svc *Service) ListTenantUsage(c *gin.Context) {
 			"total_vcpus_usage":     totalVCPUs,
 			"total_memory_mb_usage": totalMemoryMB,
 			"total_hours":           totalHours,
-			"start":                 time.Now().Add(-30 * 24 * time.Hour).Format("2006-01-02T15:04:05.000000"),
-			"stop":                  time.Now().Format("2006-01-02T15:04:05.000000"),
-			"server_usages":         svc.buildServerUsages(ctx, pid, "", ""),
+			"start":                 usageStart(startParam),
+			"stop":                  usageStop(stopParam),
+			"server_usages":         svc.buildServerUsages(ctx, pid, startParam, stopParam),
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -199,9 +218,25 @@ func (svc *Service) GetTenantUsage(c *gin.Context) {
 			"total_vcpus_usage":     totalVCPUs,
 			"total_memory_mb_usage": totalMemoryMB,
 			"total_hours":           totalHours,
-			"start":                 time.Now().Add(-30 * 24 * time.Hour).Format("2006-01-02T15:04:05.000000"),
-			"stop":                  time.Now().Format("2006-01-02T15:04:05.000000"),
+			"start":                 usageStart(c.Query("start")),
+			"stop":                  usageStop(c.Query("end")),
 			"server_usages":         svc.buildServerUsages(c.Request.Context(), tenantID, c.Query("start"), c.Query("end")),
 		},
 	})
+}
+
+// usageStart returns the provided param as-is when non-empty, otherwise the default 30-days-ago string.
+func usageStart(param string) string {
+	if param != "" {
+		return param
+	}
+	return time.Now().Add(-30 * 24 * time.Hour).Format("2006-01-02T15:04:05.000000")
+}
+
+// usageStop returns the provided param as-is when non-empty, otherwise the current time string.
+func usageStop(param string) string {
+	if param != "" {
+		return param
+	}
+	return time.Now().Format("2006-01-02T15:04:05.000000")
 }

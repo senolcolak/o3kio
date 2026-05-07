@@ -194,14 +194,7 @@ func (svc *Service) CreateRouter(c *gin.Context) {
 		gatewayInfoJSON, _ = json.Marshal(req.Router.ExternalGatewayInfo)
 	}
 
-	// Create router namespace
-	if err := svc.routerManager.CreateRouterNamespace(routerID); err != nil {
-		log.Error().Err(err).Str("operation", "create_router_namespace").Str("router_id", routerID).Msg("failed to create router namespace")
-		common.SendError(c, common.NewInternalServerError("failed to create router namespace"))
-		return
-	}
-
-	// Insert into database
+	// Insert into database first
 	now := time.Now()
 	_, err := svc.activeDB().Exec(c.Request.Context(), `
 		INSERT INTO routers (id, name, project_id, admin_state_up, status, external_gateway_info, distributed, ha, created_at, updated_at)
@@ -209,10 +202,14 @@ func (svc *Service) CreateRouter(c *gin.Context) {
 	`, routerID, req.Router.Name, projectID, adminStateUp, "ACTIVE", gatewayInfoJSON, distributed, ha, now, now)
 
 	if err != nil {
-		svc.routerManager.DeleteRouterNamespace(routerID) // Cleanup on error
 		log.Error().Err(err).Str("operation", "create_router").Msg("database error")
 		common.SendError(c, common.NewInternalServerError("failed to create router"))
 		return
+	}
+
+	// Create router namespace after DB insert (best effort)
+	if err := svc.routerManager.CreateRouterNamespace(routerID); err != nil {
+		log.Warn().Err(err).Str("router_id", routerID).Msg("failed to create router namespace (router record exists in DB)")
 	}
 
 	// If external gateway is configured, set it up
@@ -544,6 +541,13 @@ func (svc *Service) RemoveRouterInterface(c *gin.Context) {
 		return
 	}
 
+	// Query network_id from the port before deleting it
+	var networkID string
+	_ = svc.activeDB().QueryRow(c.Request.Context(),
+		"SELECT network_id FROM ports WHERE id = $1",
+		portID,
+	).Scan(&networkID)
+
 	// Delete the port
 	_, err = svc.activeDB().Exec(c.Request.Context(),
 		"DELETE FROM ports WHERE id = $1 AND project_id = $2",
@@ -556,8 +560,11 @@ func (svc *Service) RemoveRouterInterface(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"subnet_id": req.SubnetID,
-		"port_id":   portID,
+		"id":         routerID,
+		"subnet_id":  req.SubnetID,
+		"port_id":    portID,
+		"network_id": networkID,
+		"tenant_id":  projectID,
 	})
 }
 

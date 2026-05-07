@@ -55,6 +55,10 @@ func (e *Engine) Enforce(rule string, target, credentials map[string]interface{}
 }
 
 func (e *Engine) evaluate(node *ASTNode, target, credentials map[string]interface{}) bool {
+	return e.evaluateWithVisited(node, target, credentials, make(map[string]bool))
+}
+
+func (e *Engine) evaluateWithVisited(node *ASTNode, target, credentials map[string]interface{}, visited map[string]bool) bool {
 	switch node.Type {
 	case "role":
 		roles, ok := credentials["roles"].([]string)
@@ -79,6 +83,10 @@ func (e *Engine) evaluate(node *ASTNode, target, credentials map[string]interfac
 		return credProjectID == targetProjectID
 
 	case "rule":
+		if visited[node.Value] {
+			return false // cycle detected
+		}
+		visited[node.Value] = true
 		ruleExpr, ok := e.policies[node.Value]
 		if !ok {
 			return false
@@ -88,16 +96,16 @@ func (e *Engine) evaluate(node *ASTNode, target, credentials map[string]interfac
 		if err != nil {
 			return false
 		}
-		return e.evaluate(ast, target, credentials)
+		return e.evaluateWithVisited(ast, target, credentials, visited)
 
 	case "or":
-		return e.evaluate(node.Left, target, credentials) || e.evaluate(node.Right, target, credentials)
+		return e.evaluateWithVisited(node.Left, target, credentials, visited) || e.evaluateWithVisited(node.Right, target, credentials, visited)
 
 	case "and":
-		return e.evaluate(node.Left, target, credentials) && e.evaluate(node.Right, target, credentials)
+		return e.evaluateWithVisited(node.Left, target, credentials, visited) && e.evaluateWithVisited(node.Right, target, credentials, visited)
 
 	case "not":
-		return !e.evaluate(node.Left, target, credentials)
+		return !e.evaluateWithVisited(node.Left, target, credentials, visited)
 	}
 
 	return false

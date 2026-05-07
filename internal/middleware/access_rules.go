@@ -11,7 +11,7 @@ import (
 // EnforceAccessRules checks if the request is allowed by the app credential's access rules.
 // If no access rules are set (nil), all requests pass through.
 // Must run AFTER AuthMiddleware.
-func EnforceAccessRules() gin.HandlerFunc {
+func EnforceAccessRules(serviceName string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		rulesRaw, exists := c.Get("access_rules")
 		if !exists || rulesRaw == nil {
@@ -29,7 +29,7 @@ func EnforceAccessRules() gin.HandlerFunc {
 		requestMethod := c.Request.Method
 
 		for _, rule := range rules {
-			if matchesRule(rule, requestMethod, requestPath) {
+			if matchesRule(rule, requestMethod, requestPath, serviceName) {
 				c.Next()
 				return
 			}
@@ -46,7 +46,12 @@ func EnforceAccessRules() gin.HandlerFunc {
 }
 
 // matchesRule checks if a request matches an access rule.
-func matchesRule(rule keystone.AccessRule, method, path string) bool {
+func matchesRule(rule keystone.AccessRule, method, path, serviceName string) bool {
+	// Service must match if specified in rule
+	if rule.Service != "" && !strings.EqualFold(rule.Service, serviceName) {
+		return false
+	}
+
 	// Method must match (case-insensitive)
 	if !strings.EqualFold(rule.Method, method) {
 		return false
