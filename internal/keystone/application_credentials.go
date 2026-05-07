@@ -211,7 +211,27 @@ func (svc *Service) CreateApplicationCredential(c *gin.Context) {
 		accessRulesJSON = b
 	}
 
-	_, err = svc.activeDB().Exec(c.Request.Context(), `
+	ctx := c.Request.Context()
+
+	// Validate that caller holds each requested role
+	callerProjectID := c.GetString("project_id")
+	for _, role := range req.ApplicationCredential.Roles {
+		roleID, _ := role["id"].(string)
+		if roleID == "" {
+			continue
+		}
+		var exists bool
+		err := svc.activeDB().QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM role_assignments WHERE user_id=$1 AND project_id=$2 AND role_id=$3)`,
+			callerID, callerProjectID, roleID,
+		).Scan(&exists)
+		if err != nil || !exists {
+			common.SendError(c, common.NewForbiddenError("cannot assign role not held by caller"))
+			return
+		}
+	}
+
+	_, err = svc.activeDB().Exec(ctx, `
 		INSERT INTO application_credentials (id, user_id, project_id, name, secret_hash, description, expires_at, unrestricted, legacy_auth, updated_at, access_rules, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, false, NOW(), $9, $10)
 	`, credID, userID, projectID, req.ApplicationCredential.Name, string(secretHash), req.ApplicationCredential.Description, expiresAt, req.ApplicationCredential.Unrestricted, accessRulesJSON, now)
@@ -228,7 +248,7 @@ func (svc *Service) CreateApplicationCredential(c *gin.Context) {
 		if !ok || roleID == "" {
 			continue
 		}
-		svc.activeDB().Exec(c.Request.Context(), `
+		svc.activeDB().Exec(ctx, `
 			INSERT INTO application_credential_roles (application_credential_id, role_id)
 			VALUES ($1, $2)
 		`, credID, roleID)

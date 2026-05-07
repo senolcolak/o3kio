@@ -30,11 +30,13 @@ type AccessRule struct {
 
 // TokenClaims represents JWT token claims
 type TokenClaims struct {
-	UserID      string       `json:"user_id"`
-	UserName    string       `json:"user_name"`
-	ProjectID   string       `json:"project_id,omitempty"`
-	Roles       []string     `json:"roles,omitempty"`
-	AccessRules []AccessRule `json:"access_rules,omitempty"`
+	UserID          string       `json:"user_id"`
+	UserName        string       `json:"user_name"`
+	ProjectID       string       `json:"project_id,omitempty"`
+	Roles           []string     `json:"roles,omitempty"`
+	AccessRules     []AccessRule `json:"access_rules,omitempty"`
+	IsAppCredential bool         `json:"is_app_credential,omitempty"`
+	Unrestricted    bool         `json:"unrestricted,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -687,11 +689,13 @@ func (s *AuthService) AuthenticateApplicationCredential(ctx context.Context, req
 	now := time.Now()
 	expiresAtTime := now.Add(s.tokenTTL)
 	claims := &TokenClaims{
-		UserID:      user.ID,
-		UserName:    user.Name,
-		ProjectID:   scopeProjectID,
-		Roles:       roles,
-		AccessRules: accessRules,
+		UserID:          user.ID,
+		UserName:        user.Name,
+		ProjectID:       scopeProjectID,
+		Roles:           roles,
+		AccessRules:     accessRules,
+		IsAppCredential: true,
+		Unrestricted:    unrestricted,
 		RegisteredClaims: jwt.RegisteredClaims{
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(expiresAtTime),

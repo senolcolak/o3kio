@@ -26,16 +26,17 @@ import (
 
 // Service handles Nova API endpoints
 type Service struct {
-	db          database.DBIF
-	libvirtURI  string
-	libvirtMode string
-	vmManager   *hypervisor.VMManager
-	cache       *cache.Cache
-	neutronSvc  NeutronService // For port allocation
-	dispatcher  *tunnel.Dispatcher
-	wg          sync.WaitGroup
-	ctx         context.Context
-	cancel      context.CancelFunc
+	db             database.DBIF
+	libvirtURI     string
+	libvirtMode    string
+	NoVNCProxyHost string // Configured noVNC proxy hostname; falls back to request Host if empty
+	vmManager      *hypervisor.VMManager
+	cache          *cache.Cache
+	neutronSvc     NeutronService // For port allocation
+	dispatcher     *tunnel.Dispatcher
+	wg             sync.WaitGroup
+	ctx            context.Context
+	cancel         context.CancelFunc
 	// quotaMu serialises quota check + INSERT per project to prevent TOCTOU races.
 	quotaMu sync.Map // map[projectID]*sync.Mutex
 }
@@ -787,6 +788,13 @@ func (svc *Service) ListServersDetail(c *gin.Context) {
 			"OS-EXT-SRV-ATTR:host":                hostStr,
 			"OS-EXT-SRV-ATTR:instance_name":       fmt.Sprintf("instance-%s", id[:8]),
 			"OS-EXT-SRV-ATTR:hypervisor_hostname": hostStr,
+			"OS-EXT-SRV-ATTR:root_device_name":    "/dev/vda",
+			"OS-EXT-SRV-ATTR:launch_index":        0,
+			"security_groups":                     []gin.H{{"name": "default"}},
+			"links": []gin.H{
+				{"rel": "self", "href": fmt.Sprintf("/v2.1/servers/%s", id)},
+				{"rel": "bookmark", "href": fmt.Sprintf("/servers/%s", id)},
+			},
 			"flavor": gin.H{
 				"id":    flavorID,
 				"vcpus": vcpus,
@@ -860,6 +868,30 @@ func (svc *Service) getInstanceAddresses(ctx context.Context, instanceID, projec
 	}
 
 	return addresses
+}
+
+// getServerSecurityGroups returns the security groups attached to a server.
+// Falls back to []gin.H{{"name": "default"}} when none are found.
+func (svc *Service) getServerSecurityGroups(ctx context.Context, serverID string) []gin.H {
+	rows, err := svc.activeDB().Query(ctx, `
+		SELECT sg.name FROM security_groups sg
+		JOIN server_security_groups ssg ON sg.id = ssg.security_group_id
+		WHERE ssg.instance_id = $1`, serverID)
+	if err != nil {
+		return []gin.H{{"name": "default"}}
+	}
+	defer rows.Close()
+	var groups []gin.H
+	for rows.Next() {
+		var name string
+		if rows.Scan(&name) == nil {
+			groups = append(groups, gin.H{"name": name})
+		}
+	}
+	if len(groups) == 0 {
+		return []gin.H{{"name": "default"}}
+	}
+	return groups
 }
 
 // GetServer returns details for a single server
@@ -952,6 +984,13 @@ func (svc *Service) GetServer(c *gin.Context) {
 	}
 	if imageID != nil {
 		response["image"] = gin.H{"id": imageID}
+	}
+	response["security_groups"] = svc.getServerSecurityGroups(c.Request.Context(), id)
+	response["OS-EXT-SRV-ATTR:root_device_name"] = "/dev/vda"
+	response["OS-EXT-SRV-ATTR:launch_index"] = 0
+	response["links"] = []gin.H{
+		{"rel": "self", "href": fmt.Sprintf("/v2.1/servers/%s", id)},
+		{"rel": "bookmark", "href": fmt.Sprintf("/servers/%s", id)},
 	}
 
 	c.JSON(http.StatusOK, gin.H{"server": response})

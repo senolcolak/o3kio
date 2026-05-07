@@ -200,13 +200,15 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 // CreateVolumeRequest represents a volume creation request
 type CreateVolumeRequest struct {
 	Volume struct {
-		Name        string `json:"name"`
-		Size        int    `json:"size" binding:"required"`
-		Description string `json:"description"`
-		VolumeType  string `json:"volume_type"`
-		SnapshotID  string `json:"snapshot_id"`
-		SourceVolID string `json:"source_volid"`
-		ImageRef    string `json:"imageRef"`
+		Name             string `json:"name"`
+		Size             int    `json:"size" binding:"required"`
+		Description      string `json:"description"`
+		VolumeType       string `json:"volume_type"`
+		SnapshotID       string `json:"snapshot_id"`
+		SourceVolID      string `json:"source_volid"`
+		ImageRef         string `json:"imageRef"`
+		AvailabilityZone string `json:"availability_zone"`
+		Encrypted        bool   `json:"encrypted"`
 	} `json:"volume"`
 }
 
@@ -244,12 +246,18 @@ func (svc *Service) CreateVolume(c *gin.Context) {
 		volumeType = "__DEFAULT__"
 	}
 
+	availabilityZone := req.Volume.AvailabilityZone
+	if availabilityZone == "" {
+		availabilityZone = "nova"
+	}
+	encrypted := req.Volume.Encrypted
+
 	// Insert into database
 	now := time.Now()
 	_, err := svc.activeDB().Exec(c.Request.Context(), `
-		INSERT INTO volumes (id, name, project_id, user_id, size_gb, status, bootable, volume_type, rbd_pool, rbd_image, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-	`, volumeID, req.Volume.Name, projectID, userID, req.Volume.Size, "creating", false, volumeType, svc.cephPool, "volume-"+volumeID, now, now)
+		INSERT INTO volumes (id, name, project_id, user_id, size_gb, status, bootable, volume_type, rbd_pool, rbd_image, availability_zone, encrypted, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+	`, volumeID, req.Volume.Name, projectID, userID, req.Volume.Size, "creating", false, volumeType, svc.cephPool, "volume-"+volumeID, availabilityZone, encrypted, now, now)
 
 	if err != nil {
 		// Rollback: delete from Ceph
@@ -285,8 +293,8 @@ func (svc *Service) CreateVolume(c *gin.Context) {
 			"status":            "creating",
 			"bootable":          "false",
 			"volume_type":       volumeType,
-			"encrypted":         false,
-			"availability_zone": "nova",
+			"encrypted":         encrypted,
+			"availability_zone": availabilityZone,
 			"created_at":        now.Format("2006-01-02T15:04:05.000000"),
 			"updated_at":        now.Format("2006-01-02T15:04:05.000000"),
 			"metadata":          gin.H{},
@@ -340,7 +348,7 @@ func (svc *Service) ListVolumes(c *gin.Context) {
 	queryArgs = append(queryArgs, limit, offset)
 
 	rows, err := svc.activeDB().Query(c.Request.Context(), fmt.Sprintf(`
-		SELECT id, name, size_gb, status, bootable
+		SELECT id, name, size_gb, status, bootable, COALESCE(availability_zone, 'nova')
 		FROM volumes
 		WHERE project_id = $1%s
 		ORDER BY created_at DESC
@@ -356,11 +364,11 @@ func (svc *Service) ListVolumes(c *gin.Context) {
 
 	var volumes []gin.H
 	for rows.Next() {
-		var id, name, status string
+		var id, name, status, availabilityZone string
 		var size int
 		var bootable bool
 
-		if err := rows.Scan(&id, &name, &size, &status, &bootable); err != nil {
+		if err := rows.Scan(&id, &name, &size, &status, &bootable, &availabilityZone); err != nil {
 			log.Warn().Err(err).Msg("failed to scan volume row")
 			continue
 		}
@@ -371,7 +379,7 @@ func (svc *Service) ListVolumes(c *gin.Context) {
 			"size":              size,
 			"status":            status,
 			"bootable":          fmt.Sprintf("%t", bootable),
-			"availability_zone": "nova",
+			"availability_zone": availabilityZone,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -432,7 +440,7 @@ func (svc *Service) ListVolumesDetail(c *gin.Context) {
 	queryArgs = append(queryArgs, limit, offset)
 
 	rows, err := svc.activeDB().Query(c.Request.Context(), fmt.Sprintf(`
-		SELECT v.id, v.name, v.size_gb, v.status, v.bootable, v.attached_to_instance_id, v.created_at, v.updated_at, COALESCE(v.volume_type, '__DEFAULT__')
+		SELECT v.id, v.name, v.size_gb, v.status, v.bootable, v.attached_to_instance_id, v.created_at, v.updated_at, COALESCE(v.volume_type, '__DEFAULT__'), COALESCE(v.availability_zone, 'nova'), COALESCE(v.encrypted, false)
 		FROM volumes v
 		WHERE v.project_id = $1%s
 		ORDER BY v.created_at DESC
@@ -448,14 +456,13 @@ func (svc *Service) ListVolumesDetail(c *gin.Context) {
 
 	var volumes []gin.H
 	for rows.Next() {
-		var id, name, status string
+		var id, name, status, volumeType, availabilityZone string
 		var size int
-		var bootable bool
+		var bootable, encrypted bool
 		var attachedTo sql.NullString
 		var createdAt, updatedAt time.Time
-		var volumeType string
 
-		if err := rows.Scan(&id, &name, &size, &status, &bootable, &attachedTo, &createdAt, &updatedAt, &volumeType); err != nil {
+		if err := rows.Scan(&id, &name, &size, &status, &bootable, &attachedTo, &createdAt, &updatedAt, &volumeType, &availabilityZone, &encrypted); err != nil {
 			log.Warn().Err(err).Msg("failed to scan volume detail row")
 			continue
 		}
@@ -475,9 +482,9 @@ func (svc *Service) ListVolumesDetail(c *gin.Context) {
 			"size":              size,
 			"status":            status,
 			"bootable":          fmt.Sprintf("%t", bootable),
-			"availability_zone": "nova",
+			"availability_zone": availabilityZone,
 			"volume_type":       volumeType,
-			"encrypted":         false,
+			"encrypted":         encrypted,
 			"created_at":        createdAt.Format("2006-01-02T15:04:05.000000"),
 			"updated_at":        updatedAt.Format("2006-01-02T15:04:05.000000"),
 			"attachments":       attachments,
@@ -505,19 +512,18 @@ func (svc *Service) GetVolume(c *gin.Context) {
 		projectID = c.GetString("project_id")
 	}
 
-	var id, name, status string
+	var id, name, status, volumeType, availabilityZone string
 	var size int
-	var bootable bool
+	var bootable, encrypted bool
 	var attachedTo sql.NullString
 	var createdAt, updatedAt time.Time
-	var volumeType string
 
 	// Support lookup by ID or name
 	err := svc.activeDB().QueryRow(c.Request.Context(), `
-		SELECT id, name, size_gb, status, bootable, attached_to_instance_id, created_at, updated_at, COALESCE(volume_type, '__DEFAULT__')
+		SELECT id, name, size_gb, status, bootable, attached_to_instance_id, created_at, updated_at, COALESCE(volume_type, '__DEFAULT__'), COALESCE(availability_zone, 'nova'), COALESCE(encrypted, false)
 		FROM volumes
 		WHERE project_id = $2 AND ((id::text = $1) OR (name = $1))
-	`, volumeID, projectID).Scan(&id, &name, &size, &status, &bootable, &attachedTo, &createdAt, &updatedAt, &volumeType)
+	`, volumeID, projectID).Scan(&id, &name, &size, &status, &bootable, &attachedTo, &createdAt, &updatedAt, &volumeType, &availabilityZone, &encrypted)
 
 	if err == pgx.ErrNoRows {
 		common.SendError(c, common.NewNotFoundError("volume"))
@@ -545,9 +551,9 @@ func (svc *Service) GetVolume(c *gin.Context) {
 			"size":              size,
 			"status":            status,
 			"bootable":          fmt.Sprintf("%t", bootable),
-			"availability_zone": "nova",
+			"availability_zone": availabilityZone,
 			"volume_type":       volumeType,
-			"encrypted":         false,
+			"encrypted":         encrypted,
 			"created_at":        createdAt.Format("2006-01-02T15:04:05.000000"),
 			"updated_at":        updatedAt.Format("2006-01-02T15:04:05.000000"),
 			"attachments":       attachments,
@@ -1427,12 +1433,13 @@ func (svc *Service) UpdateVolume(c *gin.Context) {
 	var status string
 	var bootable bool
 	var attachedTo sql.NullString
-	var existingVolumeType string
+	var existingVolumeType, existingAZ string
+	var existingEncrypted bool
 	var createdAt, updatedAt time.Time
 	err := svc.activeDB().QueryRow(c.Request.Context(),
-		"SELECT name, COALESCE(description, ''), size_gb, status, bootable, attached_to_instance_id, COALESCE(volume_type, '__DEFAULT__'), created_at, updated_at FROM volumes WHERE id = $1 AND project_id = $2",
+		"SELECT name, COALESCE(description, ''), size_gb, status, bootable, attached_to_instance_id, COALESCE(volume_type, '__DEFAULT__'), created_at, updated_at, COALESCE(availability_zone, 'nova'), COALESCE(encrypted, false) FROM volumes WHERE id = $1 AND project_id = $2",
 		volumeID, projectID,
-	).Scan(&currentName, &currentDesc, &sizeGB, &status, &bootable, &attachedTo, &existingVolumeType, &createdAt, &updatedAt)
+	).Scan(&currentName, &currentDesc, &sizeGB, &status, &bootable, &attachedTo, &existingVolumeType, &createdAt, &updatedAt, &existingAZ, &existingEncrypted)
 
 	if err == pgx.ErrNoRows {
 		common.SendError(c, common.NewNotFoundError("volume"))
@@ -1480,9 +1487,9 @@ func (svc *Service) UpdateVolume(c *gin.Context) {
 			"size":              sizeGB,
 			"status":            status,
 			"bootable":          fmt.Sprintf("%t", bootable),
-			"availability_zone": "nova",
+			"availability_zone": existingAZ,
 			"volume_type":       existingVolumeType,
-			"encrypted":         false,
+			"encrypted":         existingEncrypted,
 			"attachments":       attachments,
 			"metadata":          gin.H{},
 			"created_at":        createdAt.Format("2006-01-02T15:04:05.000000"),

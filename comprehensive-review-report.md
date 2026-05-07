@@ -1,130 +1,97 @@
-# O3K Production Readiness Assessment — v6 (Post v5-Fix Deep Audit)
+# O3K Production Readiness Assessment — v7 (Post C1+C2+C3 Spec Features)
 
 **Date**: 2026-05-07
 **Review Method**: 5 per-package deep-read agents, spec-grounded analysis
-**Branch**: `fix/v5-critical-high-findings` (commit `34e7172`)
-**Previous Score (v5)**: 6.5/10
-**Current Score**: **7.5/10**
+**Branch**: `main` (commit `bce4fd6`)
+**Previous Score (v6)**: 7.5/10
+**Current Score**: **8.0/10**
 
 ---
 
 ## Executive Summary
 
-The v5 fix pass resolved all 22 CRITICAL+HIGH findings from the previous review. Key improvements: nested quota format works, server_usages populated, floating IP allocation transactional, marker-based pagination on all Neutron endpoints, OS-EXT-SRV-ATTR present, AuthMiddleware on compat server, microversion major version validated.
+The three spec features (C1 access rules, C2 legacy_auth, C3 policy engine) are now implemented. Legacy auth works correctly with timing-safe comparison and transparent upgrade. The policy engine parses and evaluates rules with caching. Access rules are stored in JWT and enforced by middleware.
 
-However, this deep audit reveals **6 new CRITICALs, 16 HIGHs, 22 MEDIUMs, and 23 LOWs** across all five services. The gaps fall into three categories:
+However, this deep audit reveals **2 CRITICALs, 14 HIGHs, 14 MEDIUMs, and 22 LOWs**. The issues fall into four categories:
 
-1. **Spec features never implemented**: Access rules, policy engine, legacy_auth backward compat, audit logging (keystone-minimal-iam-design-v2 Week 2 entirely absent)
-2. **Response shape gaps**: Create/Update responses missing fields that Get/List include; Cinder and Glance responses missing mandatory OpenStack API fields
-3. **Operational safety**: Empty JWT secret accepted, unscoped tokens not rejected, console URLs hardcoded to localhost, global table locks
+1. **Spec features implemented but with correctness gaps**: unrestricted flag bypass (auth_method not in JWT), access rule `service` field ignored, policy engine operator precedence wrong, no cycle detection
+2. **Response shape gaps**: Nova missing security_groups/links arrays, Cinder Create/Update responses diverge from Get
+3. **Hardcoded values**: availability_zone, encrypted, console URLs, hypervisor stats
+4. **Operational safety**: empty JWT secret accepted, role escalation via app credentials, cache key mismatch in Glance
 
-**What works for Terraform**: Basic CRUD for VMs, networks, volumes, security groups, app credentials, floating IPs, routers
-**What breaks for Horizon**: Console (localhost URLs), volume create/update (missing fields), image owner display, SG default rules, usage tab (wrong flavor name), quota defaults (wrong format)
-**What's missing from spec**: Access rules, policy engine, legacy_auth migration, audit events, unrestricted enforcement
+**Score improvement from v6**: +0.5 (C1+C2+C3 implemented; but correctness gaps in those implementations prevent full credit)
 
 ---
 
 ## Score Justification
 
 ```
-v5 assessment:                    6.5/10
-After v5 fix pass (this review):  7.5/10
-Next target (fix CRITICALs+HIGHs): 8.5/10
+v6 assessment:                    7.5/10
+After C1+C2+C3 (this review):    8.0/10
+Next target (fix CRITICALs+HIGHs): 8.8/10
 Full spec compliance target:       9.5/10
 ```
 
-**Why 7.5 not 8.5**: The v5 fixes correctly resolved the issues they targeted (C1-C8, H1-H14 from v5 confirmed fixed). But deeper reading reveals a second layer of issues: Create/Update responses that are incomplete compared to their corresponding Get responses (Cinder, Neutron SG), operational concerns (localhost console URLs, empty JWT), and three entire spec features that were never implemented (access rules, policy engine, legacy_auth). The codebase has improved substantially in correctness but still has gaps that would break Horizon workflows.
+**Why 8.0 not 8.5**: The three spec features exist but have correctness issues:
+- Access rules: service field silently ignored (weaker isolation than intended)
+- Policy engine: and/or have equal precedence (breaks policies copied from real OpenStack)
+- unrestricted: enforcement only works on same HTTP request (bypass via follow-up requests)
+- Audit logging: still completely absent
+
+The previous v6 CRITICALs (C1 access rules, C2 legacy_auth, C3 policy engine) are no longer "not implemented" — they ARE implemented. But they have implementation bugs that reduce their security value.
 
 ---
 
 ## Findings by Severity
 
-### CRITICAL (6) — Production blockers
+### CRITICAL (2) — Security/Correctness Blockers
 
 | # | Package | Finding | Impact |
 |---|---------|---------|--------|
-| C1 | keystone | Access rules column and enforcement absent | App credentials have no fine-grained restrictions |
-| C2 | keystone | legacy_auth flag missing — pre-migration credentials silently broken | All pre-existing app credentials fail bcrypt verification |
-| C3 | keystone | Policy engine not implemented (spec Week 2 entirely absent) | No resource-level authorization beyond admin/non-admin |
-| C4 | cinder | CreateVolume response missing volume_type, encrypted, availability_zone | Horizon volume create wizard broken |
-| C5 | cinder | UpdateVolume response missing tenant_id, bootable, AZ, volume_type, encrypted, attachments | Horizon volume update UI broken |
-| C6 | neutron | Bridge creation before DB insert — no rollback on failure | Leaked network bridges on host |
+| C1 | keystone | unrestricted flag bypass — auth_method not carried in JWT, check only works on same request | Restricted app credentials can create new credentials on subsequent requests |
+| C2 | glance | Cache key mismatch — GetImage uses project-scoped key, DeleteImage invalidates unscoped key | Deleted images served from cache for up to 1 hour |
 
-### HIGH (16)
+### HIGH (14)
 
 | # | Package | Finding | Impact |
 |---|---------|---------|--------|
-| H1 | keystone | unrestricted flag stored but never enforced | Any app cred can create nested creds |
-| H2 | keystone | defer roleRows.Close() inside loop — resource leak | Connection pool exhaustion |
-| H3 | keystone | rows.Err() silently skipped in role subquery | Partial roles in response |
-| H4 | keystone | AuthenticateApplicationCredential methods field trusts client input | Token methods forgeable |
-| H5 | nova | GetServer does not query launched_at from DB | Wrong uptime display |
-| H6 | nova | buildServerUsages sets flavor to instance name, not flavor name | Usage tab wrong |
-| H7 | nova | Console URLs hardcoded to localhost:6080 | Console broken in Docker/multi-host |
-| H8 | nova | GetQuotaSetDefaults returns flat values (not nested) | API format inconsistency |
-| H9 | nova | snapshotCount never queried — always zero | Quota display wrong |
-| H10 | neutron | Pagination marker is lexicographic on UUID — non-deterministic | Pages skip/duplicate items |
-| H11 | neutron | provider:network_type always returns "flat" regardless of DB | VXLAN networks display wrong |
-| H12 | neutron | allocateIPFromSubnet locks ALL ports table globally | Performance cliff |
-| H13 | neutron | CreateSecurityGroup returns empty rules (no default egress) | SG panel empty, traffic blocked |
-| H14 | neutron | getSecurityGroupRules omits absent fields instead of null | Horizon JS errors |
-| H15 | cinder | volume_type and availability_zone hardcoded, never read from DB | Stale after retype |
-| H16 | glance | ListImages and GetImage omit owner field | Horizon image panel broken |
+| H1 | keystone | Access rule `service` field silently ignored | Cross-service access not prevented |
+| H2 | keystone | Policy engine infinite recursion on circular rule references | Server panic on malformed policies |
+| H3 | keystone | App credential roles not validated against caller's roles | Privilege escalation |
+| H4 | nova | Console URL uses request Host, not configured proxy | Console broken in multi-host |
+| H5 | nova | Tenant usage ignores start/end params | Billing/usage reports wrong |
+| H6 | nova | Server responses missing security_groups array | Horizon SG tab empty, Terraform drift |
+| H7 | nova | Missing OS-EXT-SRV-ATTR:root_device_name, launch_index | Horizon extended info blank |
+| H8 | nova | GetServer/ListServersDetail missing links array | Terraform canonical URL resolution fails |
+| H9 | neutron | N+1 query in ListPorts (per-port SG query) | Performance cliff on large port lists |
+| H10 | neutron | RemoveRouterInterface response missing required fields | gophercloud/Terraform state mismatch |
+| H11 | neutron | CreateRouter namespace before DB insert, cleanup silently fails | Orphaned namespaces on failure |
+| H12 | cinder | availability_zone hardcoded "nova" (FR-012) | Multi-AZ deployments broken |
+| H13 | cinder | encrypted hardcoded false (FR-012) | Encrypted volumes report as unencrypted |
+| H14 | middleware | Empty JWT secret accepted in production | Auth bypass if secret left blank |
 
-### MEDIUM (22)
+### MEDIUM (14)
 
 | # | Package | Finding |
 |---|---------|---------|
-| M1 | keystone | IsTokenRevoked uses context.Background() — no timeout |
-| M2 | keystone | CreateApplicationCredential role IDs not validated against user's roles |
-| M3 | keystone | Audit logging absent (no keystone_auth_events table) |
-| M4 | keystone | handlers_test.go — single trivial test, no auth flow coverage |
-| M5 | keystone | GetDomain maps all DB errors to 404 |
-| M6 | nova | ListFlavorsDetail marker pagination timestamp collision |
-| M7 | nova | GetServer response missing links array |
-| M8 | nova | UpdateServer sets user_id = projectID (data corruption) |
-| M9 | nova | Microversion middleware missing Vary on OpenStack-API-Version |
-| M10 | nova | CheckQuota ignores errors from usage queries |
-| M11 | nova | buildServerUsages ignores start/stop time range params |
-| M12 | nova | GetServer missing security_groups array |
-| M13 | neutron | AddRouterInterface not atomic — port+router_interface can partially succeed |
-| M14 | neutron | ListPorts N+1 query for security groups |
-| M15 | neutron | ListSubnets returns caller's project_id as tenant_id for shared subnets |
-| M16 | neutron | RemoveRouterInterface response missing network_id, tenant_id |
-| M17 | neutron | allocateFloatingIP commits TX then inserts outside TX — race window |
-| M18 | neutron | GetSubnet returns caller's project_id as tenant_id |
-| M19 | neutron | UpdateSecurityGroup response omits created_at, updated_at |
-| M20 | neutron | DeleteSecurityGroup doesn't check if group still in use |
-| M21 | glance | GetImage cache invalidation uses wrong key format |
-| M22 | common | Empty JWT secret accepted (only "change-me-in-production" checked) |
+| M1 | keystone | Policy parser: and/or equal precedence (breaks standard boolean logic) |
+| M2 | keystone | Tokenizer silently drops unrecognized tokens |
+| M3 | keystone | Cache key non-deterministic for nested maps |
+| M4 | nova | ListServersDetail ORDER BY missing id tiebreaker |
+| M5 | nova | Hypervisor statistics hardcoded constants |
+| M6 | nova | ForceDeleteInstanceAction bypasses policy engine |
+| M7 | nova | UpdateServer returns user_id = projectID (wrong field) |
+| M8 | neutron | allocateFloatingIP commits before row insert (TOCTOU) |
+| M9 | neutron | DeleteNetwork deletes bridge before DB row |
+| M10 | neutron | CreateSecurityGroup default rule insert errors discarded |
+| M11 | neutron | ListSecurityGroupRules no pagination |
+| M12 | cinder | Pagination uses non-unique created_at (no id tiebreaker) |
+| M13 | glance | protected field hardcoded false, not persisted |
+| M14 | middleware | RequireProjectScope not in global middleware chain |
 
-### LOW (23)
+### LOW (22)
 
-| # | Package | Finding |
-|---|---------|---------|
-| L1 | keystone | CleanExpiredRevocations has no caller — memory leak |
-| L2 | keystone | BuildServiceCatalog returns inconsistent map ordering |
-| L3 | keystone | Contract tests missing for spec requirements 1-6 |
-| L4 | nova | ListHypervisors id is integer, not UUID (mv >= 2.53) |
-| L5 | nova | CreateServer response doesn't include full detail shape |
-| L6 | nova | aggregates GetAggregate uses DB round-trip for json.Unmarshal |
-| L7 | nova | DeleteServer doesn't check rows.Err() after port unbind loop |
-| L8 | nova | ListFlavors (brief) has no pagination |
-| L9 | nova | N+1 quota queries (7 individual QueryRow calls) |
-| L10 | neutron | UpdateNetwork ignores DB no-rows — silent success |
-| L11 | neutron | ListSecurityGroupRules has no pagination |
-| L12 | neutron | json.Unmarshal errors silently ignored in multiple places |
-| L13 | neutron | rows.Err() not checked in GetPort security groups query |
-| L14 | neutron | CreateTrunk calls time.Now() multiple times |
-| L15 | neutron | GetTrunk/UpdateTrunk don't check subPortRows.Err() |
-| L16 | neutron | ListNetworkIPAvailabilities uses hardcoded /24 estimate |
-| L17 | neutron | trunks.go subPortRows leaked on error path |
-| L18 | neutron | vxlan_coordinator allocateVNI linear scan without lock |
-| L19 | cinder | ListSnapshots has no marker-based pagination |
-| L20 | cinder | DeleteVolume doesn't check non-ErrNoRows DB errors |
-| L21 | glance | StageImageData buffers entire image in memory |
-| L22 | glance | GetTask leaks internal error details |
-| L23 | common | NewInternalServerError uses computeFault for all services |
+Not listed individually — mostly: rows.Err() unchecked in edge paths, fmt.Println instead of structured logger, test type mismatches, dead code, cursor tie issues, goroutine leak in tests.
 
 ---
 
@@ -132,66 +99,38 @@ Full spec compliance target:       9.5/10
 
 ### keystone-minimal-iam-design-v2
 
-| Requirement | Status |
-|-------------|--------|
-| App credential CRUD | WORKING |
-| App credential authentication | WORKING |
-| Bcrypt cost 12 | WORKING |
-| Token revocation (DB-persisted) | WORKING |
-| Service catalog in token | WORKING |
-| Access rules (path/method/service) | NOT IMPLEMENTED |
-| unrestricted flag enforcement | NOT IMPLEMENTED |
-| legacy_auth backward compat | NOT IMPLEMENTED |
-| Policy engine (RBAC evaluation) | NOT IMPLEMENTED |
-| Audit logging (auth events) | NOT IMPLEMENTED |
-| appcreds/ subpackage | NOT IMPLEMENTED |
-| policy/ subpackage | NOT IMPLEMENTED |
-| tokens/ subpackage | NOT IMPLEMENTED |
+| Requirement | v6 Status | v7 Status |
+|-------------|-----------|-----------|
+| App credential CRUD | WORKING | WORKING |
+| App credential authentication | WORKING | WORKING |
+| Bcrypt cost 12 | WORKING | WORKING |
+| Token revocation (DB-persisted) | WORKING | WORKING |
+| Service catalog in token | WORKING | WORKING |
+| Access rules (path/method/service) | NOT IMPLEMENTED | PARTIAL (service field ignored) |
+| unrestricted flag enforcement | NOT IMPLEMENTED | BROKEN (same-request only) |
+| legacy_auth backward compat | NOT IMPLEMENTED | WORKING |
+| Policy engine (RBAC evaluation) | NOT IMPLEMENTED | PARTIAL (precedence wrong, no cycle detection) |
+| Audit logging (auth events) | NOT IMPLEMENTED | NOT IMPLEMENTED |
 
-**Coverage: ~45%** (down from 60% claimed in v5 — honest reassessment; stored-but-not-enforced does not count)
+**Coverage: ~65%** (up from 45% in v6)
 
 ### SPEC-002 (Horizon Full Compatibility)
 
-| Requirement | Status |
-|-------------|--------|
-| FR-001: Token format with catalog | WORKING |
-| FR-003: Microversion headers | WORKING (no behavior gating by version) |
-| FR-005: Server extended attributes | PARTIAL (OS-EXT-SRV-ATTR:host present; root_device_name, launch_index missing) |
-| FR-006: Marker-based pagination | PARTIAL (Nova working; Neutron UUID-lexicographic is non-deterministic; Cinder timestamp-only) |
-| FR-009: Network provider attributes | BROKEN (hardcoded "flat") |
-| FR-010: Security group rules in response | PARTIAL (Get/List have rules; Create returns empty) |
-| FR-011: Router interface response | PARTIAL (Add has fields; Remove missing network_id, tenant_id) |
-| FR-012: Volume detail attributes | BROKEN (volume_type, encrypted, AZ hardcoded not from DB) |
-| FR-014: Quota set format | WORKING (nested format correct; defaults endpoint flat — inconsistency) |
-| FR-015: Tenant usage with servers | PARTIAL (populated but flavor field wrong, no time filter) |
-| FR-020: Hypervisor statistics | PARTIAL (running_vms from DB; other values hardcoded) |
+| Requirement | v6 Status | v7 Status |
+|-------------|-----------|-----------|
+| FR-001: Token format with catalog | WORKING | WORKING |
+| FR-003: Microversion headers | WORKING | WORKING |
+| FR-005: Server extended attributes | PARTIAL | PARTIAL (root_device_name, launch_index missing) |
+| FR-006: Marker-based pagination | PARTIAL | PARTIAL (id tiebreaker missing in several endpoints) |
+| FR-009: Network provider attributes | BROKEN | WORKING (reads from DB now) |
+| FR-010: Security group rules in response | PARTIAL | WORKING (Create returns default rules) |
+| FR-011: Router interface response | PARTIAL | PARTIAL (Remove still missing fields) |
+| FR-012: Volume detail attributes | BROKEN | PARTIAL (volume_type from DB; AZ/encrypted still hardcoded) |
+| FR-014: Quota set format | WORKING | WORKING |
+| FR-015: Tenant usage with servers | PARTIAL | PARTIAL (flavor correct; time range ignored) |
+| FR-020: Hypervisor statistics | PARTIAL | PARTIAL (hardcoded values) |
 
-**Coverage: ~55%** (up from 45% in v5)
-
-### SPEC-000 (Compliance Addendum)
-
-| Requirement | Status |
-|-------------|--------|
-| Contract test suite | PARTIAL (basic CRUD only, no spec-requirement tests) |
-| Terraform test suite | NOT STARTED |
-| CLI test suite | Partial (bash scripts) |
-| Schema validation | NOT STARTED |
-| Zero failures policy | Cannot evaluate |
-
-**Coverage: ~15%** (up from 10%)
-
----
-
-## What Now Works (After v5 Fixes — Verified)
-
-- C1: AuthMiddleware on compat/embedded.go (VERIFIED)
-- C2: OS-EXT-SRV-ATTR:host present in GetServer/ListServersDetail
-- C3: GetQuotaSet returns nested {in_use, limit, reserved} format
-- C4: server_usages populated from DB
-- C5+C6: allocateFloatingIP uses serializable TX + subnet filter
-- C7: ListNetworks returns project_id from DB as tenant_id
-- C8: allocateNextIP uses net.ParseCIDR (not /24 assumption)
-- H1-H14 from v5: All verified fixed (rows.Err(), defer Close, microversion validation, marker pagination, SG rules in response, etc.)
+**Coverage: ~60%** (up from 55% in v6)
 
 ---
 
@@ -199,65 +138,96 @@ Full spec compliance target:       9.5/10
 
 | Scenario | What Happens | Root Cause |
 |----------|--------------|------------|
-| Horizon opens VNC console | Connection refused | H7: localhost:6080 |
-| Horizon creates volume | Missing columns in result | C4: CreateVolume response incomplete |
-| Horizon renames volume | Detail page blanks out | C5: UpdateVolume response incomplete |
-| Horizon image panel | Owner column blank | H16: owner field missing |
-| Horizon Usage tab | Wrong flavor names shown | H6: instance name used as flavor |
-| Horizon SG after create | Empty rules panel | H13: no default egress rules |
-| Horizon quota defaults | API format error | H8: flat format vs nested |
-| VXLAN networks in topology | Shows as "flat" | H11: hardcoded network type |
-| App credential with access rules | Rules not enforced | C1: access_rules absent |
-| Upgrade with existing app creds | All creds fail | C2: no legacy_auth path |
-| Admin resets user password on Terraform | Works | (Fixed in v5) |
+| Horizon opens VNC console | Wrong URL returned | H4: uses request Host not proxy config |
+| Horizon instance detail | Missing SG tab, links | H6, H8: fields absent from response |
+| Restricted app cred creates nested cred | Succeeds (should fail) | C1: auth_method not in JWT |
+| Admin stores circular policy rules | Server panic | H2: no cycle detection |
+| Member creates app cred with admin role | Succeeds (should fail) | H3: roles not validated |
+| Delete image then GET | Returns stale data for 1h | C2: cache key mismatch |
+| Multi-AZ volume operations | Wrong AZ reported | H12: hardcoded "nova" |
+| Encrypted volume display | Shows "not encrypted" | H13: hardcoded false |
+| Operator deploys with blank JWT secret | All tokens cross-verifiable | H14: empty string accepted |
+| Horizon Usage tab with date filter | Ignores date range | H5: params not applied |
+
+---
+
+## What Now Works (Confirmed v7 Improvements Over v6)
+
+1. **Access rules stored in JWT and enforced by middleware** (path + method matching works)
+2. **Legacy auth dual-path with transparent bcrypt upgrade** (timing-safe)
+3. **Policy engine evaluates role/user_id/project_id/rule references** (basic rules work)
+4. **Policy CRUD API with DB persistence and cache refresh**
+5. **Network provider:network_type reads from DB** (was hardcoded "flat")
+6. **CreateSecurityGroup returns default egress rules** (was empty)
+7. **Bridge creation after DB insert** in CreateNetwork (was before)
+8. **allocateIPFromSubnet no longer locks all ports** (scoped to subnet)
+9. **Floating IP allocation transactional** (serializable isolation)
+10. **Glance owner field present** in image responses
 
 ---
 
 ## Remediation Priority
 
-### Phase 1: Fix CRITICALs (4-6 hours)
-1. **C4+C5**: Complete Cinder Create/UpdateVolume response shapes — 1h
-2. **C6**: Reorder bridge creation after DB insert in CreateNetwork — 30 min
-3. **C1+C2+C3**: Access rules + legacy_auth + policy engine — these are LARGE features, not quick fixes. Estimate: 15-20 hours for access rules + legacy_auth, 30-40 hours for policy engine.
+### Phase 1: Fix CRITICALs (2-3 hours)
+1. **C1**: Add `is_app_credential` + `unrestricted` to JWT claims; check in CreateAppCred — 1.5h
+2. **C2**: Fix Glance DeleteImage cache key to include projectID — 10 min
 
-### Phase 2: Fix HIGHs (6-8 hours)
-1. **H5-H9**: Nova response fixes (launched_at, flavor name, snapshot count, defaults format) — 2h
-2. **H7**: Console URL from config/request host — 30 min
-3. **H10-H14**: Neutron pagination/response fixes — 3h
-4. **H15-H16**: Cinder/Glance field fixes — 1h
-5. **H1-H4**: Keystone enforcement fixes — 2h
+### Phase 2: Fix Security HIGHs (3-4 hours)
+1. **H1**: Add service matching to EnforceAccessRules middleware — 30 min
+2. **H2**: Add visited-set cycle detection to policy evaluate — 30 min
+3. **H3**: Validate requested roles against caller's actual roles — 1h
+4. **H14**: Reject empty JWT secret in LoadConfig — 10 min
 
-### Phase 3: Fix MEDIUMs (4-6 hours)
-- M1-M22: Various correctness and safety fixes — 4-6h
+### Phase 3: Fix Remaining HIGHs (4-5 hours)
+1. **H4-H8**: Nova response completeness (console URL from config, security_groups, links, ext attrs) — 3h
+2. **H9-H11**: Neutron N+1, RemoveRouterInterface, CreateRouter ordering — 2h
+3. **H12-H13**: Cinder AZ/encrypted from DB — 1h
 
-### Honest Assessment of Remaining Effort
+### Phase 4: Fix MEDIUMs (4-6 hours)
+- M1-M14: Operator precedence, pagination tiebreakers, policy bypass, etc. — 4-6h
+
+### Effort Summary
 
 | Category | Effort | Impact on Score |
 |----------|--------|----------------|
-| Fix all HIGHs (H1-H16) | 8-10 hours | 7.5 → 8.0 |
-| Fix all MEDIUMs (M1-M22) | 4-6 hours | 8.0 → 8.5 |
-| Fix Cinder CRITICALs (C4-C6) | 2 hours | Removes 3 production blockers |
-| Implement access rules + legacy_auth (C1+C2) | 15-20 hours | Spec compliance 45% → 70% |
-| Implement policy engine (C3) | 30-40 hours | Spec compliance 70% → 90% |
+| Fix CRITICALs (C1-C2) | 2-3 hours | 8.0 → 8.2 |
+| Fix security HIGHs (H1-H3, H14) | 3-4 hours | 8.2 → 8.5 |
+| Fix remaining HIGHs (H4-H13) | 4-5 hours | 8.5 → 8.8 |
+| Fix MEDIUMs (M1-M14) | 4-6 hours | 8.8 → 9.0 |
+| Implement audit logging | 4-6 hours | 9.0 → 9.2 |
+| Full spec compliance (contract tests, remaining FRs) | 15-20 hours | 9.2 → 9.5 |
 
-**Total to reach 8.5/10**: ~20 hours (C4-C6 + all HIGHs + all MEDIUMs)
-**Total to reach 9.5/10**: ~70-80 hours (+ access rules + policy engine + contract tests)
+**Total to reach 9.0/10**: ~18-22 hours (all CRITICALs + HIGHs + MEDIUMs)
+**Total to reach 9.5/10**: ~40-50 hours (+ audit logging + contract tests + remaining FR gaps)
 
 ---
 
-## Methodology
+## Honest Assessment: What C1+C2+C3 Actually Delivered
 
-1. Dispatched 5 per-package Wave 0 agents reading ALL code in each package group
-2. Each agent reviewed against three design specifications (keystone-minimal-iam-design-v2, SPEC-002, SPEC-000)
-3. Every finding verified by reading actual code — no assumptions
-4. Previous v5 fixes (C1-C8, H1-H14) confirmed resolved
-5. Score reflects honest spec coverage + operational readiness
+| Feature | Intended | Actual |
+|---------|----------|--------|
+| Access rules | Per-service path/method restriction | Path/method only — service field ignored |
+| Legacy auth | Seamless upgrade from old credentials | Working correctly |
+| Policy engine | oslo.policy-compatible rule evaluation | Works for simple rules; precedence wrong for complex rules; crashes on cycles |
+| unrestricted enforcement | Prevent credential escalation | Only works within same HTTP request (bypass trivial) |
+
+**Honest verdict**: Legacy auth is solid. Access rules and policy engine are 80% there but have correctness gaps that reduce their security value. The unrestricted enforcement is effectively broken and needs a JWT-level fix.
 
 ---
 
 ## Build Status
 
 - `go build ./...` — PASS
-- `go vet ./...` — PASS
+- `go vet ./...` — PASS (warnings in test/ only)
 - `go test ./internal/...` — PASS (all packages)
-- Contract tests — PARTIAL (basic CRUD only)
+
+---
+
+## Methodology
+
+1. Dispatched 5 per-package Wave 0 agents reading ALL code in each package group
+2. Each agent reviewed against three design specifications
+3. Every finding verified by reading actual code
+4. Compared response shapes (Create vs Get vs List) for completeness
+5. Checked for hardcoded values that should be DB/config-backed
+6. Verified security features (access rules, policy, unrestricted) end-to-end

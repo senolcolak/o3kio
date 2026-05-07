@@ -190,7 +190,7 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	// Refuse to start with default JWT secret in production
-	if cfg.Keystone.JWTSecret == "change-me-in-production" {
+	if cfg.Keystone.JWTSecret == "" || cfg.Keystone.JWTSecret == "change-me-in-production" {
 		env := os.Getenv("O3K_ENV")
 		if env != "development" && env != "test" {
 			fmt.Fprintln(os.Stderr, "FATAL: JWT secret is set to the insecure default. Set O3K_JWT_SECRET or set O3K_ENV=development to allow default in dev mode.")

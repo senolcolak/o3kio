@@ -260,62 +260,88 @@ func (svc *Service) ListPorts(c *gin.Context) {
 	}
 	defer rows.Close()
 
-	var ports []gin.H
-	for rows.Next() {
-		var id, name, networkID string
-		var deviceID, deviceOwner sql.NullString
-		var macAddress, status string
-		var adminStateUp bool
-		var fixedIPsJSON []byte
-		var createdAt, updatedAt time.Time
+	type portRow struct {
+		id           string
+		name         string
+		networkID    string
+		deviceID     sql.NullString
+		deviceOwner  sql.NullString
+		macAddress   string
+		adminStateUp bool
+		status       string
+		fixedIPsJSON []byte
+		createdAt    time.Time
+		updatedAt    time.Time
+	}
 
-		if err := rows.Scan(&id, &name, &networkID, &deviceID, &deviceOwner, &macAddress, &adminStateUp, &status, &fixedIPsJSON, &createdAt, &updatedAt); err != nil {
+	var portRows []portRow
+	var portIDs []string
+	for rows.Next() {
+		var pr portRow
+		if err := rows.Scan(&pr.id, &pr.name, &pr.networkID, &pr.deviceID, &pr.deviceOwner, &pr.macAddress, &pr.adminStateUp, &pr.status, &pr.fixedIPsJSON, &pr.createdAt, &pr.updatedAt); err != nil {
 			log.Warn().Err(err).Msg("failed to scan port row")
 			continue
 		}
-
-		var fixedIPs []map[string]interface{}
-		json.Unmarshal(fixedIPsJSON, &fixedIPs)
-
-		// Fetch associated security groups for this port
-		securityGroups := []string{}
-		sgRows, err := svc.activeDB().Query(c.Request.Context(),
-			"SELECT security_group_id FROM port_security_groups WHERE port_id = $1",
-			id,
-		)
-		if err == nil {
-			for sgRows.Next() {
-				var sgID string
-				if err := sgRows.Scan(&sgID); err == nil {
-					securityGroups = append(securityGroups, sgID)
-				}
-			}
-			sgRows.Close()
-			if err := sgRows.Err(); err != nil {
-				log.Error().Err(err).Str("port_id", id).Msg("error reading security groups")
-			}
-		}
-
-		ports = append(ports, gin.H{
-			"id":              id,
-			"name":            name,
-			"network_id":      networkID,
-			"tenant_id":       projectID,
-			"device_id":       deviceID.String,
-			"device_owner":    deviceOwner.String,
-			"mac_address":     macAddress,
-			"admin_state_up":  adminStateUp,
-			"status":          status,
-			"fixed_ips":       fixedIPs,
-			"security_groups": securityGroups,
-			"created_at":      createdAt.Format(time.RFC3339),
-			"updated_at":      updatedAt.Format(time.RFC3339),
-		})
+		portRows = append(portRows, pr)
+		portIDs = append(portIDs, pr.id)
 	}
 	if err := rows.Err(); err != nil {
 		log.Error().Err(err).Str("operation", "list_ports").Msg("rows iteration error")
 		common.SendError(c, common.NewInternalServerError("failed to list ports"))
 		return
+	}
+
+	// Batch fetch security groups for all ports in one query.
+	sgByPort := make(map[string][]string)
+	if len(portIDs) > 0 {
+		sgRows, err := svc.activeDB().Query(c.Request.Context(),
+			"SELECT port_id, security_group_id FROM port_security_groups WHERE port_id = ANY($1)",
+			portIDs,
+		)
+		if err != nil {
+			log.Error().Err(err).Str("operation", "list_ports_sg_batch").Msg("database error fetching security groups")
+			common.SendError(c, common.NewInternalServerError("failed to list ports"))
+			return
+		}
+		defer sgRows.Close()
+		for sgRows.Next() {
+			var pid, sgID string
+			if err := sgRows.Scan(&pid, &sgID); err == nil {
+				sgByPort[pid] = append(sgByPort[pid], sgID)
+			}
+		}
+		if err := sgRows.Err(); err != nil {
+			log.Error().Err(err).Str("operation", "list_ports_sg_batch").Msg("rows iteration error fetching security groups")
+			common.SendError(c, common.NewInternalServerError("failed to list ports"))
+			return
+		}
+	}
+
+	var ports []gin.H
+	for _, pr := range portRows {
+		var fixedIPs []map[string]interface{}
+		json.Unmarshal(pr.fixedIPsJSON, &fixedIPs)
+
+		sgs := sgByPort[pr.id]
+		if sgs == nil {
+			sgs = []string{}
+		}
+
+		ports = append(ports, gin.H{
+			"id":              pr.id,
+			"name":            pr.name,
+			"network_id":      pr.networkID,
+			"tenant_id":       projectID,
+			"device_id":       pr.deviceID.String,
+			"device_owner":    pr.deviceOwner.String,
+			"mac_address":     pr.macAddress,
+			"admin_state_up":  pr.adminStateUp,
+			"status":          pr.status,
+			"fixed_ips":       fixedIPs,
+			"security_groups": sgs,
+			"created_at":      pr.createdAt.Format(time.RFC3339),
+			"updated_at":      pr.updatedAt.Format(time.RFC3339),
+		})
 	}
 
 	if ports == nil {
@@ -382,7 +408,11 @@ func (svc *Service) GetPort(c *gin.Context) {
 				securityGroups = append(securityGroups, sgID)
 			}
 		}
-		// sgRows.Err() is non-critical here; we still return whatever we collected
+		if err := sgRows.Err(); err != nil {
+			log.Error().Err(err).Str("port_id", portID).Msg("error reading security groups for port")
+			common.SendError(c, common.NewInternalServerError("failed to get port"))
+			return
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{

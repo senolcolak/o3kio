@@ -483,7 +483,7 @@ func (svc *Service) DeleteImage(c *gin.Context) {
 
 	// Invalidate cache
 	if svc.cache != nil {
-		svc.cache.Delete(ctx, "image:"+imageID)
+		svc.cache.Delete(ctx, "image:"+projectID+":"+imageID)
 		svc.cache.DeletePattern(ctx, "images:*")
 	}
 
