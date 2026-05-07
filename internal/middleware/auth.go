@@ -42,6 +42,16 @@ func AuthMiddleware(authService *keystone.AuthService) gin.HandlerFunc {
 		c.Set("project_id", claims.ProjectID)
 		c.Set("roles", claims.Roles)
 
+		// Set is_admin flag for convenience
+		isAdmin := false
+		for _, r := range claims.Roles {
+			if r == "admin" {
+				isAdmin = true
+				break
+			}
+		}
+		c.Set("is_admin", isAdmin)
+
 		c.Next()
 	}
 }

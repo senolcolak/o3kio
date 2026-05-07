@@ -39,6 +39,13 @@ func isSubcommand(s string) bool {
 	return false
 }
 
+func schemeFromRequest(c *gin.Context) string {
+	if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
+		return "https"
+	}
+	return "http"
+}
+
 func main() {
 	if len(os.Args) >= 2 && isSubcommand(os.Args[1]) {
 		switch os.Args[1] {
@@ -421,6 +428,7 @@ func createKeystoneServer(cfg *common.Config, svc *keystone.Service, authService
 
 	// Root version discovery
 	r.GET("/", func(c *gin.Context) {
+		baseURL := fmt.Sprintf("%s://%s/v3", schemeFromRequest(c), c.Request.Host)
 		c.JSON(200, gin.H{
 			"versions": gin.H{
 				"values": []gin.H{
@@ -428,7 +436,7 @@ func createKeystoneServer(cfg *common.Config, svc *keystone.Service, authService
 						"id":     "v3.14",
 						"status": "stable",
 						"links": []gin.H{
-							{"rel": "self", "href": fmt.Sprintf("http://localhost:%d/v3", cfg.Keystone.Port)},
+							{"rel": "self", "href": baseURL},
 						},
 					},
 				},

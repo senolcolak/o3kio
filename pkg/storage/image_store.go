@@ -3,6 +3,7 @@ package storage
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 // ImageStore manages image storage operations
@@ -555,8 +557,16 @@ func (s *ImageStore) imageExistsS3(ctx context.Context, imageID string) (bool, e
 	})
 
 	if err != nil {
-		// Object doesn't exist
-		return false, nil
+		// Distinguish "not found" from actual errors (IAM, network, etc.)
+		var notFound *s3types.NotFound
+		if errors.As(err, &notFound) {
+			return false, nil
+		}
+		var noSuchKey *s3types.NoSuchKey
+		if errors.As(err, &noSuchKey) {
+			return false, nil
+		}
+		return false, fmt.Errorf("S3 HeadObject failed for image %s: %w", imageID, err)
 	}
 
 	return true, nil

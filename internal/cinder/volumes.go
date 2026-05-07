@@ -1988,6 +1988,11 @@ func (svc *Service) ListServices(c *gin.Context) {
 
 // GetVersions returns the root version discovery response
 func (svc *Service) GetVersions(c *gin.Context) {
+	scheme := "http"
+	if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	baseURL := fmt.Sprintf("%s://%s/v3/", scheme, c.Request.Host)
 	c.JSON(http.StatusOK, gin.H{
 		"versions": []gin.H{
 			{
@@ -1999,7 +2004,7 @@ func (svc *Service) GetVersions(c *gin.Context) {
 				"links": []gin.H{
 					{
 						"rel":  "self",
-						"href": "http://o3k:8776/v3/",
+						"href": baseURL,
 					},
 				},
 				"media-types": []gin.H{
@@ -2015,6 +2020,11 @@ func (svc *Service) GetVersions(c *gin.Context) {
 
 // GetVersionV3 returns the v3 version information
 func (svc *Service) GetVersionV3(c *gin.Context) {
+	scheme := "http"
+	if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	baseURL := fmt.Sprintf("%s://%s/v3/", scheme, c.Request.Host)
 	c.JSON(http.StatusOK, gin.H{
 		"version": gin.H{
 			"id":      "v3.0",
@@ -2025,7 +2035,7 @@ func (svc *Service) GetVersionV3(c *gin.Context) {
 			"links": []gin.H{
 				{
 					"rel":  "self",
-					"href": "http://o3k:8776/v3/",
+					"href": baseURL,
 				},
 			},
 			"media-types": []gin.H{

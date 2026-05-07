@@ -172,17 +172,37 @@ func (c *Cache) GetTTL(ctx context.Context, key string) (time.Duration, error) {
 	return ttl, nil
 }
 
-// FlushAll clears the entire cache (use with caution!)
-func (c *Cache) FlushAll(ctx context.Context) error {
+// FlushByPrefix deletes all keys matching this cache's prefix.
+// Unlike FLUSHALL, this only removes keys belonging to this service.
+func (c *Cache) FlushByPrefix(ctx context.Context) error {
 	if !c.enabled {
 		return nil
 	}
 
-	if err := c.client.FlushAll(ctx).Err(); err != nil {
-		return fmt.Errorf("failed to flush cache: %w", err)
+	pattern := c.prefix + "*"
+	var cursor uint64
+	for {
+		keys, nextCursor, err := c.client.Scan(ctx, cursor, pattern, 100).Result()
+		if err != nil {
+			return fmt.Errorf("failed to scan keys: %w", err)
+		}
+		if len(keys) > 0 {
+			if err := c.client.Del(ctx, keys...).Err(); err != nil {
+				return fmt.Errorf("failed to delete keys: %w", err)
+			}
+		}
+		cursor = nextCursor
+		if cursor == 0 {
+			break
+		}
 	}
-
 	return nil
+}
+
+// FlushAll clears all keys with this cache's prefix.
+// Deprecated: Use FlushByPrefix instead.
+func (c *Cache) FlushAll(ctx context.Context) error {
+	return c.FlushByPrefix(ctx)
 }
 
 // Close closes the cache connection

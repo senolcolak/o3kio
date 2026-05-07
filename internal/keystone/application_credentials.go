@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // ListApplicationCredentials returns application credentials for a user
@@ -152,6 +153,14 @@ func (svc *Service) CreateApplicationCredential(c *gin.Context) {
 	}
 	secret := base64.URLEncoding.EncodeToString(secretBytes)
 
+	// Hash the secret with bcrypt (cost 12 per spec)
+	secretHash, err := bcrypt.GenerateFromPassword([]byte(secret), 12)
+	if err != nil {
+		log.Error().Err(err).Msg("failed to hash application credential secret")
+		common.SendError(c, common.NewInternalServerError("failed to generate credential secret"))
+		return
+	}
+
 	var projectID interface{}
 	if req.ApplicationCredential.ProjectID != "" {
 		projectID = req.ApplicationCredential.ProjectID
@@ -164,10 +173,10 @@ func (svc *Service) CreateApplicationCredential(c *gin.Context) {
 		}
 	}
 
-	_, err := svc.activeDB().Exec(c.Request.Context(), `
+	_, err = svc.activeDB().Exec(c.Request.Context(), `
 		INSERT INTO application_credentials (id, user_id, project_id, name, secret_hash, description, expires_at, unrestricted, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-	`, credID, userID, projectID, req.ApplicationCredential.Name, secret, req.ApplicationCredential.Description, expiresAt, req.ApplicationCredential.Unrestricted, now)
+	`, credID, userID, projectID, req.ApplicationCredential.Name, string(secretHash), req.ApplicationCredential.Description, expiresAt, req.ApplicationCredential.Unrestricted, now)
 
 	if err != nil {
 		log.Error().Err(err).Str("operation", "create_application_credential").Str("user_id", userID).Msg("Failed to create application credential")

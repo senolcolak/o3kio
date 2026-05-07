@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cobaltcore-dev/o3k/internal/database"
@@ -20,6 +21,7 @@ type NodeRegistry struct {
 	tunnelIP          string
 	heartbeatInterval time.Duration
 	stopChan          chan struct{}
+	stopOnce          sync.Once
 	db                database.DBIF
 }
 
@@ -122,7 +124,9 @@ func (nr *NodeRegistry) sendHeartbeat(ctx context.Context) error {
 
 // StopHeartbeat stops the heartbeat goroutine
 func (nr *NodeRegistry) StopHeartbeat() {
-	close(nr.stopChan)
+	nr.stopOnce.Do(func() {
+		close(nr.stopChan)
+	})
 }
 
 // ListActiveNodes returns all nodes with recent heartbeat (within 2x heartbeat interval)

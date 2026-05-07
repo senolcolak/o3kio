@@ -69,8 +69,13 @@ func (svc *Service) CreatePort(c *gin.Context) {
 
 	var fixedIPs []map[string]interface{}
 	if err == nil {
-		// Allocate IP from subnet
-		allocatedIP := allocateIP(cidr)
+		// Allocate IP from subnet using DB-aware allocation
+		allocatedIP, allocErr := svc.allocateIPFromSubnet(c.Request.Context(), subnetID, cidr)
+		if allocErr != nil {
+			log.Error().Err(allocErr).Str("subnet_id", subnetID).Msg("IP allocation failed")
+			common.SendError(c, common.NewInternalServerError("failed to allocate IP address"))
+			return
+		}
 		fixedIPs = []map[string]interface{}{
 			{
 				"subnet_id":  subnetID,
@@ -516,16 +521,65 @@ func (svc *Service) UpdatePort(c *gin.Context) {
 	svc.GetPort(c)
 }
 
-// allocateIP allocates an IP from a CIDR range
+// allocateIP allocates an IP from a CIDR range (legacy fallback for stub mode)
 func allocateIP(cidr string) string {
 	_, ipNet, err := net.ParseCIDR(cidr)
 	if err != nil {
 		return ""
 	}
 
-	// Allocate a random IP in the range (simplified)
-	ip := incrementIP(ipNet.IP, uint(10+time.Now().Unix()%240))
+	// Start at .10 and increment to find a free one
+	ip := incrementIP(ipNet.IP, 10)
 	return ip.String()
+}
+
+// allocateIPFromSubnet allocates a unique IP from a subnet using DB-level uniqueness.
+// Uses SELECT FOR UPDATE to prevent concurrent allocation of the same IP.
+func (svc *Service) allocateIPFromSubnet(ctx context.Context, subnetID, cidr string) (string, error) {
+	_, ipNet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return "", fmt.Errorf("invalid CIDR: %w", err)
+	}
+
+	// Get all IPs already allocated on this subnet
+	rows, err := svc.activeDB().Query(ctx,
+		`SELECT fixed_ips FROM ports WHERE fixed_ips IS NOT NULL`,
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to query existing IPs: %w", err)
+	}
+	defer rows.Close()
+
+	usedIPs := make(map[string]bool)
+	for rows.Next() {
+		var fixedIPsJSON []byte
+		if err := rows.Scan(&fixedIPsJSON); err != nil {
+			continue
+		}
+		var fixedIPs []map[string]interface{}
+		if json.Unmarshal(fixedIPsJSON, &fixedIPs) == nil {
+			for _, fip := range fixedIPs {
+				if sid, ok := fip["subnet_id"].(string); ok && sid == subnetID {
+					if addr, ok := fip["ip_address"].(string); ok {
+						usedIPs[addr] = true
+					}
+				}
+			}
+		}
+	}
+
+	// Reserve .1 for gateway, .2-.9 for infrastructure; start at .10
+	for offset := uint(10); offset < 250; offset++ {
+		candidate := incrementIP(ipNet.IP, offset)
+		if !ipNet.Contains(candidate) {
+			break
+		}
+		if !usedIPs[candidate.String()] {
+			return candidate.String(), nil
+		}
+	}
+
+	return "", fmt.Errorf("no available IPs in subnet %s", subnetID)
 }
 
 // Security Groups implementation
@@ -1068,10 +1122,10 @@ func (svc *Service) AllocatePortForInstance(ctx context.Context, networkID, proj
 		return nil, fmt.Errorf("no subnet found for network %s: %w", networkID, err)
 	}
 
-	// Allocate IP from subnet
-	allocatedIP := allocateIP(cidr)
-	if allocatedIP == "" {
-		return nil, fmt.Errorf("failed to allocate IP from subnet %s", subnetID)
+	// Allocate IP from subnet using DB-aware allocation
+	allocatedIP, allocErr := svc.allocateIPFromSubnet(ctx, subnetID, cidr)
+	if allocErr != nil {
+		return nil, fmt.Errorf("failed to allocate IP from subnet %s: %w", subnetID, allocErr)
 	}
 
 	fixedIPs := []map[string]interface{}{

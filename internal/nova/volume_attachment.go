@@ -159,7 +159,7 @@ func (svc *Service) AttachVolume(c *gin.Context) {
 		}()
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	c.JSON(http.StatusAccepted, gin.H{
 		"volumeAttachment": gin.H{
 			"id":        attachmentID,
 			"volumeId":  req.VolumeAttachment.VolumeID,

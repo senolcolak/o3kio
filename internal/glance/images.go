@@ -433,28 +433,31 @@ func (svc *Service) GetImage(c *gin.Context) {
 func (svc *Service) DeleteImage(c *gin.Context) {
 	imageID := c.Param("id")
 	projectID := c.GetString("project_id")
+	isAdmin := c.GetBool("is_admin")
 	ctx := c.Request.Context()
 
-	// Check if image exists in database (and user has access)
-	var exists bool
+	// Check if image exists and determine ownership
+	var ownerProjectID string
+	var visibility string
 	err := svc.activeDB().QueryRow(ctx,
-		"SELECT EXISTS(SELECT 1 FROM images WHERE id = $1 AND (visibility = 'public' OR project_id = $2))",
-		imageID, projectID,
-	).Scan(&exists)
+		"SELECT project_id, visibility FROM images WHERE id = $1",
+		imageID,
+	).Scan(&ownerProjectID, &visibility)
 	if err != nil {
-		log.Error().Err(err).Str("operation", "delete_image_check").Str("image_id", imageID).Msg("failed to check image existence")
-		common.SendError(c, common.NewInternalServerError("failed to delete image"))
-		return
-	}
-	if !exists {
 		common.SendError(c, common.NewNotFoundError("image"))
 		return
 	}
 
-	// Delete from database first
+	// Only the owner or admin can delete; public visibility does not grant delete access
+	if ownerProjectID != projectID && !isAdmin {
+		common.SendError(c, common.NewForbiddenError("you do not have permission to delete this image"))
+		return
+	}
+
+	// Delete from database
 	_, err = svc.activeDB().Exec(ctx,
-		"DELETE FROM images WHERE id = $1 AND (visibility = 'public' OR project_id = $2)",
-		imageID, projectID,
+		"DELETE FROM images WHERE id = $1",
+		imageID,
 	)
 	if err != nil {
 		log.Error().Err(err).Str("operation", "delete_image_db").Str("image_id", imageID).Msg("failed to delete image from database")

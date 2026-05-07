@@ -2,10 +2,13 @@ package keystone
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -27,10 +30,11 @@ type TokenClaims struct {
 
 // AuthService handles authentication operations
 type AuthService struct {
-	jwtSecret []byte
-	tokenTTL  time.Duration
-	cache     *cache.Cache
-	db        database.DBIF
+	jwtSecret    []byte
+	tokenTTL     time.Duration
+	cache        *cache.Cache
+	db           database.DBIF
+	revokedTokens sync.Map // token hash -> expiry time
 }
 
 // NewAuthService creates a new auth service
@@ -529,6 +533,11 @@ func (s *AuthService) AuthenticateToken(ctx context.Context, req *AuthRequest) (
 
 // ValidateToken validates and parses a JWT token
 func (s *AuthService) ValidateToken(tokenString string) (*TokenClaims, error) {
+	// Check revocation first
+	if s.IsTokenRevoked(tokenString) {
+		return nil, common.NewUnauthorizedError("token has been revoked")
+	}
+
 	token, err := jwt.ParseWithClaims(tokenString, &TokenClaims{}, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
@@ -545,6 +554,50 @@ func (s *AuthService) ValidateToken(tokenString string) (*TokenClaims, error) {
 	}
 
 	return nil, common.NewUnauthorizedError("invalid token claims")
+}
+
+// RevokeToken adds a token to the denylist
+func (s *AuthService) RevokeToken(tokenString string, expiresAt time.Time) {
+	hash := tokenHash(tokenString)
+	s.revokedTokens.Store(hash, expiresAt)
+
+	// Also persist to DB for multi-instance awareness
+	if db := s.activeDB(); db != nil {
+		db.Exec(context.Background(),
+			`INSERT INTO revoked_tokens (token_hash, expires_at) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+			hash, expiresAt,
+		)
+	}
+}
+
+// IsTokenRevoked checks if a token has been revoked
+func (s *AuthService) IsTokenRevoked(tokenString string) bool {
+	hash := tokenHash(tokenString)
+	if val, ok := s.revokedTokens.Load(hash); ok {
+		expiry := val.(time.Time)
+		if time.Now().After(expiry) {
+			s.revokedTokens.Delete(hash)
+			return false
+		}
+		return true
+	}
+	return false
+}
+
+// CleanExpiredRevocations removes expired entries from the denylist
+func (s *AuthService) CleanExpiredRevocations() {
+	now := time.Now()
+	s.revokedTokens.Range(func(key, value interface{}) bool {
+		if now.After(value.(time.Time)) {
+			s.revokedTokens.Delete(key)
+		}
+		return true
+	})
+}
+
+func tokenHash(token string) string {
+	h := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(h[:])
 }
 
 // HashPassword hashes a password using bcrypt

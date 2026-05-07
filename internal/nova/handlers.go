@@ -461,8 +461,12 @@ func (svc *Service) CreateServer(c *gin.Context) {
 							Str("instance_id", instanceID).
 							Str("network_id", network.UUID).
 							Msg("Failed to allocate port from Neutron")
-						// Continue with empty networks rather than failing
-						continue
+						// Fail VM creation: a VM without network is unusable
+						svc.activeDB().Exec(ctx,
+							"UPDATE instances SET status = 'ERROR', fault_message = $1, updated_at = NOW() WHERE id = $2",
+							fmt.Sprintf("Failed to allocate port for network %s: %v", network.UUID, err), instanceID,
+						)
+						return
 					}
 
 					// Type assert to neutron.PortInfo
@@ -607,36 +611,36 @@ func (svc *Service) ListServers(c *gin.Context) {
 
 	// Parse pagination parameters
 	limit := 1000 // Default limit
-	offset := 0
 	if limitParam := c.Query("limit"); limitParam != "" {
 		if parsedLimit, err := strconv.Atoi(limitParam); err == nil && parsedLimit > 0 {
 			limit = parsedLimit
 		}
 	}
-	if offsetParam := c.Query("offset"); offsetParam != "" {
-		if parsedOffset, err := strconv.Atoi(offsetParam); err == nil && parsedOffset >= 0 {
-			offset = parsedOffset
-		}
-	}
-	if markerParam := c.Query("marker"); markerParam != "" {
-		// Marker-based pagination: get offset of marker UUID
-		var markerOffset int
-		svc.activeDB().QueryRow(c.Request.Context(),
-			`SELECT ROW_NUMBER() OVER (ORDER BY created_at DESC) - 1
-			 FROM instances WHERE project_id = $1 AND id = $2`,
-			projectID, markerParam,
-		).Scan(&markerOffset)
-		if markerOffset > 0 {
-			offset = markerOffset
-		}
-	}
 
-	rows, err := svc.activeDB().Query(c.Request.Context(),
-		"SELECT id, name FROM instances WHERE project_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
-		projectID, limit, offset,
-	)
-	if err != nil {
-		log.Error().Err(err).Str("operation", "list_servers").Msg("database error")
+	// OpenStack uses marker-based pagination (keyset pagination).
+	// OFFSET-based skips rows under concurrent inserts.
+	markerParam := c.Query("marker")
+	var rows pgx.Rows
+	var queryErr error
+
+	if markerParam != "" {
+		// Marker-based: get rows AFTER the marker by created_at DESC, id DESC
+		rows, queryErr = svc.activeDB().Query(c.Request.Context(),
+			`SELECT id, name FROM instances
+			 WHERE project_id = $1
+			   AND (created_at, id) < (SELECT created_at, id FROM instances WHERE id = $2)
+			 ORDER BY created_at DESC, id DESC
+			 LIMIT $3`,
+			projectID, markerParam, limit,
+		)
+	} else {
+		rows, queryErr = svc.activeDB().Query(c.Request.Context(),
+			"SELECT id, name FROM instances WHERE project_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2",
+			projectID, limit,
+		)
+	}
+	if queryErr != nil {
+		log.Error().Err(queryErr).Str("operation", "list_servers").Msg("database error")
 		common.SendError(c, common.NewInternalServerError("failed to list servers"))
 		return
 	}

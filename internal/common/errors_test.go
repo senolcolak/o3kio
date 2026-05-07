@@ -227,17 +227,21 @@ func TestOpenStackErrorToJSON(t *testing.T) {
 		t.Fatal("Expected JSON output")
 	}
 
-	if _, exists := json["itemNotFound"]; !exists {
-		t.Error("Expected 'itemNotFound' key in JSON")
+	if _, exists := json["error"]; !exists {
+		t.Error("Expected 'error' key in JSON")
 	}
 
-	errorBody := json["itemNotFound"].(gin.H)
+	errorBody := json["error"].(gin.H)
 	if errorBody["message"] == "" {
 		t.Error("Expected message in error body")
 	}
 
 	if errorBody["code"] != http.StatusNotFound {
 		t.Errorf("Expected code %d, got %v", http.StatusNotFound, errorBody["code"])
+	}
+
+	if errorBody["title"] != "Not Found" {
+		t.Errorf("Expected title 'Not Found', got %v", errorBody["title"])
 	}
 
 	if errorBody["details"] == "" {

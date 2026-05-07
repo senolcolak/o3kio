@@ -257,8 +257,25 @@ func (svc *Service) ValidateToken(c *gin.Context) {
 
 // RevokeToken revokes a token (DELETE /v3/auth/tokens)
 func (svc *Service) RevokeToken(c *gin.Context) {
-	// In JWT implementation, we don't maintain token blacklist
-	// Tokens expire naturally based on TTL
+	tokenString := c.GetHeader("X-Subject-Token")
+	if tokenString == "" {
+		tokenString = c.GetHeader("X-Auth-Token")
+	}
+	if tokenString == "" {
+		common.SendError(c, common.NewBadRequestError("missing token to revoke"))
+		return
+	}
+
+	// Parse the token to get its expiry (so revocation entry can auto-expire)
+	claims, err := svc.authService.ValidateToken(tokenString)
+	if err != nil {
+		// Token already invalid, still return 204 per OpenStack behavior
+		c.Status(http.StatusNoContent)
+		return
+	}
+
+	expiresAt := claims.ExpiresAt.Time
+	svc.authService.RevokeToken(tokenString, expiresAt)
 	c.Status(http.StatusNoContent)
 }
 
