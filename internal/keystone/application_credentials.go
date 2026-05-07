@@ -190,8 +190,8 @@ func (svc *Service) CreateApplicationCredential(c *gin.Context) {
 	}
 
 	_, err = svc.activeDB().Exec(c.Request.Context(), `
-		INSERT INTO application_credentials (id, user_id, project_id, name, secret_hash, description, expires_at, unrestricted, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		INSERT INTO application_credentials (id, user_id, project_id, name, secret_hash, description, expires_at, unrestricted, legacy_auth, updated_at, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, false, NOW(), $9)
 	`, credID, userID, projectID, req.ApplicationCredential.Name, string(secretHash), req.ApplicationCredential.Description, expiresAt, req.ApplicationCredential.Unrestricted, now)
 
 	if err != nil {

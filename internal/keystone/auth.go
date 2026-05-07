@@ -3,6 +3,7 @@ package keystone
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -577,11 +578,12 @@ func (s *AuthService) AuthenticateApplicationCredential(ctx context.Context, req
 	var projectID *string
 	var expiresAt *time.Time
 	var unrestricted bool
+	var legacyAuth bool
 	err := s.activeDB().QueryRow(ctx, `
-		SELECT user_id, project_id, secret_hash, name, expires_at, unrestricted
+		SELECT user_id, project_id, secret_hash, name, expires_at, unrestricted, COALESCE(legacy_auth, false)
 		FROM application_credentials
 		WHERE id = $1
-	`, credID).Scan(&userID, &projectID, &secretHash, &name, &expiresAt, &unrestricted)
+	`, credID).Scan(&userID, &projectID, &secretHash, &name, &expiresAt, &unrestricted, &legacyAuth)
 
 	if err == pgx.ErrNoRows {
 		return nil, "", false, common.NewUnauthorizedError("invalid application credential")
@@ -595,9 +597,25 @@ func (s *AuthService) AuthenticateApplicationCredential(ctx context.Context, req
 		return nil, "", false, common.NewUnauthorizedError("application credential has expired")
 	}
 
-	// Verify the secret against the bcrypt hash
-	if err := bcrypt.CompareHashAndPassword([]byte(secretHash), []byte(secret)); err != nil {
-		return nil, "", false, common.NewUnauthorizedError("invalid application credential")
+	// Verify the secret
+	if legacyAuth {
+		// Legacy: direct string comparison (pre-bcrypt base64 secrets)
+		if subtle.ConstantTimeCompare([]byte(secret), []byte(secretHash)) != 1 {
+			return nil, "", false, common.NewUnauthorizedError("invalid application credential")
+		}
+		// Transparent upgrade: re-hash with bcrypt and clear legacy flag
+		newHash, hashErr := bcrypt.GenerateFromPassword([]byte(secret), 12)
+		if hashErr == nil {
+			_, _ = s.activeDB().Exec(ctx,
+				"UPDATE application_credentials SET secret_hash = $1, legacy_auth = false, updated_at = NOW() WHERE id = $2",
+				string(newHash), credID)
+		}
+		log.Warn().Str("credential_id", credID).Str("credential_name", name).Msg("legacy application credential used; please rotate to bcrypt")
+	} else {
+		// Modern: bcrypt verification
+		if err := bcrypt.CompareHashAndPassword([]byte(secretHash), []byte(secret)); err != nil {
+			return nil, "", false, common.NewUnauthorizedError("invalid application credential")
+		}
 	}
 
 	// Fetch the associated user
