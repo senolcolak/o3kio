@@ -422,6 +422,7 @@ func createKeystoneServer(cfg *common.Config, svc *keystone.Service, authService
 	r.Use(middleware.RecoveryMiddleware())
 	r.Use(middleware.CORSMiddlewareWithConfig(cfg.Server.CORSAllowedOrigins))
 	r.Use(middleware.AuthMiddleware(authService))
+	r.Use(middleware.EnforceAccessRules())
 	r.NoRoute(middleware.NotFoundHandler())
 	r.HandleMethodNotAllowed = true
 	r.NoMethod(middleware.MethodNotAllowedHandler())
@@ -459,6 +460,7 @@ func createNovaServer(cfg *common.Config, svc *nova.Service, authService *keysto
 	r.Use(middleware.RecoveryMiddleware())
 	r.Use(middleware.CORSMiddlewareWithConfig(cfg.Server.CORSAllowedOrigins))
 	r.Use(middleware.AuthMiddleware(authService))
+	r.Use(middleware.EnforceAccessRules())
 	r.Use(nova.MicroversionMiddleware())
 	r.NoRoute(middleware.NotFoundHandler())
 	r.HandleMethodNotAllowed = true
@@ -479,6 +481,7 @@ func createNeutronServer(cfg *common.Config, svc *neutron.Service, authService *
 	r.Use(middleware.RecoveryMiddleware())
 	r.Use(middleware.CORSMiddlewareWithConfig(cfg.Server.CORSAllowedOrigins))
 	r.Use(middleware.AuthMiddleware(authService))
+	r.Use(middleware.EnforceAccessRules())
 	r.NoRoute(middleware.NotFoundHandler())
 	r.HandleMethodNotAllowed = true
 	r.NoMethod(middleware.MethodNotAllowedHandler())
@@ -498,6 +501,7 @@ func createCinderServer(cfg *common.Config, svc *cinder.Service, authService *ke
 	r.Use(middleware.RecoveryMiddleware())
 	r.Use(middleware.CORSMiddlewareWithConfig(cfg.Server.CORSAllowedOrigins))
 	r.Use(middleware.AuthMiddleware(authService))
+	r.Use(middleware.EnforceAccessRules())
 	r.NoRoute(middleware.NotFoundHandler())
 	r.HandleMethodNotAllowed = true
 	r.NoMethod(middleware.MethodNotAllowedHandler())
@@ -528,6 +532,7 @@ func createGlanceServer(cfg *common.Config, svc *glance.Service, authService *ke
 	// All other routes require authentication and are under /v2
 	authGroup := r.Group("/v2")
 	authGroup.Use(middleware.AuthMiddleware(authService))
+	authGroup.Use(middleware.EnforceAccessRules())
 	svc.RegisterRoutes(authGroup)
 
 	return &http.Server{
@@ -542,6 +547,7 @@ func createPlacementServer(cfg *common.Config, svc *placement.Service, authServi
 	r.Use(middleware.LoggingMiddleware())
 	r.Use(middleware.RecoveryMiddleware())
 	r.Use(middleware.AuthMiddleware(authService))
+	r.Use(middleware.EnforceAccessRules())
 	r.NoRoute(middleware.NotFoundHandler())
 	r.HandleMethodNotAllowed = true
 	r.NoMethod(middleware.MethodNotAllowedHandler())

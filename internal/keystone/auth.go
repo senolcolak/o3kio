@@ -21,12 +21,20 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+// AccessRule defines a single access restriction for an application credential
+type AccessRule struct {
+	Path    string `json:"path"`
+	Method  string `json:"method"`
+	Service string `json:"service"`
+}
+
 // TokenClaims represents JWT token claims
 type TokenClaims struct {
-	UserID    string   `json:"user_id"`
-	UserName  string   `json:"user_name"`
-	ProjectID string   `json:"project_id,omitempty"`
-	Roles     []string `json:"roles,omitempty"`
+	UserID      string       `json:"user_id"`
+	UserName    string       `json:"user_name"`
+	ProjectID   string       `json:"project_id,omitempty"`
+	Roles       []string     `json:"roles,omitempty"`
+	AccessRules []AccessRule `json:"access_rules,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -579,11 +587,12 @@ func (s *AuthService) AuthenticateApplicationCredential(ctx context.Context, req
 	var expiresAt *time.Time
 	var unrestricted bool
 	var legacyAuth bool
+	var accessRulesJSON []byte
 	err := s.activeDB().QueryRow(ctx, `
-		SELECT user_id, project_id, secret_hash, name, expires_at, unrestricted, COALESCE(legacy_auth, false)
+		SELECT user_id, project_id, secret_hash, name, expires_at, unrestricted, COALESCE(legacy_auth, false), access_rules
 		FROM application_credentials
 		WHERE id = $1
-	`, credID).Scan(&userID, &projectID, &secretHash, &name, &expiresAt, &unrestricted, &legacyAuth)
+	`, credID).Scan(&userID, &projectID, &secretHash, &name, &expiresAt, &unrestricted, &legacyAuth, &accessRulesJSON)
 
 	if err == pgx.ErrNoRows {
 		return nil, "", false, common.NewUnauthorizedError("invalid application credential")
@@ -618,13 +627,21 @@ func (s *AuthService) AuthenticateApplicationCredential(ctx context.Context, req
 		}
 	}
 
+	// Parse access rules from JSONB column (nil if the credential has no restrictions)
+	var accessRules []AccessRule
+	if accessRulesJSON != nil {
+		if err := json.Unmarshal(accessRulesJSON, &accessRules); err != nil {
+			log.Warn().Err(err).Str("credential_id", credID).Msg("failed to parse access_rules, treating as unrestricted")
+			accessRules = nil
+		}
+	}
+
 	// Fetch the associated user
 	var user database.User
 	err = s.activeDB().QueryRow(ctx,
 		"SELECT id, name, password_hash, enabled, domain_id FROM users WHERE id = $1",
 		userID,
 	).Scan(&user.ID, &user.Name, &user.PasswordHash, &user.Enabled, &user.DomainID)
-
 	if err == pgx.ErrNoRows {
 		return nil, "", false, common.NewUnauthorizedError("user not found for application credential")
 	}
@@ -670,10 +687,11 @@ func (s *AuthService) AuthenticateApplicationCredential(ctx context.Context, req
 	now := time.Now()
 	expiresAtTime := now.Add(s.tokenTTL)
 	claims := &TokenClaims{
-		UserID:    user.ID,
-		UserName:  user.Name,
-		ProjectID: scopeProjectID,
-		Roles:     roles,
+		UserID:      user.ID,
+		UserName:    user.Name,
+		ProjectID:   scopeProjectID,
+		Roles:       roles,
+		AccessRules: accessRules,
 		RegisteredClaims: jwt.RegisteredClaims{
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(expiresAtTime),
