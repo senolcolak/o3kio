@@ -1030,6 +1030,9 @@ func (svc *Service) CreateBackupAction(c *gin.Context) {
 			rows.Scan(&id, &createdAt)
 			backupIDs = append(backupIDs, id)
 		}
+		if err := rows.Err(); err != nil {
+			log.Error().Err(err).Str("operation", "list_backup_images").Msg("rows iteration error")
+		}
 
 		// Delete backups beyond rotation limit
 		if len(backupIDs) > int(rotation) {

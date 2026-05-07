@@ -222,48 +222,36 @@ func (svc *Service) ListPorts(c *gin.Context) {
 	projectID := c.GetString("project_id")
 
 	// Parse pagination parameters
-	limit := 1000
-	offset := 0
+	limit := common.DefaultPaginationLimit
 	if limitParam := c.Query("limit"); limitParam != "" {
 		if parsedLimit, err := strconv.Atoi(limitParam); err == nil && parsedLimit > 0 {
 			limit = parsedLimit
 		}
 	}
-	if offsetParam := c.Query("offset"); offsetParam != "" {
-		if parsedOffset, err := strconv.Atoi(offsetParam); err == nil && parsedOffset >= 0 {
-			offset = parsedOffset
-		}
-	}
+	limit = common.CapLimit(limit)
 
-	// Marker-based pagination
+	// Marker-based pagination (by ID)
 	var markerCondition string
 	var queryArgs []interface{}
 	queryArgs = append(queryArgs, projectID)
 	argIdx := 2
 
 	if marker := c.Query("marker"); marker != "" {
-		var markerCreatedAt time.Time
-		err := svc.activeDB().QueryRow(c.Request.Context(),
-			"SELECT created_at FROM ports WHERE id = $1",
-			marker,
-		).Scan(&markerCreatedAt)
-		if err == nil {
-			markerCondition = fmt.Sprintf(" AND p.created_at < $%d", argIdx)
-			queryArgs = append(queryArgs, markerCreatedAt)
-			argIdx++
-		}
+		markerCondition = fmt.Sprintf(" AND p.id > $%d", argIdx)
+		queryArgs = append(queryArgs, marker)
+		argIdx++
 	}
 
-	queryArgs = append(queryArgs, limit, offset)
+	queryArgs = append(queryArgs, limit+1)
 
 	rows, err := svc.activeDB().Query(c.Request.Context(), fmt.Sprintf(`
 		SELECT p.id, p.name, p.network_id, p.device_id, p.device_owner, p.mac_address, p.admin_state_up, p.status, p.fixed_ips, p.created_at, p.updated_at
 		FROM ports p
 		JOIN networks n ON p.network_id = n.id
 		WHERE (p.project_id = $1 OR n.shared = true)%s
-		ORDER BY p.created_at DESC
-		LIMIT $%d OFFSET $%d
-	`, markerCondition, argIdx, argIdx+1), queryArgs...)
+		ORDER BY p.id ASC
+		LIMIT $%d
+	`, markerCondition, argIdx), queryArgs...)
 
 	if err != nil {
 		log.Error().Err(err).Str("operation", "list_ports").Msg("database error")
@@ -303,6 +291,9 @@ func (svc *Service) ListPorts(c *gin.Context) {
 				}
 			}
 			sgRows.Close()
+			if err := sgRows.Err(); err != nil {
+				log.Error().Err(err).Str("port_id", id).Msg("error reading security groups")
+			}
 		}
 
 		ports = append(ports, gin.H{
@@ -321,12 +312,28 @@ func (svc *Service) ListPorts(c *gin.Context) {
 			"updated_at":      updatedAt.Format(time.RFC3339),
 		})
 	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_ports").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to list ports"))
+		return
+	}
 
 	if ports == nil {
 		ports = []gin.H{}
 	}
 
-	c.JSON(http.StatusOK, gin.H{"ports": ports})
+	// Check if there are more results
+	resp := gin.H{"ports": ports}
+	if len(ports) > limit {
+		ports = ports[:limit]
+		lastID := ports[limit-1]["id"].(string)
+		resp = gin.H{
+			"ports":       ports,
+			"ports_links": []gin.H{{"rel": "next", "href": fmt.Sprintf("?marker=%s&limit=%d", lastID, limit)}},
+		}
+	}
+
+	c.JSON(http.StatusOK, resp)
 }
 
 // GetPort returns a single port
@@ -375,6 +382,7 @@ func (svc *Service) GetPort(c *gin.Context) {
 				securityGroups = append(securityGroups, sgID)
 			}
 		}
+		// sgRows.Err() is non-critical here; we still return whatever we collected
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -533,17 +541,25 @@ func allocateIP(cidr string) string {
 	return ip.String()
 }
 
-// allocateIPFromSubnet allocates a unique IP from a subnet using DB-level uniqueness.
-// Uses SELECT FOR UPDATE to prevent concurrent allocation of the same IP.
+// allocateIPFromSubnet allocates a unique IP from a subnet using a serializable
+// transaction with SELECT FOR UPDATE to prevent TOCTOU races under concurrency.
 func (svc *Service) allocateIPFromSubnet(ctx context.Context, subnetID, cidr string) (string, error) {
 	_, ipNet, err := net.ParseCIDR(cidr)
 	if err != nil {
 		return "", fmt.Errorf("invalid CIDR: %w", err)
 	}
 
-	// Get all IPs already allocated on this subnet
-	rows, err := svc.activeDB().Query(ctx,
-		`SELECT fixed_ips FROM ports WHERE fixed_ips IS NOT NULL`,
+	tx, err := svc.activeDB().BeginTx(ctx, pgx.TxOptions{
+		IsoLevel: pgx.Serializable,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Lock and fetch all allocated IPs for this subnet within the transaction
+	rows, err := tx.Query(ctx,
+		`SELECT fixed_ips FROM ports WHERE fixed_ips IS NOT NULL FOR UPDATE`,
 	)
 	if err != nil {
 		return "", fmt.Errorf("failed to query existing IPs: %w", err)
@@ -567,14 +583,21 @@ func (svc *Service) allocateIPFromSubnet(ctx context.Context, subnetID, cidr str
 			}
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return "", fmt.Errorf("failed to iterate IPs: %w", err)
+	}
 
 	// Reserve .1 for gateway, .2-.9 for infrastructure; start at .10
+	var candidate net.IP
 	for offset := uint(10); offset < 250; offset++ {
-		candidate := incrementIP(ipNet.IP, offset)
+		candidate = incrementIP(ipNet.IP, offset)
 		if !ipNet.Contains(candidate) {
 			break
 		}
 		if !usedIPs[candidate.String()] {
+			if err := tx.Commit(ctx); err != nil {
+				return "", fmt.Errorf("failed to commit IP allocation: %w", err)
+			}
 			return candidate.String(), nil
 		}
 	}
@@ -641,12 +664,36 @@ func (svc *Service) CreateSecurityGroup(c *gin.Context) {
 func (svc *Service) ListSecurityGroups(c *gin.Context) {
 	projectID := c.GetString("project_id")
 
-	rows, err := svc.activeDB().Query(c.Request.Context(), `
+	// Parse pagination parameters
+	limit := common.DefaultPaginationLimit
+	if limitParam := c.Query("limit"); limitParam != "" {
+		if parsedLimit, err := strconv.Atoi(limitParam); err == nil && parsedLimit > 0 {
+			limit = parsedLimit
+		}
+	}
+	limit = common.CapLimit(limit)
+
+	// Marker-based pagination
+	var markerCondition string
+	var queryArgs []interface{}
+	queryArgs = append(queryArgs, projectID)
+	argIdx := 2
+
+	if marker := c.Query("marker"); marker != "" {
+		markerCondition = fmt.Sprintf(" AND id > $%d", argIdx)
+		queryArgs = append(queryArgs, marker)
+		argIdx++
+	}
+
+	queryArgs = append(queryArgs, limit+1)
+
+	rows, err := svc.activeDB().Query(c.Request.Context(), fmt.Sprintf(`
 		SELECT id, name, description, created_at, updated_at
 		FROM security_groups
-		WHERE project_id = $1
-		ORDER BY created_at DESC
-	`, projectID)
+		WHERE project_id = $1%s
+		ORDER BY id ASC
+		LIMIT $%d
+	`, markerCondition, argIdx), queryArgs...)
 
 	if err != nil {
 		log.Error().Err(err).Str("operation", "list_security_groups").Msg("database error")
@@ -665,21 +712,102 @@ func (svc *Service) ListSecurityGroups(c *gin.Context) {
 			continue
 		}
 
+		// Fetch rules for this security group
+		sgRules := svc.getSecurityGroupRules(c.Request.Context(), id)
+
 		securityGroups = append(securityGroups, gin.H{
-			"id":          id,
-			"name":        name,
-			"tenant_id":   projectID,
-			"description": description,
-			"created_at":  createdAt.Format(time.RFC3339),
-			"updated_at":  updatedAt.Format(time.RFC3339),
+			"id":                   id,
+			"name":                 name,
+			"tenant_id":            projectID,
+			"description":          description,
+			"security_group_rules": sgRules,
+			"created_at":           createdAt.Format(time.RFC3339),
+			"updated_at":           updatedAt.Format(time.RFC3339),
 		})
+	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_security_groups").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to list security groups"))
+		return
 	}
 
 	if securityGroups == nil {
 		securityGroups = []gin.H{}
 	}
 
-	c.JSON(http.StatusOK, gin.H{"security_groups": securityGroups})
+	// Check if there are more results
+	resp := gin.H{"security_groups": securityGroups}
+	if len(securityGroups) > limit {
+		securityGroups = securityGroups[:limit]
+		lastID := securityGroups[limit-1]["id"].(string)
+		resp = gin.H{
+			"security_groups":       securityGroups,
+			"security_groups_links": []gin.H{{"rel": "next", "href": fmt.Sprintf("?marker=%s&limit=%d", lastID, limit)}},
+		}
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+// getSecurityGroupRules fetches all rules for a given security group ID.
+func (svc *Service) getSecurityGroupRules(ctx context.Context, sgID string) []gin.H {
+	rows, err := svc.activeDB().Query(ctx, `
+		SELECT id, direction, ethertype, protocol, port_range_min, port_range_max,
+		       remote_ip_prefix, remote_group_id, created_at
+		FROM security_group_rules
+		WHERE security_group_id = $1
+	`, sgID)
+	if err != nil {
+		return []gin.H{}
+	}
+	defer rows.Close()
+
+	rules := []gin.H{}
+	for rows.Next() {
+		var ruleID, direction, ethertype string
+		var protocol, remoteIPPrefix, remoteGroupID *string
+		var portRangeMin, portRangeMax *int
+		var ruleCreatedAt time.Time
+
+		if err := rows.Scan(&ruleID, &direction, &ethertype, &protocol, &portRangeMin, &portRangeMax,
+			&remoteIPPrefix, &remoteGroupID, &ruleCreatedAt); err != nil {
+			continue
+		}
+
+		rule := gin.H{
+			"id":                ruleID,
+			"security_group_id": sgID,
+			"direction":         direction,
+			"ethertype":         ethertype,
+			"created_at":        ruleCreatedAt.Format(time.RFC3339),
+		}
+
+		if protocol != nil {
+			rule["protocol"] = *protocol
+		}
+		if portRangeMin != nil {
+			rule["port_range_min"] = *portRangeMin
+		}
+		if portRangeMax != nil {
+			rule["port_range_max"] = *portRangeMax
+		}
+		if remoteIPPrefix != nil {
+			rule["remote_ip_prefix"] = *remoteIPPrefix
+		} else {
+			rule["remote_ip_prefix"] = ""
+		}
+		if remoteGroupID != nil {
+			rule["remote_group_id"] = *remoteGroupID
+		} else {
+			rule["remote_group_id"] = ""
+		}
+
+		rules = append(rules, rule)
+	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("sg_id", sgID).Msg("rows iteration error in getSecurityGroupRules")
+	}
+	return rules
 }
 
 // GetSecurityGroup returns a single security group
@@ -763,6 +891,11 @@ func (svc *Service) GetSecurityGroup(c *gin.Context) {
 		}
 
 		rules = append(rules, rule)
+	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "get_sg_rules").Str("sg_id", sgID).Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to get security group rules"))
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -1030,6 +1163,11 @@ func (svc *Service) ListSecurityGroupRules(c *gin.Context) {
 
 		rules = append(rules, rule)
 	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_sg_rules").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to list security group rules"))
+		return
+	}
 
 	if rules == nil {
 		rules = []gin.H{}
@@ -1247,6 +1385,9 @@ func (svc *Service) fetchSecurityGroupRulesForPort(ctx context.Context, security
 		}
 
 		rules = append(rules, rule)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating security group rules: %w", err)
 	}
 
 	return rules, nil

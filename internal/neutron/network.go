@@ -498,15 +498,19 @@ func (svc *Service) CreateNetwork(c *gin.Context) {
 
 	c.JSON(http.StatusCreated, gin.H{
 		"network": gin.H{
-			"id":              networkID,
-			"name":            req.Network.Name,
-			"tenant_id":       projectID,
-			"admin_state_up":  adminStateUp,
-			"status":          "ACTIVE",
-			"shared":          shared,
-			"mtu":             mtu,
-			"created_at":      now.Format(time.RFC3339),
-			"updated_at":      now.Format(time.RFC3339),
+			"id":                        networkID,
+			"name":                      req.Network.Name,
+			"tenant_id":                 projectID,
+			"admin_state_up":            adminStateUp,
+			"status":                    "ACTIVE",
+			"shared":                    shared,
+			"mtu":                       mtu,
+			"provider:network_type":     "flat",
+			"provider:physical_network": nil,
+			"provider:segmentation_id":  nil,
+			"router:external":           false,
+			"created_at":                now.Format(time.RFC3339),
+			"updated_at":                now.Format(time.RFC3339),
 		},
 	})
 }
@@ -516,47 +520,35 @@ func (svc *Service) ListNetworks(c *gin.Context) {
 	projectID := c.GetString("project_id")
 
 	// Parse pagination parameters
-	limit := 1000
-	offset := 0
+	limit := common.DefaultPaginationLimit
 	if limitParam := c.Query("limit"); limitParam != "" {
 		if parsedLimit, err := strconv.Atoi(limitParam); err == nil && parsedLimit > 0 {
 			limit = parsedLimit
 		}
 	}
-	if offsetParam := c.Query("offset"); offsetParam != "" {
-		if parsedOffset, err := strconv.Atoi(offsetParam); err == nil && parsedOffset >= 0 {
-			offset = parsedOffset
-		}
-	}
+	limit = common.CapLimit(limit)
 
-	// Marker-based pagination
+	// Marker-based pagination (by ID)
 	var markerCondition string
 	var queryArgs []interface{}
 	queryArgs = append(queryArgs, projectID)
 	argIdx := 2
 
 	if marker := c.Query("marker"); marker != "" {
-		var markerCreatedAt time.Time
-		err := svc.activeDB().QueryRow(c.Request.Context(),
-			"SELECT created_at FROM networks WHERE id = $1",
-			marker,
-		).Scan(&markerCreatedAt)
-		if err == nil {
-			markerCondition = fmt.Sprintf(" AND created_at < $%d", argIdx)
-			queryArgs = append(queryArgs, markerCreatedAt)
-			argIdx++
-		}
+		markerCondition = fmt.Sprintf(" AND n.id > $%d", argIdx)
+		queryArgs = append(queryArgs, marker)
+		argIdx++
 	}
 
-	queryArgs = append(queryArgs, limit, offset)
+	queryArgs = append(queryArgs, limit+1)
 
 	rows, err := svc.activeDB().Query(c.Request.Context(), fmt.Sprintf(`
-		SELECT id, name, admin_state_up, status, shared, mtu, created_at, updated_at
-		FROM networks
-		WHERE (project_id = $1 OR shared = true)%s
-		ORDER BY created_at DESC
-		LIMIT $%d OFFSET $%d
-	`, markerCondition, argIdx, argIdx+1), queryArgs...)
+		SELECT n.id, n.name, n.admin_state_up, n.status, n.shared, n.mtu, n.created_at, n.updated_at
+		FROM networks n
+		WHERE (n.project_id = $1 OR n.shared = true)%s
+		ORDER BY n.id ASC
+		LIMIT $%d
+	`, markerCondition, argIdx), queryArgs...)
 
 	if err != nil {
 		log.Error().Err(err).Str("operation", "list_networks").Msg("database error")
@@ -577,23 +569,43 @@ func (svc *Service) ListNetworks(c *gin.Context) {
 		}
 
 		networks = append(networks, gin.H{
-			"id":             id,
-			"name":           name,
-			"tenant_id":      projectID,
-			"admin_state_up": adminStateUp,
-			"status":         status,
-			"shared":         shared,
-			"mtu":            mtu,
-			"created_at":     createdAt.Format(time.RFC3339),
-			"updated_at":     updatedAt.Format(time.RFC3339),
+			"id":                       id,
+			"name":                     name,
+			"tenant_id":                projectID,
+			"admin_state_up":           adminStateUp,
+			"status":                   status,
+			"shared":                   shared,
+			"mtu":                      mtu,
+			"provider:network_type":    "flat",
+			"provider:physical_network": nil,
+			"provider:segmentation_id": nil,
+			"router:external":          false,
+			"created_at":               createdAt.Format(time.RFC3339),
+			"updated_at":               updatedAt.Format(time.RFC3339),
 		})
+	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_networks").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to list networks"))
+		return
 	}
 
 	if networks == nil {
 		networks = []gin.H{}
 	}
 
-	c.JSON(http.StatusOK, gin.H{"networks": networks})
+	// Check if there are more results
+	resp := gin.H{"networks": networks}
+	if len(networks) > limit {
+		networks = networks[:limit]
+		lastID := networks[limit-1]["id"].(string)
+		resp = gin.H{
+			"networks":       networks,
+			"networks_links": []gin.H{{"rel": "next", "href": fmt.Sprintf("?marker=%s&limit=%d", lastID, limit)}},
+		}
+	}
+
+	c.JSON(http.StatusOK, resp)
 }
 
 // GetNetwork returns a single network
@@ -636,15 +648,19 @@ func (svc *Service) GetNetwork(c *gin.Context) {
 	}
 
 	network := gin.H{
-		"id":             id,
-		"name":           name,
-		"tenant_id":      projectID,
-		"admin_state_up": adminStateUp,
-		"status":         status,
-		"shared":         shared,
-		"mtu":            mtu,
-		"created_at":     createdAt.Format(time.RFC3339),
-		"updated_at":     updatedAt.Format(time.RFC3339),
+		"id":                       id,
+		"name":                     name,
+		"tenant_id":                projectID,
+		"admin_state_up":           adminStateUp,
+		"status":                   status,
+		"shared":                   shared,
+		"mtu":                      mtu,
+		"provider:network_type":    "flat",
+		"provider:physical_network": nil,
+		"provider:segmentation_id": nil,
+		"router:external":          false,
+		"created_at":               createdAt.Format(time.RFC3339),
+		"updated_at":               updatedAt.Format(time.RFC3339),
 	}
 
 	// Store in cache (30min TTL per config)
@@ -930,6 +946,11 @@ func (svc *Service) ListSubnets(c *gin.Context) {
 			"created_at":      createdAt.Format(time.RFC3339),
 			"updated_at":      updatedAt.Format(time.RFC3339),
 		})
+	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_subnets").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to list subnets"))
+		return
 	}
 
 	if subnets == nil {

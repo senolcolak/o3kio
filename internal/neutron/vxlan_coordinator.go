@@ -129,6 +129,9 @@ func (vc *VXLANCoordinator) syncNetworks(ctx context.Context) {
 			fmt.Printf("Failed to attach VXLAN to bridge for network %s: %v\n", networkID, err)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		fmt.Printf("Failed to iterate network rows: %v\n", err)
+	}
 }
 
 // syncPorts ensures all port FDB entries are configured
@@ -185,6 +188,9 @@ func (vc *VXLANCoordinator) syncPorts(ctx context.Context) {
 		if err := vc.vxlanManager.AddFDBEntry(networkID, macAddress, vtepIP); err != nil {
 			fmt.Printf("Failed to add FDB entry for %s on network %s: %v\n", macAddress, networkID, err)
 		}
+	}
+	if err := rows.Err(); err != nil {
+		fmt.Printf("Failed to iterate FDB entry rows: %v\n", err)
 	}
 }
 

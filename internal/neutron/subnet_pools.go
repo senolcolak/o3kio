@@ -66,6 +66,11 @@ func (svc *Service) ListSubnetPools(c *gin.Context) {
 
 		pools = append(pools, pool)
 	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_subnet_pools").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to list subnet pools"))
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"subnetpools": pools})
 }

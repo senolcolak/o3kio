@@ -62,6 +62,11 @@ func (svc *Service) ListBackups(c *gin.Context) {
 		}
 		backups = append(backups, backup)
 	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_backups").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to list backups"))
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"backups": backups})
 }

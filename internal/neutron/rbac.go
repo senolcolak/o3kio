@@ -90,6 +90,11 @@ func (svc *Service) ListRBACPolicies(c *gin.Context) {
 			"action":        action,
 		})
 	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_rbac_policies").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to list RBAC policies"))
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"rbac_policies": policies})
 }

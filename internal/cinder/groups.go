@@ -59,6 +59,11 @@ func (svc *Service) ListGroups(c *gin.Context) {
 		}
 		groups = append(groups, group)
 	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_groups").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to list groups"))
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"groups": groups})
 }

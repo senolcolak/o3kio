@@ -142,6 +142,11 @@ func (svc *Service) GetFlavorExtraSpecs(c *gin.Context) {
 		}
 		extraSpecs[key] = value
 	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "get_flavor_extra_specs").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to get extra specs"))
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"extra_specs": extraSpecs})
 }
@@ -346,6 +351,11 @@ func (svc *Service) GetFlavorAccess(c *gin.Context) {
 			"flavor_id": fID,
 			"tenant_id": pID,
 		})
+	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "get_flavor_access").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to get flavor access"))
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"flavor_access": flavorAccess})

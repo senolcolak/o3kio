@@ -114,6 +114,58 @@ type CacheConfig struct {
 	TTL        map[string]time.Duration `yaml:"ttl"` // Per-resource TTL overrides
 }
 
+// expandEnvWithDefault expands environment variable references in the form
+// ${VAR_NAME:default_value}. If VAR_NAME is set, its value is used; otherwise
+// default_value is used.
+func expandEnvWithDefault(s string) string {
+	// Handle ${VAR:default} pattern
+	result := s
+	for {
+		start := -1
+		for i := range len(result) - 1 {
+			if result[i] == '$' && result[i+1] == '{' {
+				start = i
+				break
+			}
+		}
+		if start == -1 {
+			break
+		}
+		end := -1
+		for i := start + 2; i < len(result); i++ {
+			if result[i] == '}' {
+				end = i
+				break
+			}
+		}
+		if end == -1 {
+			break
+		}
+		expr := result[start+2 : end]
+		var name, defaultVal string
+		if colonIdx := -1; true {
+			for i := range len(expr) {
+				if expr[i] == ':' {
+					colonIdx = i
+					break
+				}
+			}
+			if colonIdx >= 0 {
+				name = expr[:colonIdx]
+				defaultVal = expr[colonIdx+1:]
+			} else {
+				name = expr
+			}
+		}
+		val := os.Getenv(name)
+		if val == "" {
+			val = defaultVal
+		}
+		result = result[:start] + val + result[end+1:]
+	}
+	return result
+}
+
 // LoadConfig loads configuration from file and applies environment variable overrides
 func LoadConfig(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
@@ -126,6 +178,9 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 
+	// Expand environment variable references in database URL
+	cfg.Database.URL = expandEnvWithDefault(cfg.Database.URL)
+
 	// Environment variable overrides
 	if dbURL := os.Getenv("O3K_DB_URL"); dbURL != "" {
 		cfg.Database.URL = dbURL
@@ -134,9 +189,14 @@ func LoadConfig(path string) (*Config, error) {
 		cfg.Keystone.JWTSecret = jwtSecret
 	}
 
-	// Warn if using default JWT secret
+	// Refuse to start with default JWT secret in production
 	if cfg.Keystone.JWTSecret == "change-me-in-production" {
-		fmt.Fprintln(os.Stderr, "WARNING: Using default JWT secret! Set O3K_JWT_SECRET environment variable in production.")
+		env := os.Getenv("O3K_ENV")
+		if env != "development" && env != "test" {
+			fmt.Fprintln(os.Stderr, "FATAL: JWT secret is set to the insecure default. Set O3K_JWT_SECRET or set O3K_ENV=development to allow default in dev mode.")
+			os.Exit(1)
+		}
+		fmt.Fprintln(os.Stderr, "WARNING: Using default JWT secret (O3K_ENV="+env+"). Do NOT use this in production.")
 	}
 
 	return &cfg, nil

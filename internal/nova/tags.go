@@ -44,6 +44,11 @@ func (svc *Service) ListServerTags(c *gin.Context) {
 			tags = append(tags, tag)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_server_tags").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to list server tags"))
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"tags": tags})
 }

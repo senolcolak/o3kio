@@ -55,6 +55,11 @@ func (svc *Service) ListNetworkIPAvailabilities(c *gin.Context) {
 			},
 		})
 	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_network_ip_availabilities").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to list network IP availabilities"))
+		return
+	}
 
 	if availabilities == nil {
 		availabilities = []gin.H{}
@@ -118,6 +123,11 @@ func (svc *Service) GetNetworkIPAvailability(c *gin.Context) {
 			"total_ips": subnetTotal,
 			"used_ips":  subnetUsed,
 		})
+	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "get_network_ip_availability").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to get network IP availability"))
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{

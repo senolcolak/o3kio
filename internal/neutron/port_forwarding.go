@@ -112,6 +112,11 @@ func (svc *Service) ListPortForwardings(c *gin.Context) {
 
 		forwardings = append(forwardings, result)
 	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_port_forwardings").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to list port forwardings"))
+		return
+	}
 
 	if forwardings == nil {
 		forwardings = []gin.H{}

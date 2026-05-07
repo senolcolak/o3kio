@@ -150,6 +150,11 @@ func (svc *Service) ListVolumeTypeAccess(c *gin.Context) {
 			})
 		}
 	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_volume_type_access").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to list volume type access"))
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"volume_type_access": access})
 }

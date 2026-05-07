@@ -52,6 +52,12 @@ func (svc *Service) ListCredentials(c *gin.Context) {
 		credentials = append(credentials, credential)
 	}
 
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_credentials").Msg("row iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to read credentials"))
+		return
+	}
+
 	c.JSON(200, gin.H{"credentials": credentials})
 }
 

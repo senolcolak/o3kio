@@ -241,13 +241,14 @@ func (svc *Service) ListImages(c *gin.Context) {
 	projectID := c.GetString("project_id")
 
 	// Parse pagination parameters
-	limit := 1000
+	limit := common.DefaultPaginationLimit
 	offset := 0
 	if limitParam := c.Query("limit"); limitParam != "" {
 		if parsedLimit, err := strconv.Atoi(limitParam); err == nil && parsedLimit > 0 {
 			limit = parsedLimit
 		}
 	}
+	limit = common.CapLimit(limit)
 	if offsetParam := c.Query("offset"); offsetParam != "" {
 		if parsedOffset, err := strconv.Atoi(offsetParam); err == nil && parsedOffset >= 0 {
 			offset = parsedOffset
@@ -322,6 +323,11 @@ func (svc *Service) ListImages(c *gin.Context) {
 		}
 
 		images = append(images, image)
+	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_images").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to list images"))
+		return
 	}
 
 	if images == nil {
@@ -415,6 +421,7 @@ func (svc *Service) GetImage(c *gin.Context) {
 				tags = append(tags, tag)
 			}
 		}
+		// rows.Err() non-critical for tags
 		if tags == nil {
 			tags = []string{}
 		}
@@ -437,7 +444,7 @@ func (svc *Service) DeleteImage(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	// Check if image exists and determine ownership
-	var ownerProjectID string
+	var ownerProjectID sql.NullString
 	var visibility string
 	err := svc.activeDB().QueryRow(ctx,
 		"SELECT project_id, visibility FROM images WHERE id = $1",
@@ -449,7 +456,7 @@ func (svc *Service) DeleteImage(c *gin.Context) {
 	}
 
 	// Only the owner or admin can delete; public visibility does not grant delete access
-	if ownerProjectID != projectID && !isAdmin {
+	if (!ownerProjectID.Valid || ownerProjectID.String != projectID) && !isAdmin {
 		common.SendError(c, common.NewForbiddenError("you do not have permission to delete this image"))
 		return
 	}
@@ -770,6 +777,11 @@ func (svc *Service) ListImageMembers(c *gin.Context) {
 			"updated_at": updatedAt.Format(time.RFC3339),
 			"schema":     "/v2/schemas/member",
 		})
+	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_image_members").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to list image members"))
+		return
 	}
 
 	if members == nil {

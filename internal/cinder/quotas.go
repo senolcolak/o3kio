@@ -56,6 +56,10 @@ func (svc *Service) GetQuotaSet(c *gin.Context) {
 				quotas[resource] = limit
 			}
 		}
+		// Best-effort: log but don't fail if iteration error on quotas
+		if iterErr := rows.Err(); iterErr != nil {
+			log.Warn().Err(iterErr).Str("operation", "get_quota_set").Msg("rows iteration error")
+		}
 	}
 
 	// Add project ID to response
@@ -157,6 +161,9 @@ func (svc *Service) UpdateQuotaSet(c *gin.Context) {
 			if err := rows.Scan(&resource, &limit); err == nil {
 				defaults[resource] = limit
 			}
+		}
+		if iterErr := rows.Err(); iterErr != nil {
+			log.Warn().Err(iterErr).Str("operation", "get_quota_set_defaults").Msg("rows iteration error")
 		}
 	}
 

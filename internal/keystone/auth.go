@@ -11,11 +11,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
-	"github.com/jackc/pgx/v5"
 	"github.com/cobaltcore-dev/o3k/internal/common"
 	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/cobaltcore-dev/o3k/pkg/cache"
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5"
+	"github.com/rs/zerolog/log"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -30,10 +31,10 @@ type TokenClaims struct {
 
 // AuthService handles authentication operations
 type AuthService struct {
-	jwtSecret    []byte
-	tokenTTL     time.Duration
-	cache        *cache.Cache
-	db           database.DBIF
+	jwtSecret     []byte
+	tokenTTL      time.Duration
+	cache         *cache.Cache
+	db            database.DBIF
 	revokedTokens sync.Map // token hash -> expiry time
 }
 
@@ -120,6 +121,10 @@ type AuthRequest struct {
 			Token *struct {
 				ID string `json:"id"`
 			} `json:"token,omitempty"`
+			ApplicationCredential *struct {
+				ID     string `json:"id"`
+				Secret string `json:"secret"`
+			} `json:"application_credential,omitempty"`
 		} `json:"identity"`
 		Scope *ScopeField `json:"scope,omitempty"`
 	} `json:"auth"`
@@ -128,12 +133,12 @@ type AuthRequest struct {
 // AuthResponse represents an authentication response
 type AuthResponse struct {
 	Token struct {
-		ExpiresAt string                 `json:"expires_at"`
-		IssuedAt  string                 `json:"issued_at"`
-		Methods   []string               `json:"methods"`
-		User      map[string]interface{} `json:"user"`
-		Catalog   []CatalogEntry         `json:"catalog,omitempty"`
-		Project   *map[string]interface{} `json:"project,omitempty"`
+		ExpiresAt string                   `json:"expires_at"`
+		IssuedAt  string                   `json:"issued_at"`
+		Methods   []string                 `json:"methods"`
+		User      map[string]interface{}   `json:"user"`
+		Catalog   []CatalogEntry           `json:"catalog,omitempty"`
+		Project   *map[string]interface{}  `json:"project,omitempty"`
 		Roles     []map[string]interface{} `json:"roles,omitempty"`
 	} `json:"token"`
 }
@@ -329,18 +334,26 @@ func (s *AuthService) AuthenticatePassword(ctx context.Context, req *AuthRequest
 		}
 
 		resp.Token.Project = &map[string]interface{}{
-			"id":   project.ID,
-			"name": project.Name,
+			"id":        project.ID,
+			"name":      project.Name,
+			"is_domain": false,
 			"domain": map[string]interface{}{
 				"id":   project.DomainID,
 				"name": projectDomainName,
 			},
 		}
 
-		// Add roles
+		// Add roles with proper IDs
 		for _, roleName := range roles {
+			var roleID string
+			_ = s.activeDB().QueryRow(ctx,
+				"SELECT id FROM roles WHERE name = $1", roleName,
+			).Scan(&roleID)
+			if roleID == "" {
+				roleID = roleName // fallback
+			}
 			resp.Token.Roles = append(resp.Token.Roles, map[string]interface{}{
-				"id":   roleName,
+				"id":   roleID,
 				"name": roleName,
 			})
 		}
@@ -508,24 +521,216 @@ func (s *AuthService) AuthenticateToken(ctx context.Context, req *AuthRequest) (
 		}
 
 		resp.Token.Project = &map[string]interface{}{
-			"id":   project.ID,
-			"name": project.Name,
+			"id":        project.ID,
+			"name":      project.Name,
+			"is_domain": false,
 			"domain": map[string]interface{}{
 				"id":   project.DomainID,
 				"name": projectDomainName,
 			},
 		}
 
-		// Add roles
+		// Add roles with proper IDs
 		for _, roleName := range roles {
+			var roleID string
+			_ = s.activeDB().QueryRow(ctx,
+				"SELECT id FROM roles WHERE name = $1", roleName,
+			).Scan(&roleID)
+			if roleID == "" {
+				roleID = roleName // fallback
+			}
 			resp.Token.Roles = append(resp.Token.Roles, map[string]interface{}{
-				"id":   roleName,
+				"id":   roleID,
 				"name": roleName,
 			})
 		}
 
 		// Add service catalog
 		resp.Token.Catalog = BuildServiceCatalog(projectID, s.cache)
+	}
+
+	return resp, tokenString, nil
+}
+
+// AuthenticateApplicationCredential authenticates using an application credential
+func (s *AuthService) AuthenticateApplicationCredential(ctx context.Context, req *AuthRequest) (*AuthResponse, string, error) {
+	if req.Auth.Identity.ApplicationCredential == nil {
+		return nil, "", common.NewBadRequestError("application_credential authentication required")
+	}
+
+	credID := req.Auth.Identity.ApplicationCredential.ID
+	secret := req.Auth.Identity.ApplicationCredential.Secret
+
+	if credID == "" || secret == "" {
+		return nil, "", common.NewBadRequestError("application credential id and secret are required")
+	}
+
+	// Look up the application credential by ID
+	var userID, secretHash, name string
+	var projectID *string
+	var expiresAt *time.Time
+	err := s.activeDB().QueryRow(ctx, `
+		SELECT user_id, project_id, secret_hash, name, expires_at
+		FROM application_credentials
+		WHERE id = $1
+	`, credID).Scan(&userID, &projectID, &secretHash, &name, &expiresAt)
+
+	if err == pgx.ErrNoRows {
+		return nil, "", common.NewUnauthorizedError("invalid application credential")
+	}
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to look up application credential: %w", err)
+	}
+
+	// Check expiration before bcrypt to save CPU on expired credentials
+	if expiresAt != nil && time.Now().After(*expiresAt) {
+		return nil, "", common.NewUnauthorizedError("application credential has expired")
+	}
+
+	// Verify the secret against the bcrypt hash
+	if err := bcrypt.CompareHashAndPassword([]byte(secretHash), []byte(secret)); err != nil {
+		return nil, "", common.NewUnauthorizedError("invalid application credential")
+	}
+
+	// Fetch the associated user
+	var user database.User
+	err = s.activeDB().QueryRow(ctx,
+		"SELECT id, name, password_hash, enabled, domain_id FROM users WHERE id = $1",
+		userID,
+	).Scan(&user.ID, &user.Name, &user.PasswordHash, &user.Enabled, &user.DomainID)
+
+	if err == pgx.ErrNoRows {
+		return nil, "", common.NewUnauthorizedError("user not found for application credential")
+	}
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to look up user for application credential: %w", err)
+	}
+
+	if !user.Enabled {
+		return nil, "", common.NewUnauthorizedError("user is disabled")
+	}
+
+	// Determine project scope from the app credential
+	var scopeProjectID string
+	if projectID != nil {
+		scopeProjectID = *projectID
+	}
+
+	// Get roles for this application credential
+	var roles []string
+	rows, err := s.activeDB().Query(ctx, `
+		SELECT r.name
+		FROM application_credential_roles acr
+		JOIN roles r ON acr.role_id = r.id
+		WHERE acr.application_credential_id = $1
+	`, credID)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to fetch application credential roles: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var roleName string
+		if err := rows.Scan(&roleName); err != nil {
+			return nil, "", fmt.Errorf("failed to scan role: %w", err)
+		}
+		roles = append(roles, roleName)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", fmt.Errorf("failed to iterate application credential roles: %w", err)
+	}
+
+	// Generate JWT token
+	now := time.Now()
+	expiresAtTime := now.Add(s.tokenTTL)
+	claims := &TokenClaims{
+		UserID:    user.ID,
+		UserName:  user.Name,
+		ProjectID: scopeProjectID,
+		Roles:     roles,
+		RegisteredClaims: jwt.RegisteredClaims{
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(expiresAtTime),
+			Subject:   user.ID,
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString(s.jwtSecret)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to sign token: %w", err)
+	}
+
+	// Build response
+	resp := &AuthResponse{}
+	resp.Token.ExpiresAt = expiresAtTime.Format(time.RFC3339)
+	resp.Token.IssuedAt = now.Format(time.RFC3339)
+	resp.Token.Methods = req.Auth.Identity.Methods
+
+	// Query user's domain name
+	var userDomainName string
+	err = s.activeDB().QueryRow(ctx,
+		"SELECT name FROM domains WHERE id = $1",
+		user.DomainID,
+	).Scan(&userDomainName)
+	if err != nil {
+		userDomainName = "Default"
+	}
+
+	resp.Token.User = map[string]interface{}{
+		"id":   user.ID,
+		"name": user.Name,
+		"domain": map[string]interface{}{
+			"id":   user.DomainID,
+			"name": userDomainName,
+		},
+	}
+
+	// Add project and catalog if scoped
+	if scopeProjectID != "" {
+		var proj database.Project
+		err = s.activeDB().QueryRow(ctx,
+			"SELECT id, name, description, enabled, domain_id FROM projects WHERE id = $1",
+			scopeProjectID,
+		).Scan(&proj.ID, &proj.Name, &proj.Description, &proj.Enabled, &proj.DomainID)
+		if err == nil {
+			var projectDomainName string
+			err = s.activeDB().QueryRow(ctx,
+				"SELECT name FROM domains WHERE id = $1",
+				proj.DomainID,
+			).Scan(&projectDomainName)
+			if err != nil {
+				projectDomainName = "Default"
+			}
+
+			resp.Token.Project = &map[string]interface{}{
+				"id":        proj.ID,
+				"name":      proj.Name,
+				"is_domain": false,
+				"domain": map[string]interface{}{
+					"id":   proj.DomainID,
+					"name": projectDomainName,
+				},
+			}
+		}
+
+		// Add roles with proper IDs
+		for _, roleName := range roles {
+			var roleID string
+			_ = s.activeDB().QueryRow(ctx,
+				"SELECT id FROM roles WHERE name = $1", roleName,
+			).Scan(&roleID)
+			if roleID == "" {
+				roleID = roleName // fallback
+			}
+			resp.Token.Roles = append(resp.Token.Roles, map[string]interface{}{
+				"id":   roleID,
+				"name": roleName,
+			})
+		}
+
+		// Add service catalog
+		resp.Token.Catalog = BuildServiceCatalog(scopeProjectID, s.cache)
 	}
 
 	return resp, tokenString, nil
@@ -561,18 +766,24 @@ func (s *AuthService) RevokeToken(tokenString string, expiresAt time.Time) {
 	hash := tokenHash(tokenString)
 	s.revokedTokens.Store(hash, expiresAt)
 
-	// Also persist to DB for multi-instance awareness
+	// Persist to DB synchronously for multi-instance awareness
 	if db := s.activeDB(); db != nil {
-		db.Exec(context.Background(),
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := db.Exec(ctx,
 			`INSERT INTO revoked_tokens (token_hash, expires_at) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
 			hash, expiresAt,
-		)
+		); err != nil {
+			log.Error().Err(err).Str("token_hash", hash).Msg("failed to persist token revocation to DB")
+		}
 	}
 }
 
 // IsTokenRevoked checks if a token has been revoked
 func (s *AuthService) IsTokenRevoked(tokenString string) bool {
 	hash := tokenHash(tokenString)
+
+	// Fast path: check in-memory map
 	if val, ok := s.revokedTokens.Load(hash); ok {
 		expiry := val.(time.Time)
 		if time.Now().After(expiry) {
@@ -581,10 +792,38 @@ func (s *AuthService) IsTokenRevoked(tokenString string) bool {
 		}
 		return true
 	}
-	return false
+
+	// Slow path: check the database
+	db := s.activeDB()
+	if db == nil {
+		return false
+	}
+
+	var expiresAt time.Time
+	err := db.QueryRow(context.Background(),
+		"SELECT expires_at FROM revoked_tokens WHERE token_hash = $1",
+		hash,
+	).Scan(&expiresAt)
+
+	if err != nil {
+		// Not found or DB error — treat as not revoked
+		return false
+	}
+
+	// Found in DB — check if already expired
+	if time.Now().After(expiresAt) {
+		// Token expired anyway, clean it up from DB asynchronously
+		go db.Exec(context.Background(),
+			"DELETE FROM revoked_tokens WHERE token_hash = $1", hash)
+		return false
+	}
+
+	// Cache in sync.Map for future fast lookups
+	s.revokedTokens.Store(hash, expiresAt)
+	return true
 }
 
-// CleanExpiredRevocations removes expired entries from the denylist
+// CleanExpiredRevocations removes expired entries from the denylist (in-memory and DB)
 func (s *AuthService) CleanExpiredRevocations() {
 	now := time.Now()
 	s.revokedTokens.Range(func(key, value interface{}) bool {
@@ -593,6 +832,12 @@ func (s *AuthService) CleanExpiredRevocations() {
 		}
 		return true
 	})
+
+	// Also clean expired entries from the database
+	if db := s.activeDB(); db != nil {
+		db.Exec(context.Background(),
+			"DELETE FROM revoked_tokens WHERE expires_at < $1", now)
+	}
 }
 
 func tokenHash(token string) string {
@@ -600,9 +845,9 @@ func tokenHash(token string) string {
 	return hex.EncodeToString(h[:])
 }
 
-// HashPassword hashes a password using bcrypt
+// HashPassword hashes a password using bcrypt with cost 12
 func (s *AuthService) HashPassword(password string) ([]byte, error) {
-	return bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	return bcrypt.GenerateFromPassword([]byte(password), 12)
 }
 
 // CheckPassword verifies a password against a bcrypt hash

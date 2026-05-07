@@ -61,6 +61,11 @@ func (svc *Service) ListMigrations(c *gin.Context) {
 
 		migrations = append(migrations, migration)
 	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_migrations").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to list migrations"))
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"migrations": migrations})
 }
@@ -117,6 +122,11 @@ func (svc *Service) ListServerMigrations(c *gin.Context) {
 		}
 
 		migrations = append(migrations, migration)
+	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_server_migrations").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to list server migrations"))
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"migrations": migrations})

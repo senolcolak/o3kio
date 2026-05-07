@@ -117,6 +117,11 @@ func (svc *Service) ListVolumeTransfers(c *gin.Context) {
 			"created_at": createdAt.Format(time.RFC3339),
 		})
 	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_transfers").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to list transfers"))
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"transfers": transfers})
 }

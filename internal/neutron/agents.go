@@ -54,6 +54,11 @@ func (svc *Service) ListAgents(c *gin.Context) {
 
 		agents = append(agents, agent)
 	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_agents").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to list agents"))
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"agents": agents})
 }
@@ -156,6 +161,11 @@ func (svc *Service) ListL3AgentsOnRouter(c *gin.Context) {
 		}
 
 		agents = append(agents, agent)
+	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_l3_agents_on_router").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to list agents"))
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"agents": agents})

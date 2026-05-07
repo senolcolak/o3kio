@@ -47,6 +47,12 @@ func (svc *Service) ListGroups(c *gin.Context) {
 		groups = []gin.H{}
 	}
 
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_groups").Msg("row iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to read groups"))
+		return
+	}
+
 	c.JSON(200, gin.H{"groups": groups})
 }
 
@@ -267,6 +273,12 @@ func (svc *Service) ListGroupUsers(c *gin.Context) {
 
 	if users == nil {
 		users = []gin.H{}
+	}
+
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_group_users").Msg("row iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to read group users"))
+		return
 	}
 
 	c.JSON(200, gin.H{"users": users})

@@ -63,6 +63,11 @@ func (svc *Service) ListKeypairs(c *gin.Context) {
 			},
 		})
 	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_keypairs").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to list keypairs"))
+		return
+	}
 
 	if keypairs == nil {
 		keypairs = []gin.H{}

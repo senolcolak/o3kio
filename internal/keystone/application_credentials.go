@@ -101,6 +101,12 @@ func (svc *Service) ListApplicationCredentials(c *gin.Context) {
 		credentials = append(credentials, credential)
 	}
 
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_application_credentials").Msg("row iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to read application credentials"))
+		return
+	}
+
 	c.JSON(200, gin.H{"application_credentials": credentials})
 }
 
@@ -350,6 +356,8 @@ func (svc *Service) DeleteApplicationCredential(c *gin.Context) {
 // GetApplicationCredentialByID returns an application credential by ID only
 func (svc *Service) GetApplicationCredentialByID(c *gin.Context) {
 	credID := c.Param("id")
+	callerID := c.GetString("user_id")
+	isAdmin := c.GetBool("is_admin")
 
 	var id, userID, name string
 	var projectID, description *string
@@ -369,6 +377,12 @@ func (svc *Service) GetApplicationCredentialByID(c *gin.Context) {
 	if err != nil {
 		log.Error().Err(err).Str("operation", "get_application_credential_by_id").Str("cred_id", credID).Msg("Failed to query application credential")
 		common.SendError(c, common.NewInternalServerError("failed to query application credential"))
+		return
+	}
+
+	// Non-admin users can only view their own application credentials
+	if callerID != userID && !isAdmin {
+		common.SendError(c, common.NewForbiddenError("insufficient privileges"))
 		return
 	}
 

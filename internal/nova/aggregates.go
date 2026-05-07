@@ -66,6 +66,11 @@ func (svc *Service) ListAggregates(c *gin.Context) {
 		}
 		aggregates = append(aggregates, agg)
 	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_aggregates").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to list aggregates"))
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"aggregates": aggregates})
 }

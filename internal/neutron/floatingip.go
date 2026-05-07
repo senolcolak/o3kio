@@ -49,6 +49,7 @@ func (svc *Service) ListFloatingIPs(c *gin.Context) {
 			limit = parsedLimit
 		}
 	}
+	limit = common.CapLimit(limit)
 	if offsetParam := c.Query("offset"); offsetParam != "" {
 		if parsedOffset, err := strconv.Atoi(offsetParam); err == nil && parsedOffset >= 0 {
 			offset = parsedOffset
@@ -139,6 +140,11 @@ func (svc *Service) ListFloatingIPs(c *gin.Context) {
 		}
 
 		floatingIPs = append(floatingIPs, result)
+	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_floatingips").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to list floating IPs"))
+		return
 	}
 
 	if floatingIPs == nil {
@@ -627,6 +633,9 @@ func (svc *Service) allocateFloatingIP(ctx context.Context, subnetCIDR string) (
 			continue
 		}
 		allocatedIPs[ip] = true
+	}
+	if err := rows.Err(); err != nil {
+		return "", fmt.Errorf("iterating allocated IPs: %w", err)
 	}
 
 	// Find first available IP in range

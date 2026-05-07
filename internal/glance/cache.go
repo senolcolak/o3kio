@@ -52,6 +52,11 @@ func (svc *Service) ListCachedImages(c *gin.Context) {
 		}
 		cachedImages = append(cachedImages, image)
 	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_cached_images").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("operation failed"))
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"cached_images": cachedImages})
 }

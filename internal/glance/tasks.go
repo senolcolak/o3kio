@@ -92,6 +92,10 @@ func (svc *Service) ListTasks(c *gin.Context) {
 
 		tasks = append(tasks, task)
 	}
+	if err := rows.Err(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "rows iteration error"})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"tasks":  tasks,

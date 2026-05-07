@@ -79,6 +79,11 @@ func (svc *Service) ListTrunks(c *gin.Context) {
 		}
 		trunks = append(trunks, trunk)
 	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_trunks").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to list trunks"))
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"trunks": trunks})
 }

@@ -53,6 +53,11 @@ func (svc *Service) ListQosSpecs(c *gin.Context) {
 		}
 		qosSpecs = append(qosSpecs, qosSpec)
 	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_qos_specs").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to list QoS specs"))
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"qos_specs": qosSpecs})
 }

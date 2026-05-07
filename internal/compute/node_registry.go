@@ -153,6 +153,9 @@ func (nr *NodeRegistry) ListActiveNodes(ctx context.Context) ([]ComputeNode, err
 		}
 		nodes = append(nodes, node)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating active nodes: %w", err)
+	}
 
 	return nodes, nil
 }

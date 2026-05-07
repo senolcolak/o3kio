@@ -41,7 +41,7 @@ type Service struct {
 
 const (
 	novaMinVersion     = "2.1"
-	novaCurrentVersion = "2.90"
+	novaCurrentVersion = "2.93"
 )
 
 // NeutronService defines the interface for Neutron operations Nova needs
@@ -610,12 +610,13 @@ func (svc *Service) ListServers(c *gin.Context) {
 	projectID := c.GetString("project_id")
 
 	// Parse pagination parameters
-	limit := 1000 // Default limit
+	limit := common.DefaultPaginationLimit
 	if limitParam := c.Query("limit"); limitParam != "" {
 		if parsedLimit, err := strconv.Atoi(limitParam); err == nil && parsedLimit > 0 {
 			limit = parsedLimit
 		}
 	}
+	limit = common.CapLimit(limit)
 
 	// OpenStack uses marker-based pagination (keyset pagination).
 	// OFFSET-based skips rows under concurrent inserts.
@@ -666,6 +667,12 @@ func (svc *Service) ListServers(c *gin.Context) {
 		servers = []gin.H{}
 	}
 
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_servers").Msg("row iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to read servers"))
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{"servers": servers})
 }
 
@@ -674,20 +681,15 @@ func (svc *Service) ListServersDetail(c *gin.Context) {
 	projectID := c.GetString("project_id")
 
 	// Parse pagination parameters
-	limit := 1000
-	offset := 0
+	limit := common.DefaultPaginationLimit
 	if limitParam := c.Query("limit"); limitParam != "" {
 		if parsedLimit, err := strconv.Atoi(limitParam); err == nil && parsedLimit > 0 {
 			limit = parsedLimit
 		}
 	}
-	if offsetParam := c.Query("offset"); offsetParam != "" {
-		if parsedOffset, err := strconv.Atoi(offsetParam); err == nil && parsedOffset >= 0 {
-			offset = parsedOffset
-		}
-	}
+	limit = common.CapLimit(limit)
 
-	// Marker-based pagination
+	// Marker-based pagination (keyset pagination, no OFFSET)
 	var markerCondition string
 	var queryArgs []interface{}
 	queryArgs = append(queryArgs, projectID)
@@ -706,7 +708,7 @@ func (svc *Service) ListServersDetail(c *gin.Context) {
 		}
 	}
 
-	queryArgs = append(queryArgs, limit, offset)
+	queryArgs = append(queryArgs, limit)
 
 	rows, err := svc.activeDB().Query(c.Request.Context(), fmt.Sprintf(`
 		SELECT i.id, i.name, i.status, i.power_state, i.project_id, i.user_id,
@@ -716,8 +718,8 @@ func (svc *Service) ListServersDetail(c *gin.Context) {
 		LEFT JOIN flavors f ON i.flavor_id = f.id
 		WHERE i.project_id = $1%s
 		ORDER BY i.created_at DESC
-		LIMIT $%d OFFSET $%d
-	`, markerCondition, argIdx, argIdx+1), queryArgs...)
+		LIMIT $%d
+	`, markerCondition, argIdx), queryArgs...)
 
 	if err != nil {
 		log.Error().Err(err).Str("operation", "list_servers_detail").Msg("database error")
@@ -753,6 +755,23 @@ func (svc *Service) ListServersDetail(c *gin.Context) {
 		// Get addresses for this instance
 		addresses := svc.getInstanceAddresses(c.Request.Context(), id, projectID)
 
+		// Derive OS-EXT-STS fields from status
+		var taskState interface{}
+		vmState := "active"
+		switch status {
+		case "BUILD", "BUILDING":
+			taskState = "spawning"
+			vmState = "building"
+		case "ACTIVE":
+			vmState = "active"
+		case "SHUTOFF":
+			vmState = "stopped"
+		case "ERROR":
+			vmState = "error"
+		case "DELETED", "SOFT_DELETED":
+			vmState = "deleted"
+		}
+
 		servers = append(servers, gin.H{
 			"id":         id,
 			"name":       name,
@@ -762,8 +781,13 @@ func (svc *Service) ListServersDetail(c *gin.Context) {
 			"created":    createdAt.Format(time.RFC3339),
 			"updated":    updatedAt.Format(time.RFC3339),
 			"addresses":  addresses,
-			"OS-EXT-STS:power_state": powerState,
-			"OS-SRV-USG:launched_at": launchedAtStr,
+			"OS-EXT-STS:power_state":      powerState,
+			"OS-EXT-STS:task_state":       taskState,
+			"OS-EXT-STS:vm_state":         vmState,
+			"OS-EXT-AZ:availability_zone": "nova",
+			"OS-DCF:diskConfig":           "AUTO",
+			"OS-SRV-USG:launched_at":      launchedAtStr,
+			"OS-SRV-USG:terminated_at":    nil,
 			"flavor": gin.H{
 				"id":    flavorID,
 				"vcpus": vcpus,
@@ -776,6 +800,12 @@ func (svc *Service) ListServersDetail(c *gin.Context) {
 
 	if servers == nil {
 		servers = []gin.H{}
+	}
+
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_servers_detail").Msg("row iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to read servers"))
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"servers": servers})
@@ -866,16 +896,45 @@ func (svc *Service) GetServer(c *gin.Context) {
 	// Get addresses from ports
 	addresses := svc.getInstanceAddresses(c.Request.Context(), id, projectID)
 
+	// Derive OS-EXT-STS fields from status
+	var getTaskState interface{}
+	getVMState := "active"
+	switch status {
+	case "BUILD", "BUILDING":
+		getTaskState = "spawning"
+		getVMState = "building"
+	case "ACTIVE":
+		getVMState = "active"
+	case "SHUTOFF":
+		getVMState = "stopped"
+	case "ERROR":
+		getVMState = "error"
+	case "DELETED", "SOFT_DELETED":
+		getVMState = "deleted"
+	}
+
+	// Derive launched_at from created_at when instance is active
+	var getLaunchedAt interface{}
+	if status == "ACTIVE" {
+		getLaunchedAt = createdAt.Format(time.RFC3339)
+	}
+
 	// Build response with nullable fields
 	response := gin.H{
-		"id":                     id,
-		"name":                   name,
-		"status":                 status,
-		"tenant_id":              projID,
-		"created":                createdAt.Format(time.RFC3339),
-		"updated":                updatedAt.Format(time.RFC3339),
-		"addresses":              addresses,
-		"OS-EXT-STS:power_state": powerState,
+		"id":                          id,
+		"name":                        name,
+		"status":                      status,
+		"tenant_id":                   projID,
+		"created":                     createdAt.Format(time.RFC3339),
+		"updated":                     updatedAt.Format(time.RFC3339),
+		"addresses":                   addresses,
+		"OS-EXT-STS:power_state":      powerState,
+		"OS-EXT-STS:task_state":       getTaskState,
+		"OS-EXT-STS:vm_state":         getVMState,
+		"OS-EXT-AZ:availability_zone": "nova",
+		"OS-DCF:diskConfig":           "AUTO",
+		"OS-SRV-USG:launched_at":      getLaunchedAt,
+		"OS-SRV-USG:terminated_at":    nil,
 	}
 
 	if userID != nil {

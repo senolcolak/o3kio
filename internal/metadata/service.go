@@ -151,6 +151,7 @@ func (svc *Service) GetMetaDataJSON(c *gin.Context) {
 				metaMap[key] = value
 			}
 		}
+		// rows.Err() non-critical for metadata
 		if len(metaMap) > 0 {
 			metadata["meta"] = metaMap
 		}
@@ -282,6 +283,11 @@ func (svc *Service) GetNetworkDataJSON(c *gin.Context) {
 
 		networks = append(networks, netConfig)
 		linkID++
+	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "get_network_data_json").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to get network data"))
+		return
 	}
 
 	// Return network_data.json structure

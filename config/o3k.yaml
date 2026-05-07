@@ -1,5 +1,5 @@
 database:
-  url: "postgres://lightstack:secret@localhost/lightstack?sslmode=disable"
+  url: "${DATABASE_URL:postgres://lightstack:changeme@localhost/lightstack?sslmode=disable}"
   max_connections: 50  # Increased from 20 for higher concurrency
   min_connections: 2   # Keep minimal warm connections
   max_conn_lifetime: 1h

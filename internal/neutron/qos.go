@@ -61,6 +61,11 @@ func (svc *Service) ListQoSPolicies(c *gin.Context) {
 		}
 		policies = append(policies, policy)
 	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_qos_policies").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to list QoS policies"))
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"policies": policies})
 }
@@ -313,6 +318,11 @@ func (svc *Service) ListBandwidthLimitRules(c *gin.Context) {
 			"qos_policy_id":  policyID,
 		}
 		rules = append(rules, rule)
+	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_bandwidth_limit_rules").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to list bandwidth limit rules"))
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"bandwidth_limit_rules": rules})

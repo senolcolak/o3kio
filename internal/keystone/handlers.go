@@ -13,6 +13,7 @@ import (
 	"github.com/cobaltcore-dev/o3k/pkg/cache"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 )
 
@@ -201,11 +202,14 @@ func (svc *Service) AuthenticateToken(c *gin.Context) {
 	if req.Auth.Identity.Token != nil && req.Auth.Identity.Token.ID != "" {
 		// Token-based authentication (re-scoping)
 		resp, tokenString, err = svc.authService.AuthenticateToken(c.Request.Context(), &req)
+	} else if req.Auth.Identity.ApplicationCredential != nil {
+		// Application credential authentication
+		resp, tokenString, err = svc.authService.AuthenticateApplicationCredential(c.Request.Context(), &req)
 	} else if req.Auth.Identity.Password != nil {
 		// Password-based authentication
 		resp, tokenString, err = svc.authService.AuthenticatePassword(c.Request.Context(), &req)
 	} else {
-		common.SendError(c, common.NewBadRequestError("password or token authentication required"))
+		common.SendError(c, common.NewBadRequestError("password, token, or application_credential authentication required"))
 		return
 	}
 
@@ -242,17 +246,84 @@ func (svc *Service) ValidateToken(c *gin.Context) {
 		return
 	}
 
-	// Return token info
-	c.JSON(http.StatusOK, gin.H{
-		"token": gin.H{
-			"user": gin.H{
-				"id":   claims.UserID,
-				"name": claims.UserName,
-			},
-			"project_id": claims.ProjectID,
-			"roles":      claims.Roles,
+	// Build full token response (same structure as POST /v3/auth/tokens)
+	tokenResp := gin.H{
+		"methods":    []string{"token"},
+		"expires_at": claims.ExpiresAt.Time.Format(time.RFC3339),
+		"issued_at":  claims.IssuedAt.Time.Format(time.RFC3339),
+	}
+
+	// Query user's domain
+	var userDomainName, userDomainID string
+	err = svc.activeDB().QueryRow(c.Request.Context(),
+		"SELECT d.id, d.name FROM users u JOIN domains d ON u.domain_id = d.id WHERE u.id = $1",
+		claims.UserID,
+	).Scan(&userDomainID, &userDomainName)
+	if err != nil {
+		userDomainID = "default"
+		userDomainName = "Default"
+	}
+
+	tokenResp["user"] = gin.H{
+		"id":   claims.UserID,
+		"name": claims.UserName,
+		"domain": gin.H{
+			"id":   userDomainID,
+			"name": userDomainName,
 		},
-	})
+	}
+
+	// Add project, roles, and catalog if scoped
+	if claims.ProjectID != "" {
+		var projectName, projectDomainID, projectDomainName string
+		err = svc.activeDB().QueryRow(c.Request.Context(),
+			"SELECT p.name, p.domain_id, d.name FROM projects p JOIN domains d ON p.domain_id = d.id WHERE p.id = $1",
+			claims.ProjectID,
+		).Scan(&projectName, &projectDomainID, &projectDomainName)
+		if err != nil {
+			projectName = claims.ProjectID
+			projectDomainID = "default"
+			projectDomainName = "Default"
+		}
+
+		tokenResp["project"] = gin.H{
+			"id":        claims.ProjectID,
+			"name":      projectName,
+			"is_domain": false,
+			"domain": gin.H{
+				"id":   projectDomainID,
+				"name": projectDomainName,
+			},
+		}
+
+		// Fetch role IDs from database
+		var roles []gin.H
+		for _, roleName := range claims.Roles {
+			var roleID string
+			err = svc.activeDB().QueryRow(c.Request.Context(),
+				"SELECT id FROM roles WHERE name = $1",
+				roleName,
+			).Scan(&roleID)
+			if err != nil {
+				roleID = roleName // fallback to name as ID
+			}
+			roles = append(roles, gin.H{
+				"id":   roleID,
+				"name": roleName,
+			})
+		}
+		if roles == nil {
+			roles = []gin.H{}
+		}
+		tokenResp["roles"] = roles
+
+		// Add service catalog
+		tokenResp["catalog"] = BuildServiceCatalog(claims.ProjectID, svc.cache)
+	} else {
+		tokenResp["roles"] = []gin.H{}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"token": tokenResp})
 }
 
 // RevokeToken revokes a token (DELETE /v3/auth/tokens)
@@ -271,6 +342,14 @@ func (svc *Service) RevokeToken(c *gin.Context) {
 	if err != nil {
 		// Token already invalid, still return 204 per OpenStack behavior
 		c.Status(http.StatusNoContent)
+		return
+	}
+
+	// Authorization check: only the token owner or an admin can revoke
+	requestingUserID := c.GetString("user_id")
+	isAdmin, _ := c.Get("is_admin")
+	if claims.UserID != requestingUserID && isAdmin != true {
+		common.SendError(c, common.NewForbiddenError("only the token owner or an admin can revoke this token"))
 		return
 	}
 
@@ -335,6 +414,12 @@ func (svc *Service) ListAuthProjects(c *gin.Context) {
 		})
 	}
 
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_auth_projects").Msg("row iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to read projects"))
+		return
+	}
+
 	if projects == nil {
 		projects = []gin.H{}
 	}
@@ -342,11 +427,25 @@ func (svc *Service) ListAuthProjects(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"projects": projects})
 }
 
-// ListUsers lists all users
+// ListUsers lists all users (admin sees all, non-admin sees only themselves)
 func (svc *Service) ListUsers(c *gin.Context) {
-	rows, err := svc.activeDB().Query(c.Request.Context(),
-		"SELECT id, name, enabled, domain_id FROM users ORDER BY name",
-	)
+	isAdmin, _ := c.Get("is_admin")
+	requestingUserID := c.GetString("user_id")
+
+	ctx := c.Request.Context()
+	var rows pgx.Rows
+	var err error
+
+	if isAdmin == true {
+		rows, err = svc.activeDB().Query(ctx,
+			"SELECT id, name, enabled, domain_id FROM users ORDER BY name",
+		)
+	} else {
+		rows, err = svc.activeDB().Query(ctx,
+			"SELECT id, name, enabled, domain_id FROM users WHERE id = $1",
+			requestingUserID,
+		)
+	}
 	if err != nil {
 		log.Error().Err(err).Str("operation", "list_users").Msg("Failed to query users")
 		common.SendError(c, common.NewInternalServerError("failed to query users"))
@@ -371,12 +470,27 @@ func (svc *Service) ListUsers(c *gin.Context) {
 		})
 	}
 
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_users").Msg("row iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to read users"))
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{"users": users})
 }
 
-// GetUser returns a single user
+// GetUser returns a single user (non-admin can only view their own record)
 func (svc *Service) GetUser(c *gin.Context) {
-	userID := c.Param("id")
+	isAdmin := c.GetBool("is_admin")
+	callerID := c.GetString("user_id")
+	requestedID := c.Param("id")
+
+	if !isAdmin && callerID != requestedID {
+		common.SendError(c, common.NewForbiddenError("insufficient privileges"))
+		return
+	}
+
+	userID := requestedID
 
 	var id, name, domainID string
 	var enabled bool
@@ -398,11 +512,27 @@ func (svc *Service) GetUser(c *gin.Context) {
 	}})
 }
 
-// ListProjects lists all projects
+// ListProjects lists projects (admin sees all, non-admin sees only assigned projects)
 func (svc *Service) ListProjects(c *gin.Context) {
-	rows, err := svc.activeDB().Query(c.Request.Context(),
-		"SELECT id, name, description, enabled, domain_id FROM projects ORDER BY name",
-	)
+	isAdmin := c.GetBool("is_admin")
+	userID := c.GetString("user_id")
+	ctx := c.Request.Context()
+
+	var rows pgx.Rows
+	var err error
+
+	if isAdmin {
+		rows, err = svc.activeDB().Query(ctx,
+			"SELECT id, name, description, enabled, domain_id FROM projects ORDER BY name",
+		)
+	} else {
+		rows, err = svc.activeDB().Query(ctx,
+			`SELECT DISTINCT p.id, p.name, p.description, p.enabled, p.domain_id
+			 FROM projects p
+			 JOIN role_assignments ra ON ra.project_id = p.id
+			 WHERE ra.user_id = $1
+			 ORDER BY p.name`, userID)
+	}
 	if err != nil {
 		log.Error().Err(err).Str("operation", "list_projects").Msg("Failed to query projects")
 		common.SendError(c, common.NewInternalServerError("failed to query projects"))
@@ -426,6 +556,12 @@ func (svc *Service) ListProjects(c *gin.Context) {
 			"enabled":     enabled,
 			"domain_id":   domainID,
 		})
+	}
+
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_projects").Msg("row iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to read projects"))
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"projects": projects})
@@ -638,6 +774,12 @@ func (svc *Service) ListRoles(c *gin.Context) {
 			"id":   id,
 			"name": name,
 		})
+	}
+
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_roles").Msg("row iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to read roles"))
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"roles": roles})
@@ -873,6 +1015,12 @@ func (svc *Service) ListUserProjectRoles(c *gin.Context) {
 		roles = []gin.H{}
 	}
 
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_user_project_roles").Msg("row iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to read roles"))
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{"roles": roles})
 }
 
@@ -907,6 +1055,9 @@ func (svc *Service) CheckRoleAssignment(c *gin.Context) {
 
 // ListRoleAssignments handles GET /v3/role_assignments
 func (svc *Service) ListRoleAssignments(c *gin.Context) {
+	isAdmin := c.GetBool("is_admin")
+	callerID := c.GetString("user_id")
+
 	// Parse query parameters
 	userID := c.Query("user.id")
 	projectID := c.Query("scope.project.id")
@@ -919,6 +1070,13 @@ func (svc *Service) ListRoleAssignments(c *gin.Context) {
 	          WHERE 1=1`
 	args := []interface{}{}
 	argIdx := 1
+
+	// Non-admin users can only see their own role assignments
+	if !isAdmin {
+		query += fmt.Sprintf(" AND ra.user_id = $%d", argIdx)
+		args = append(args, callerID)
+		argIdx++
+	}
 
 	if userID != "" {
 		query += fmt.Sprintf(" AND ra.user_id = $%d", argIdx)
@@ -969,6 +1127,12 @@ func (svc *Service) ListRoleAssignments(c *gin.Context) {
 
 	if assignments == nil {
 		assignments = []gin.H{}
+	}
+
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_role_assignments").Msg("row iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to read role assignments"))
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"role_assignments": assignments})
@@ -1345,6 +1509,12 @@ func (svc *Service) GetUserProjects(c *gin.Context) {
 		})
 	}
 
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "get_user_projects").Msg("row iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to read projects"))
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{"projects": projects})
 }
 
@@ -1395,6 +1565,12 @@ func (svc *Service) GetUserGroups(c *gin.Context) {
 			"description": description,
 			"domain_id":   domainID,
 		})
+	}
+
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "get_user_groups").Msg("row iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to read groups"))
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"groups": groups})

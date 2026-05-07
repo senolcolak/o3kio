@@ -50,6 +50,12 @@ func (svc *Service) ListDomains(c *gin.Context) {
 		domains = append(domains, domain)
 	}
 
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_domains").Msg("row iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to read domains"))
+		return
+	}
+
 	c.JSON(200, gin.H{"domains": domains})
 }
 

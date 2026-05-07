@@ -59,6 +59,11 @@ func (svc *Service) ListAddressScopes(c *gin.Context) {
 		}
 		scopes = append(scopes, scope)
 	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_address_scopes").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to list address scopes"))
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"address_scopes": scopes})
 }

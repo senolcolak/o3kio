@@ -56,6 +56,11 @@ func (svc *Service) ListMetadefNamespaces(c *gin.Context) {
 
 		namespaces = append(namespaces, ns)
 	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_metadef_namespaces").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("operation failed"))
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"namespaces": namespaces})
 }
@@ -189,6 +194,7 @@ func (svc *Service) GetMetadefNamespace(c *gin.Context) {
 
 			rtAssocs = append(rtAssocs, rt)
 		}
+		// rows.Err() non-critical for resource type associations
 
 		if len(rtAssocs) > 0 {
 			result["resource_type_associations"] = rtAssocs

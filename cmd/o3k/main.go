@@ -428,7 +428,7 @@ func createKeystoneServer(cfg *common.Config, svc *keystone.Service, authService
 
 	// Root version discovery
 	r.GET("/", func(c *gin.Context) {
-		baseURL := fmt.Sprintf("%s://%s/v3", schemeFromRequest(c), c.Request.Host)
+		baseURL := common.BaseURL(c, cfg.Keystone.Port) + "/v3"
 		c.JSON(200, gin.H{
 			"versions": gin.H{
 				"values": []gin.H{
@@ -459,6 +459,7 @@ func createNovaServer(cfg *common.Config, svc *nova.Service, authService *keysto
 	r.Use(middleware.RecoveryMiddleware())
 	r.Use(middleware.CORSMiddlewareWithConfig(cfg.Server.CORSAllowedOrigins))
 	r.Use(middleware.AuthMiddleware(authService))
+	r.Use(nova.MicroversionMiddleware())
 	r.NoRoute(middleware.NotFoundHandler())
 	r.HandleMethodNotAllowed = true
 	r.NoMethod(middleware.MethodNotAllowedHandler())

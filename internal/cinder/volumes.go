@@ -294,13 +294,14 @@ func (svc *Service) ListVolumes(c *gin.Context) {
 	}
 
 	// Parse pagination parameters
-	limit := 1000
+	limit := common.DefaultPaginationLimit
 	offset := 0
 	if limitParam := c.Query("limit"); limitParam != "" {
 		if parsedLimit, err := strconv.Atoi(limitParam); err == nil && parsedLimit > 0 {
 			limit = parsedLimit
 		}
 	}
+	limit = common.CapLimit(limit)
 	if offsetParam := c.Query("offset"); offsetParam != "" {
 		if parsedOffset, err := strconv.Atoi(offsetParam); err == nil && parsedOffset >= 0 {
 			offset = parsedOffset
@@ -329,7 +330,7 @@ func (svc *Service) ListVolumes(c *gin.Context) {
 	queryArgs = append(queryArgs, limit, offset)
 
 	rows, err := svc.activeDB().Query(c.Request.Context(), fmt.Sprintf(`
-		SELECT id, name, size_gb
+		SELECT id, name, size_gb, status, bootable
 		FROM volumes
 		WHERE project_id = $1%s
 		ORDER BY created_at DESC
@@ -345,19 +346,28 @@ func (svc *Service) ListVolumes(c *gin.Context) {
 
 	var volumes []gin.H
 	for rows.Next() {
-		var id, name string
+		var id, name, status string
 		var size int
+		var bootable bool
 
-		if err := rows.Scan(&id, &name, &size); err != nil {
+		if err := rows.Scan(&id, &name, &size, &status, &bootable); err != nil {
 			log.Warn().Err(err).Msg("failed to scan volume row")
 			continue
 		}
 
 		volumes = append(volumes, gin.H{
-			"id":   id,
-			"name": name,
-			"size": size,
+			"id":                id,
+			"name":              name,
+			"size":              size,
+			"status":            status,
+			"bootable":          fmt.Sprintf("%t", bootable),
+			"availability_zone": "nova",
 		})
+	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_volumes").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to list volumes"))
+		return
 	}
 
 	if volumes == nil {
@@ -376,13 +386,14 @@ func (svc *Service) ListVolumesDetail(c *gin.Context) {
 	}
 
 	// Parse pagination parameters
-	limit := 1000
+	limit := common.DefaultPaginationLimit
 	offset := 0
 	if limitParam := c.Query("limit"); limitParam != "" {
 		if parsedLimit, err := strconv.Atoi(limitParam); err == nil && parsedLimit > 0 {
 			limit = parsedLimit
 		}
 	}
+	limit = common.CapLimit(limit)
 	if offsetParam := c.Query("offset"); offsetParam != "" {
 		if parsedOffset, err := strconv.Atoi(offsetParam); err == nil && parsedOffset >= 0 {
 			offset = parsedOffset
@@ -447,16 +458,24 @@ func (svc *Service) ListVolumesDetail(c *gin.Context) {
 		}
 
 		volumes = append(volumes, gin.H{
-			"id":          id,
-			"name":        name,
-			"tenant_id":   projectID,
-			"size":        size,
-			"status":      status,
-			"bootable":    fmt.Sprintf("%t", bootable),
-			"created_at":  createdAt.Format("2006-01-02T15:04:05.000000"),
-			"updated_at":  updatedAt.Format("2006-01-02T15:04:05.000000"),
-			"attachments": attachments,
+			"id":                id,
+			"name":              name,
+			"tenant_id":         projectID,
+			"size":              size,
+			"status":            status,
+			"bootable":          fmt.Sprintf("%t", bootable),
+			"availability_zone": "nova",
+			"volume_type":       "default",
+			"encrypted":         false,
+			"created_at":        createdAt.Format("2006-01-02T15:04:05.000000"),
+			"updated_at":        updatedAt.Format("2006-01-02T15:04:05.000000"),
+			"attachments":       attachments,
 		})
+	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_volumes_detail").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to list volumes"))
+		return
 	}
 
 	if volumes == nil {
@@ -508,15 +527,18 @@ func (svc *Service) GetVolume(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"volume": gin.H{
-			"id":          id,
-			"name":        name,
-			"tenant_id":   projectID,
-			"size":        size,
-			"status":      status,
-			"bootable":    fmt.Sprintf("%t", bootable),
-			"created_at":  createdAt.Format("2006-01-02T15:04:05.000000"),
-			"updated_at":  updatedAt.Format("2006-01-02T15:04:05.000000"),
-			"attachments": attachments,
+			"id":                id,
+			"name":              name,
+			"tenant_id":         projectID,
+			"size":              size,
+			"status":            status,
+			"bootable":          fmt.Sprintf("%t", bootable),
+			"availability_zone": "nova",
+			"volume_type":       "default",
+			"encrypted":         false,
+			"created_at":        createdAt.Format("2006-01-02T15:04:05.000000"),
+			"updated_at":        updatedAt.Format("2006-01-02T15:04:05.000000"),
+			"attachments":       attachments,
 		},
 	})
 }
@@ -1054,12 +1076,22 @@ func (svc *Service) ListSnapshotsDetail(c *gin.Context) {
 		projectID = c.GetString("project_id")
 	}
 
+	// Parse pagination parameters
+	limit := common.DefaultPaginationLimit
+	if limitParam := c.Query("limit"); limitParam != "" {
+		if parsedLimit, err := strconv.Atoi(limitParam); err == nil && parsedLimit > 0 {
+			limit = parsedLimit
+		}
+	}
+	limit = common.CapLimit(limit)
+
 	rows, err := svc.activeDB().Query(c.Request.Context(), `
 		SELECT id, name, volume_id, size_gb, status, created_at
 		FROM snapshots
 		WHERE project_id = $1
 		ORDER BY created_at DESC
-	`, projectID)
+		LIMIT $2
+	`, projectID, limit)
 
 	if err != nil {
 		log.Error().Err(err).Str("operation", "list_snapshots_detail").Msg("failed to query snapshots")
@@ -1087,6 +1119,11 @@ func (svc *Service) ListSnapshotsDetail(c *gin.Context) {
 			"status":     status,
 			"created_at": createdAt.Format("2006-01-02T15:04:05.000000"),
 		})
+	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_snapshots").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to list snapshots"))
+		return
 	}
 
 	if snapshots == nil {
@@ -1117,12 +1154,22 @@ func (svc *Service) ListSnapshots(c *gin.Context) {
 		projectID = c.GetString("project_id")
 	}
 
+	// Parse pagination parameters
+	limit := common.DefaultPaginationLimit
+	if limitParam := c.Query("limit"); limitParam != "" {
+		if parsedLimit, err := strconv.Atoi(limitParam); err == nil && parsedLimit > 0 {
+			limit = parsedLimit
+		}
+	}
+	limit = common.CapLimit(limit)
+
 	rows, err := svc.activeDB().Query(c.Request.Context(), `
 		SELECT id, name, volume_id, size_gb, status, created_at
 		FROM snapshots
 		WHERE project_id = $1
 		ORDER BY created_at DESC
-	`, projectID)
+		LIMIT $2
+	`, projectID, limit)
 
 	if err != nil {
 		log.Error().Err(err).Str("operation", "list_snapshots").Msg("failed to query snapshots")
@@ -1150,6 +1197,11 @@ func (svc *Service) ListSnapshots(c *gin.Context) {
 			"status":     status,
 			"created_at": createdAt.Format("2006-01-02T15:04:05.000000"),
 		})
+	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_snapshots_detail").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to list snapshots"))
+		return
 	}
 
 	if snapshots == nil {
@@ -1276,6 +1328,11 @@ func (svc *Service) ListVolumeTypes(c *gin.Context) {
 			"description": description,
 			"is_public":   isPublic,
 		})
+	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_volume_types").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to list volume types"))
+		return
 	}
 
 	if types == nil {
@@ -1491,6 +1548,11 @@ func (svc *Service) GetVolumeMetadata(c *gin.Context) {
 		}
 		metadata[key] = value
 	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "get_metadata").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to get metadata"))
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"metadata": metadata})
 }
@@ -1699,6 +1761,11 @@ func (svc *Service) GetSnapshotMetadata(c *gin.Context) {
 			continue
 		}
 		metadata[key] = value
+	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "get_metadata").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to get metadata"))
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"metadata": metadata})

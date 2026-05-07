@@ -56,6 +56,11 @@ func (svc *Service) ListMeteringLabels(c *gin.Context) {
 
 		labels = append(labels, label)
 	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_metering_labels").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to list metering labels"))
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"metering_labels": labels})
 }
@@ -211,6 +216,11 @@ func (svc *Service) ListMeteringLabelRules(c *gin.Context) {
 		}
 
 		rules = append(rules, rule)
+	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_metering_label_rules").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to list metering label rules"))
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"metering_label_rules": rules})

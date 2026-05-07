@@ -72,6 +72,11 @@ func (svc *Service) GetQuotaSet(c *gin.Context) {
 		quotaSet[resource] = limit
 		delete(defaults, resource) // Remove from defaults if found in DB
 	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "get_quota_set").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to get quota set"))
+		return
+	}
 
 	// Add any missing defaults
 	for resource, limit := range defaults {

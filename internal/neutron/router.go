@@ -150,6 +150,11 @@ func (svc *Service) ListRouters(c *gin.Context) {
 			"updated_at":            r.UpdatedAt.Format(time.RFC3339),
 		})
 	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_routers").Msg("rows iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to list routers"))
+		return
+	}
 
 	if routers == nil {
 		routers = []gin.H{}
@@ -607,6 +612,9 @@ func (svc *Service) configureExternalGateway(ctx context.Context, routerID strin
 			if err := svc.routerManager.EnableSNAT(routerID, externalInterface, internalCIDR); err != nil {
 				fmt.Printf("Warning: failed to enable SNAT for %s: %v\n", internalCIDR, err)
 			}
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("iterating internal subnets: %w", err)
 		}
 	}
 

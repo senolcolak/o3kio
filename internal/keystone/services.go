@@ -51,6 +51,12 @@ func (svc *Service) ListServices(c *gin.Context) {
 		services = append(services, service)
 	}
 
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_services").Msg("row iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to read services"))
+		return
+	}
+
 	c.JSON(200, gin.H{"services": services})
 }
 
@@ -299,6 +305,12 @@ func (svc *Service) ListEndpoints(c *gin.Context) {
 		}
 
 		endpoints = append(endpoints, endpoint)
+	}
+
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_endpoints").Msg("row iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to read endpoints"))
+		return
 	}
 
 	c.JSON(200, gin.H{"endpoints": endpoints})
