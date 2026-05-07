@@ -303,7 +303,7 @@ func (s *AuthService) AuthenticatePassword(ctx context.Context, req *AuthRequest
 	resp := &AuthResponse{}
 	resp.Token.ExpiresAt = expiresAt.Format(time.RFC3339)
 	resp.Token.IssuedAt = now.Format(time.RFC3339)
-	resp.Token.Methods = req.Auth.Identity.Methods
+	resp.Token.Methods = []string{"password"}
 
 	// Query user's domain name
 	var userDomainName string
@@ -493,7 +493,7 @@ func (s *AuthService) AuthenticateToken(ctx context.Context, req *AuthRequest) (
 	resp := &AuthResponse{}
 	resp.Token.ExpiresAt = expiresAt.Format(time.RFC3339)
 	resp.Token.IssuedAt = now.Format(time.RFC3339)
-	resp.Token.Methods = req.Auth.Identity.Methods
+	resp.Token.Methods = []string{"token"}
 
 	// Query user's domain name
 	var userDomainName string
@@ -558,44 +558,46 @@ func (s *AuthService) AuthenticateToken(ctx context.Context, req *AuthRequest) (
 	return resp, tokenString, nil
 }
 
-// AuthenticateApplicationCredential authenticates using an application credential
-func (s *AuthService) AuthenticateApplicationCredential(ctx context.Context, req *AuthRequest) (*AuthResponse, string, error) {
+// AuthenticateApplicationCredential authenticates using an application credential.
+// The returned bool is the unrestricted flag of the credential used for authentication.
+func (s *AuthService) AuthenticateApplicationCredential(ctx context.Context, req *AuthRequest) (*AuthResponse, string, bool, error) {
 	if req.Auth.Identity.ApplicationCredential == nil {
-		return nil, "", common.NewBadRequestError("application_credential authentication required")
+		return nil, "", false, common.NewBadRequestError("application_credential authentication required")
 	}
 
 	credID := req.Auth.Identity.ApplicationCredential.ID
 	secret := req.Auth.Identity.ApplicationCredential.Secret
 
 	if credID == "" || secret == "" {
-		return nil, "", common.NewBadRequestError("application credential id and secret are required")
+		return nil, "", false, common.NewBadRequestError("application credential id and secret are required")
 	}
 
-	// Look up the application credential by ID
+	// Look up the application credential by ID, including the unrestricted flag
 	var userID, secretHash, name string
 	var projectID *string
 	var expiresAt *time.Time
+	var unrestricted bool
 	err := s.activeDB().QueryRow(ctx, `
-		SELECT user_id, project_id, secret_hash, name, expires_at
+		SELECT user_id, project_id, secret_hash, name, expires_at, unrestricted
 		FROM application_credentials
 		WHERE id = $1
-	`, credID).Scan(&userID, &projectID, &secretHash, &name, &expiresAt)
+	`, credID).Scan(&userID, &projectID, &secretHash, &name, &expiresAt, &unrestricted)
 
 	if err == pgx.ErrNoRows {
-		return nil, "", common.NewUnauthorizedError("invalid application credential")
+		return nil, "", false, common.NewUnauthorizedError("invalid application credential")
 	}
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to look up application credential: %w", err)
+		return nil, "", false, fmt.Errorf("failed to look up application credential: %w", err)
 	}
 
 	// Check expiration before bcrypt to save CPU on expired credentials
 	if expiresAt != nil && time.Now().After(*expiresAt) {
-		return nil, "", common.NewUnauthorizedError("application credential has expired")
+		return nil, "", false, common.NewUnauthorizedError("application credential has expired")
 	}
 
 	// Verify the secret against the bcrypt hash
 	if err := bcrypt.CompareHashAndPassword([]byte(secretHash), []byte(secret)); err != nil {
-		return nil, "", common.NewUnauthorizedError("invalid application credential")
+		return nil, "", false, common.NewUnauthorizedError("invalid application credential")
 	}
 
 	// Fetch the associated user
@@ -606,14 +608,14 @@ func (s *AuthService) AuthenticateApplicationCredential(ctx context.Context, req
 	).Scan(&user.ID, &user.Name, &user.PasswordHash, &user.Enabled, &user.DomainID)
 
 	if err == pgx.ErrNoRows {
-		return nil, "", common.NewUnauthorizedError("user not found for application credential")
+		return nil, "", false, common.NewUnauthorizedError("user not found for application credential")
 	}
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to look up user for application credential: %w", err)
+		return nil, "", false, fmt.Errorf("failed to look up user for application credential: %w", err)
 	}
 
 	if !user.Enabled {
-		return nil, "", common.NewUnauthorizedError("user is disabled")
+		return nil, "", false, common.NewUnauthorizedError("user is disabled")
 	}
 
 	// Determine project scope from the app credential
@@ -631,19 +633,19 @@ func (s *AuthService) AuthenticateApplicationCredential(ctx context.Context, req
 		WHERE acr.application_credential_id = $1
 	`, credID)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to fetch application credential roles: %w", err)
+		return nil, "", false, fmt.Errorf("failed to fetch application credential roles: %w", err)
 	}
 	defer rows.Close()
 
 	for rows.Next() {
 		var roleName string
 		if err := rows.Scan(&roleName); err != nil {
-			return nil, "", fmt.Errorf("failed to scan role: %w", err)
+			return nil, "", false, fmt.Errorf("failed to scan role: %w", err)
 		}
 		roles = append(roles, roleName)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, "", fmt.Errorf("failed to iterate application credential roles: %w", err)
+		return nil, "", false, fmt.Errorf("failed to iterate application credential roles: %w", err)
 	}
 
 	// Generate JWT token
@@ -664,14 +666,14 @@ func (s *AuthService) AuthenticateApplicationCredential(ctx context.Context, req
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	tokenString, err := token.SignedString(s.jwtSecret)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to sign token: %w", err)
+		return nil, "", false, fmt.Errorf("failed to sign token: %w", err)
 	}
 
 	// Build response
 	resp := &AuthResponse{}
 	resp.Token.ExpiresAt = expiresAtTime.Format(time.RFC3339)
 	resp.Token.IssuedAt = now.Format(time.RFC3339)
-	resp.Token.Methods = req.Auth.Identity.Methods
+	resp.Token.Methods = []string{"application_credential"}
 
 	// Query user's domain name
 	var userDomainName string
@@ -739,7 +741,7 @@ func (s *AuthService) AuthenticateApplicationCredential(ctx context.Context, req
 		resp.Token.Catalog = s.BuildServiceCatalog(scopeProjectID, s.cache)
 	}
 
-	return resp, tokenString, nil
+	return resp, tokenString, unrestricted, nil
 }
 
 // ValidateToken validates and parses a JWT token

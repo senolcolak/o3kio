@@ -16,7 +16,7 @@ import (
 func (svc *Service) buildServerUsages(ctx context.Context, projectID, startParam, stopParam string) []gin.H {
 	query := `
 		SELECT i.id, i.name, COALESCE(f.vcpus, 0), COALESCE(f.ram_mb, 0), COALESCE(f.disk_gb, 0),
-		       i.created_at, i.status
+		       i.created_at, i.status, COALESCE(f.name, '') as flavor_name
 		FROM instances i
 		LEFT JOIN flavors f ON i.flavor_id = f.id
 		WHERE i.project_id = $1`
@@ -32,12 +32,16 @@ func (svc *Service) buildServerUsages(ctx context.Context, projectID, startParam
 	var usages []gin.H
 	for rows.Next() {
 		var (
-			id, name, status string
+			id, name, status     string
 			vcpus, ramMB, diskGB int
 			createdAt            time.Time
+			flavorName           string
 		)
-		if err := rows.Scan(&id, &name, &vcpus, &ramMB, &diskGB, &createdAt, &status); err != nil {
+		if err := rows.Scan(&id, &name, &vcpus, &ramMB, &diskGB, &createdAt, &status, &flavorName); err != nil {
 			continue
+		}
+		if flavorName == "" {
+			flavorName = "unknown"
 		}
 		hours := now.Sub(createdAt).Hours()
 		usages = append(usages, gin.H{
@@ -47,7 +51,7 @@ func (svc *Service) buildServerUsages(ctx context.Context, projectID, startParam
 			"memory_mb": ramMB,
 			"local_gb":  diskGB,
 			"hours":     hours,
-			"flavor":    name, // flavor name not always available; use instance name as fallback
+			"flavor":    flavorName,
 			"state":     status,
 		})
 	}
@@ -56,7 +60,6 @@ func (svc *Service) buildServerUsages(ctx context.Context, projectID, startParam
 	}
 	return usages
 }
-
 
 func isAdminContext(c *gin.Context) bool {
 	roles, _ := c.Get("roles")

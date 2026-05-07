@@ -277,7 +277,7 @@ func (svc *Service) ListImages(c *gin.Context) {
 	queryArgs = append(queryArgs, limit, offset)
 
 	rows, err := svc.activeDB().Query(c.Request.Context(), fmt.Sprintf(`
-		SELECT id, name, status, visibility, size_bytes, disk_format, container_format, min_disk_gb, min_ram_mb, created_at, updated_at
+		SELECT id, name, status, visibility, size_bytes, disk_format, container_format, min_disk_gb, min_ram_mb, created_at, updated_at, COALESCE(project_id, '')
 		FROM images
 		WHERE (visibility = 'public' OR project_id = $1)%s
 		ORDER BY created_at DESC
@@ -297,25 +297,28 @@ func (svc *Service) ListImages(c *gin.Context) {
 		var sizeBytes sql.NullInt64
 		var minDisk, minRAM int
 		var createdAt, updatedAt time.Time
+		var imageOwner string
 
-		if err := rows.Scan(&id, &name, &status, &visibility, &sizeBytes, &diskFormat, &containerFormat, &minDisk, &minRAM, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&id, &name, &status, &visibility, &sizeBytes, &diskFormat, &containerFormat, &minDisk, &minRAM, &createdAt, &updatedAt, &imageOwner); err != nil {
 			continue
 		}
 
 		image := gin.H{
-			"id":                id,
-			"name":              name,
-			"status":            status,
-			"visibility":        visibility,
-			"disk_format":       diskFormat,
-			"container_format":  containerFormat,
-			"min_disk":          minDisk,
-			"min_ram":           minRAM,
-			"created_at":        createdAt.Format(time.RFC3339),
-			"updated_at":        updatedAt.Format(time.RFC3339),
-			"self":              fmt.Sprintf("/v2/images/%s", id),
-			"file":              fmt.Sprintf("/v2/images/%s/file", id),
-			"schema":            "/v2/schemas/image",
+			"id":               id,
+			"name":             name,
+			"status":           status,
+			"visibility":       visibility,
+			"disk_format":      diskFormat,
+			"container_format": containerFormat,
+			"min_disk":         minDisk,
+			"min_ram":          minRAM,
+			"owner":            imageOwner,
+			"protected":        false,
+			"created_at":       createdAt.Format(time.RFC3339),
+			"updated_at":       updatedAt.Format(time.RFC3339),
+			"self":             fmt.Sprintf("/v2/images/%s", id),
+			"file":             fmt.Sprintf("/v2/images/%s/file", id),
+			"schema":           "/v2/schemas/image",
 		}
 
 		if sizeBytes.Valid {
@@ -363,15 +366,16 @@ func (svc *Service) GetImage(c *gin.Context) {
 	var sizeBytes sql.NullInt64
 	var minDisk, minRAM int
 	var createdAt, updatedAt time.Time
+	var imageOwner string
 
 	// Try by UUID first, then by name if UUID parsing fails
 	// Use CAST to handle non-UUID strings gracefully
 	err := svc.activeDB().QueryRow(ctx, `
-		SELECT id, name, status, visibility, size_bytes, disk_format, container_format, min_disk_gb, min_ram_mb, checksum, created_at, updated_at
+		SELECT id, name, status, visibility, size_bytes, disk_format, container_format, min_disk_gb, min_ram_mb, checksum, created_at, updated_at, COALESCE(project_id, '')
 		FROM images
 		WHERE (id::text = $1 OR name = $1) AND (visibility = 'public' OR project_id = $2)
 		LIMIT 1
-	`, imageID, projectID).Scan(&id, &name, &status, &visibility, &sizeBytes, &diskFormat, &containerFormat, &minDisk, &minRAM, &checksum, &createdAt, &updatedAt)
+	`, imageID, projectID).Scan(&id, &name, &status, &visibility, &sizeBytes, &diskFormat, &containerFormat, &minDisk, &minRAM, &checksum, &createdAt, &updatedAt, &imageOwner)
 
 	if err == pgx.ErrNoRows {
 		common.SendError(c, common.NewNotFoundError("image"))
@@ -384,19 +388,21 @@ func (svc *Service) GetImage(c *gin.Context) {
 	}
 
 	image := gin.H{
-		"id":                id,
-		"name":              name,
-		"status":            status,
-		"visibility":        visibility,
-		"disk_format":       diskFormat,
-		"container_format":  containerFormat,
-		"min_disk":          minDisk,
-		"min_ram":           minRAM,
-		"created_at":        createdAt.Format(time.RFC3339),
-		"updated_at":        updatedAt.Format(time.RFC3339),
-		"self":              fmt.Sprintf("/v2/images/%s", id),
-		"file":              fmt.Sprintf("/v2/images/%s/file", id),
-		"schema":            "/v2/schemas/image",
+		"id":               id,
+		"name":             name,
+		"status":           status,
+		"visibility":       visibility,
+		"disk_format":      diskFormat,
+		"container_format": containerFormat,
+		"min_disk":         minDisk,
+		"min_ram":          minRAM,
+		"owner":            imageOwner,
+		"protected":        false,
+		"created_at":       createdAt.Format(time.RFC3339),
+		"updated_at":       updatedAt.Format(time.RFC3339),
+		"self":             fmt.Sprintf("/v2/images/%s", id),
+		"file":             fmt.Sprintf("/v2/images/%s/file", id),
+		"schema":           "/v2/schemas/image",
 	}
 
 	if sizeBytes.Valid {

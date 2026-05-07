@@ -10,10 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/rs/zerolog/log"
 	"github.com/cobaltcore-dev/o3k/internal/common"
 	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/cobaltcore-dev/o3k/internal/middleware"
@@ -21,20 +17,24 @@ import (
 	"github.com/cobaltcore-dev/o3k/internal/tunnel"
 	"github.com/cobaltcore-dev/o3k/pkg/cache"
 	"github.com/cobaltcore-dev/o3k/pkg/hypervisor"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/rs/zerolog/log"
 )
 
 // Service handles Nova API endpoints
 type Service struct {
-	db            database.DBIF
-	libvirtURI    string
-	libvirtMode   string
-	vmManager     *hypervisor.VMManager
-	cache         *cache.Cache
-	neutronSvc    NeutronService // For port allocation
-	dispatcher    *tunnel.Dispatcher
-	wg            sync.WaitGroup
-	ctx           context.Context
-	cancel        context.CancelFunc
+	db          database.DBIF
+	libvirtURI  string
+	libvirtMode string
+	vmManager   *hypervisor.VMManager
+	cache       *cache.Cache
+	neutronSvc  NeutronService // For port allocation
+	dispatcher  *tunnel.Dispatcher
+	wg          sync.WaitGroup
+	ctx         context.Context
+	cancel      context.CancelFunc
 	// quotaMu serialises quota check + INSERT per project to prevent TOCTOU races.
 	quotaMu sync.Map // map[projectID]*sync.Mutex
 }
@@ -590,17 +590,17 @@ func (svc *Service) CreateServer(c *gin.Context) {
 	// Return instance details
 	c.JSON(http.StatusAccepted, gin.H{
 		"server": gin.H{
-			"id":         instanceID,
-			"name":       req.Server.Name,
-			"status":     "BUILD",
-			"tenant_id":  projectID,
-			"user_id":    userID,
-			"created":    now.Format(time.RFC3339),
-			"updated":    now.Format(time.RFC3339),
-			"flavor":     gin.H{"id": flavor.ID},
-			"image":      gin.H{"id": req.Server.ImageRef},
-			"metadata":   gin.H{},
-			"adminPass":  common.GeneratePassword(16),
+			"id":        instanceID,
+			"name":      req.Server.Name,
+			"status":    "BUILD",
+			"tenant_id": projectID,
+			"user_id":   userID,
+			"created":   now.Format(time.RFC3339),
+			"updated":   now.Format(time.RFC3339),
+			"flavor":    gin.H{"id": flavor.ID},
+			"image":     gin.H{"id": req.Server.ImageRef},
+			"metadata":  gin.H{},
+			"adminPass": common.GeneratePassword(16),
 		},
 	})
 }
@@ -768,23 +768,23 @@ func (svc *Service) ListServersDetail(c *gin.Context) {
 
 		hostStr := host.String // empty string if NULL
 		servers = append(servers, gin.H{
-			"id":         id,
-			"name":       name,
-			"status":     status,
-			"tenant_id":  projectID,
-			"user_id":    userID,
-			"created":    createdAt.Format(time.RFC3339),
-			"updated":    updatedAt.Format(time.RFC3339),
-			"addresses":  addresses,
-			"OS-EXT-STS:power_state":      powerState,
-			"OS-EXT-STS:task_state":       taskState,
-			"OS-EXT-STS:vm_state":         vmState,
-			"OS-EXT-AZ:availability_zone": "nova",
-			"OS-DCF:diskConfig":           "AUTO",
-			"OS-SRV-USG:launched_at":      launchedAtStr,
-			"OS-SRV-USG:terminated_at":    nil,
-			"OS-EXT-SRV-ATTR:host":              hostStr,
-			"OS-EXT-SRV-ATTR:instance_name":     fmt.Sprintf("instance-%s", id[:8]),
+			"id":                                  id,
+			"name":                                name,
+			"status":                              status,
+			"tenant_id":                           projectID,
+			"user_id":                             userID,
+			"created":                             createdAt.Format(time.RFC3339),
+			"updated":                             updatedAt.Format(time.RFC3339),
+			"addresses":                           addresses,
+			"OS-EXT-STS:power_state":              powerState,
+			"OS-EXT-STS:task_state":               taskState,
+			"OS-EXT-STS:vm_state":                 vmState,
+			"OS-EXT-AZ:availability_zone":         "nova",
+			"OS-DCF:diskConfig":                   "AUTO",
+			"OS-SRV-USG:launched_at":              launchedAtStr,
+			"OS-SRV-USG:terminated_at":            nil,
+			"OS-EXT-SRV-ATTR:host":                hostStr,
+			"OS-EXT-SRV-ATTR:instance_name":       fmt.Sprintf("instance-%s", id[:8]),
 			"OS-EXT-SRV-ATTR:hypervisor_hostname": hostStr,
 			"flavor": gin.H{
 				"id":    flavorID,
@@ -846,8 +846,8 @@ func (svc *Service) getInstanceAddresses(ctx context.Context, instanceID, projec
 		for _, ipInfo := range fixedIPs {
 			if ipAddr, ok := ipInfo["ip_address"].(string); ok {
 				addressList = append(addressList, gin.H{
-					"addr":    ipAddr,
-					"version": 4,
+					"addr":            ipAddr,
+					"version":         4,
 					"OS-EXT-IPS:type": "fixed",
 				})
 			}
@@ -870,17 +870,18 @@ func (svc *Service) GetServer(c *gin.Context) {
 	var userID, flavorID, imageID interface{}
 	var powerState int
 	var createdAt, updatedAt time.Time
+	var launchedAt *time.Time
 	var host sql.NullString
 
 	// Try to find by ID first, then by name
 	// Use separate conditions to avoid type mismatch when id is UUID and param might be a name
 	err := svc.activeDB().QueryRow(c.Request.Context(), `
-		SELECT id, name, status, power_state, project_id, user_id, flavor_id, image_id, created_at, updated_at, host
+		SELECT id, name, status, power_state, project_id, user_id, flavor_id, image_id, created_at, updated_at, host, launched_at
 		FROM instances
 		WHERE project_id = $2 AND (
 			(id::text = $1) OR (name = $1)
 		)
-	`, instanceID, projectID).Scan(&id, &name, &status, &powerState, &projID, &userID, &flavorID, &imageID, &createdAt, &updatedAt, &host)
+	`, instanceID, projectID).Scan(&id, &name, &status, &powerState, &projID, &userID, &flavorID, &imageID, &createdAt, &updatedAt, &host, &launchedAt)
 
 	if err == pgx.ErrNoRows {
 		common.SendError(c, common.NewNotFoundError("instance"))
@@ -912,32 +913,34 @@ func (svc *Service) GetServer(c *gin.Context) {
 		getVMState = "deleted"
 	}
 
-	// Derive launched_at from created_at when instance is active
+	// Use DB launched_at if non-null; fall back to created_at for ACTIVE instances
 	var getLaunchedAt interface{}
-	if status == "ACTIVE" {
+	if launchedAt != nil {
+		getLaunchedAt = launchedAt.Format(time.RFC3339)
+	} else if status == "ACTIVE" {
 		getLaunchedAt = createdAt.Format(time.RFC3339)
 	}
 
 	// Build response with nullable fields
 	hostStr := host.String // empty string if NULL
 	response := gin.H{
-		"id":                          id,
-		"name":                        name,
-		"status":                      status,
-		"tenant_id":                   projID,
-		"created":                     createdAt.Format(time.RFC3339),
-		"updated":                     updatedAt.Format(time.RFC3339),
-		"OS-EXT-SRV-ATTR:host":              hostStr,
-		"OS-EXT-SRV-ATTR:instance_name":     fmt.Sprintf("instance-%s", id[:8]),
+		"id":                                  id,
+		"name":                                name,
+		"status":                              status,
+		"tenant_id":                           projID,
+		"created":                             createdAt.Format(time.RFC3339),
+		"updated":                             updatedAt.Format(time.RFC3339),
+		"OS-EXT-SRV-ATTR:host":                hostStr,
+		"OS-EXT-SRV-ATTR:instance_name":       fmt.Sprintf("instance-%s", id[:8]),
 		"OS-EXT-SRV-ATTR:hypervisor_hostname": hostStr,
-		"addresses":                   addresses,
-		"OS-EXT-STS:power_state":      powerState,
-		"OS-EXT-STS:task_state":       getTaskState,
-		"OS-EXT-STS:vm_state":         getVMState,
-		"OS-EXT-AZ:availability_zone": "nova",
-		"OS-DCF:diskConfig":           "AUTO",
-		"OS-SRV-USG:launched_at":      getLaunchedAt,
-		"OS-SRV-USG:terminated_at":    nil,
+		"addresses":                           addresses,
+		"OS-EXT-STS:power_state":              powerState,
+		"OS-EXT-STS:task_state":               getTaskState,
+		"OS-EXT-STS:vm_state":                 getVMState,
+		"OS-EXT-AZ:availability_zone":         "nova",
+		"OS-DCF:diskConfig":                   "AUTO",
+		"OS-SRV-USG:launched_at":              getLaunchedAt,
+		"OS-SRV-USG:terminated_at":            nil,
 	}
 
 	if userID != nil {
@@ -1511,18 +1514,18 @@ func (svc *Service) GetHypervisorStatistics(c *gin.Context) {
 	// Return aggregated stats
 	c.JSON(200, gin.H{
 		"hypervisor_statistics": gin.H{
-			"count":              1,
-			"current_workload":   0,
+			"count":                1,
+			"current_workload":     0,
 			"disk_available_least": 800,
-			"free_disk_gb":       900,
-			"free_ram_mb":        28672,
-			"local_gb":           1000,
-			"local_gb_used":      100,
-			"memory_mb":          32768,
-			"memory_mb_used":     4096,
-			"running_vms":        runningVMs,
-			"vcpus":              16,
-			"vcpus_used":         runningVMs * 2, // Assume 2 vCPUs per VM
+			"free_disk_gb":         900,
+			"free_ram_mb":          28672,
+			"local_gb":             1000,
+			"local_gb_used":        100,
+			"memory_mb":            32768,
+			"memory_mb_used":       4096,
+			"running_vms":          runningVMs,
+			"vcpus":                16,
+			"vcpus_used":           runningVMs * 2, // Assume 2 vCPUs per VM
 		},
 	})
 }
@@ -1721,37 +1724,37 @@ func (svc *Service) ListServices(c *gin.Context) {
 	c.JSON(200, gin.H{
 		"services": []gin.H{
 			{
-				"id":                 1,
-				"binary":             "nova-compute",
-				"host":               "o3k-compute-1",
-				"zone":               "nova",
-				"status":             "enabled",
-				"state":              "up",
-				"updated_at":         now,
-				"disabled_reason":    nil,
-				"forced_down":        false,
+				"id":              1,
+				"binary":          "nova-compute",
+				"host":            "o3k-compute-1",
+				"zone":            "nova",
+				"status":          "enabled",
+				"state":           "up",
+				"updated_at":      now,
+				"disabled_reason": nil,
+				"forced_down":     false,
 			},
 			{
-				"id":                 2,
-				"binary":             "nova-scheduler",
-				"host":               "o3k-controller",
-				"zone":               "internal",
-				"status":             "enabled",
-				"state":              "up",
-				"updated_at":         now,
-				"disabled_reason":    nil,
-				"forced_down":        false,
+				"id":              2,
+				"binary":          "nova-scheduler",
+				"host":            "o3k-controller",
+				"zone":            "internal",
+				"status":          "enabled",
+				"state":           "up",
+				"updated_at":      now,
+				"disabled_reason": nil,
+				"forced_down":     false,
 			},
 			{
-				"id":                 3,
-				"binary":             "nova-conductor",
-				"host":               "o3k-controller",
-				"zone":               "internal",
-				"status":             "enabled",
-				"state":              "up",
-				"updated_at":         now,
-				"disabled_reason":    nil,
-				"forced_down":        false,
+				"id":              3,
+				"binary":          "nova-conductor",
+				"host":            "o3k-controller",
+				"zone":            "internal",
+				"status":          "enabled",
+				"state":           "up",
+				"updated_at":      now,
+				"disabled_reason": nil,
+				"forced_down":     false,
 			},
 		},
 	})
@@ -1991,14 +1994,14 @@ func (svc *Service) RebuildInstanceAction(c *gin.Context, rebuildData interface{
 	}
 
 	server = gin.H{
-		"id":         instanceID,
-		"name":       serverName,
-		"status":     status,
-		"tenant_id":  projectID,
-		"user_id":    userID,
-		"created":    createdAt.Format(time.RFC3339),
-		"updated":    updatedAt.Format(time.RFC3339),
-		"image":      imageResponse,
+		"id":        instanceID,
+		"name":      serverName,
+		"status":    status,
+		"tenant_id": projectID,
+		"user_id":   userID,
+		"created":   createdAt.Format(time.RFC3339),
+		"updated":   updatedAt.Format(time.RFC3339),
+		"image":     imageResponse,
 		"flavor": gin.H{
 			"id": flavorID,
 		},

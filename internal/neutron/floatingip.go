@@ -50,14 +50,14 @@ func (svc *Service) ListFloatingIPs(c *gin.Context) {
 	}
 	limit = common.CapLimit(limit)
 
-	// Marker-based pagination (by ID)
+	// Marker-based pagination using (created_at, id) for deterministic ordering.
 	var markerCondition string
 	var queryArgs []interface{}
 	queryArgs = append(queryArgs, projectID)
 	argIdx := 2
 
 	if marker := c.Query("marker"); marker != "" {
-		markerCondition = fmt.Sprintf(" AND id > $%d", argIdx)
+		markerCondition = fmt.Sprintf(` AND (created_at, id) > (SELECT created_at, id FROM floating_ips WHERE id = $%d)`, argIdx)
 		queryArgs = append(queryArgs, marker)
 		argIdx++
 	}
@@ -70,7 +70,7 @@ func (svc *Service) ListFloatingIPs(c *gin.Context) {
 		       created_at, updated_at
 		FROM floating_ips
 		WHERE project_id = $1%s
-		ORDER BY id ASC
+		ORDER BY created_at ASC, id ASC
 		LIMIT $%d
 	`, markerCondition, argIdx), queryArgs...)
 

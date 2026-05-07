@@ -237,12 +237,18 @@ func (svc *Service) CreateVolume(c *gin.Context) {
 		return
 	}
 
+	// Resolve volume_type: use request value or default
+	volumeType := req.Volume.VolumeType
+	if volumeType == "" {
+		volumeType = "__DEFAULT__"
+	}
+
 	// Insert into database
 	now := time.Now()
 	_, err := svc.activeDB().Exec(c.Request.Context(), `
-		INSERT INTO volumes (id, name, project_id, user_id, size_gb, status, bootable, rbd_pool, rbd_image, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-	`, volumeID, req.Volume.Name, projectID, userID, req.Volume.Size, "creating", false, svc.cephPool, "volume-"+volumeID, now, now)
+		INSERT INTO volumes (id, name, project_id, user_id, size_gb, status, bootable, volume_type, rbd_pool, rbd_image, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+	`, volumeID, req.Volume.Name, projectID, userID, req.Volume.Size, "creating", false, volumeType, svc.cephPool, "volume-"+volumeID, now, now)
 
 	if err != nil {
 		// Rollback: delete from Ceph
@@ -270,17 +276,20 @@ func (svc *Service) CreateVolume(c *gin.Context) {
 
 	c.JSON(http.StatusAccepted, gin.H{
 		"volume": gin.H{
-			"id":          volumeID,
-			"name":        req.Volume.Name,
-			"tenant_id":   projectID,
-			"user_id":     userID,
-			"size":        req.Volume.Size,
-			"status":      "creating",
-			"bootable":    "false",
-			"created_at":  now.Format("2006-01-02T15:04:05.000000"),
-			"updated_at":  now.Format("2006-01-02T15:04:05.000000"),
-			"metadata":    gin.H{},
-			"attachments": []interface{}{},
+			"id":                volumeID,
+			"name":              req.Volume.Name,
+			"tenant_id":         projectID,
+			"user_id":           userID,
+			"size":              req.Volume.Size,
+			"status":            "creating",
+			"bootable":          "false",
+			"volume_type":       volumeType,
+			"encrypted":         false,
+			"availability_zone": "nova",
+			"created_at":        now.Format("2006-01-02T15:04:05.000000"),
+			"updated_at":        now.Format("2006-01-02T15:04:05.000000"),
+			"metadata":          gin.H{},
+			"attachments":       []interface{}{},
 		},
 	})
 }
@@ -422,7 +431,7 @@ func (svc *Service) ListVolumesDetail(c *gin.Context) {
 	queryArgs = append(queryArgs, limit, offset)
 
 	rows, err := svc.activeDB().Query(c.Request.Context(), fmt.Sprintf(`
-		SELECT v.id, v.name, v.size_gb, v.status, v.bootable, v.attached_to_instance_id, v.created_at, v.updated_at
+		SELECT v.id, v.name, v.size_gb, v.status, v.bootable, v.attached_to_instance_id, v.created_at, v.updated_at, COALESCE(v.volume_type, '__DEFAULT__')
 		FROM volumes v
 		WHERE v.project_id = $1%s
 		ORDER BY v.created_at DESC
@@ -443,8 +452,9 @@ func (svc *Service) ListVolumesDetail(c *gin.Context) {
 		var bootable bool
 		var attachedTo sql.NullString
 		var createdAt, updatedAt time.Time
+		var volumeType string
 
-		if err := rows.Scan(&id, &name, &size, &status, &bootable, &attachedTo, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&id, &name, &size, &status, &bootable, &attachedTo, &createdAt, &updatedAt, &volumeType); err != nil {
 			log.Warn().Err(err).Msg("failed to scan volume detail row")
 			continue
 		}
@@ -465,7 +475,7 @@ func (svc *Service) ListVolumesDetail(c *gin.Context) {
 			"status":            status,
 			"bootable":          fmt.Sprintf("%t", bootable),
 			"availability_zone": "nova",
-			"volume_type":       "default",
+			"volume_type":       volumeType,
 			"encrypted":         false,
 			"created_at":        createdAt.Format("2006-01-02T15:04:05.000000"),
 			"updated_at":        updatedAt.Format("2006-01-02T15:04:05.000000"),
@@ -499,13 +509,14 @@ func (svc *Service) GetVolume(c *gin.Context) {
 	var bootable bool
 	var attachedTo sql.NullString
 	var createdAt, updatedAt time.Time
+	var volumeType string
 
 	// Support lookup by ID or name
 	err := svc.activeDB().QueryRow(c.Request.Context(), `
-		SELECT id, name, size_gb, status, bootable, attached_to_instance_id, created_at, updated_at
+		SELECT id, name, size_gb, status, bootable, attached_to_instance_id, created_at, updated_at, COALESCE(volume_type, '__DEFAULT__')
 		FROM volumes
 		WHERE project_id = $2 AND ((id::text = $1) OR (name = $1))
-	`, volumeID, projectID).Scan(&id, &name, &size, &status, &bootable, &attachedTo, &createdAt, &updatedAt)
+	`, volumeID, projectID).Scan(&id, &name, &size, &status, &bootable, &attachedTo, &createdAt, &updatedAt, &volumeType)
 
 	if err == pgx.ErrNoRows {
 		common.SendError(c, common.NewNotFoundError("volume"))
@@ -534,7 +545,7 @@ func (svc *Service) GetVolume(c *gin.Context) {
 			"status":            status,
 			"bootable":          fmt.Sprintf("%t", bootable),
 			"availability_zone": "nova",
-			"volume_type":       "default",
+			"volume_type":       volumeType,
 			"encrypted":         false,
 			"created_at":        createdAt.Format("2006-01-02T15:04:05.000000"),
 			"updated_at":        updatedAt.Format("2006-01-02T15:04:05.000000"),
@@ -1395,11 +1406,14 @@ func (svc *Service) UpdateVolume(c *gin.Context) {
 	var currentName, currentDesc string
 	var sizeGB int
 	var status string
+	var bootable bool
+	var attachedTo sql.NullString
+	var existingVolumeType string
 	var createdAt, updatedAt time.Time
 	err := svc.activeDB().QueryRow(c.Request.Context(),
-		"SELECT name, COALESCE(description, ''), size_gb, status, created_at, updated_at FROM volumes WHERE id = $1 AND project_id = $2",
+		"SELECT name, COALESCE(description, ''), size_gb, status, bootable, attached_to_instance_id, COALESCE(volume_type, '__DEFAULT__'), created_at, updated_at FROM volumes WHERE id = $1 AND project_id = $2",
 		volumeID, projectID,
-	).Scan(&currentName, &currentDesc, &sizeGB, &status, &createdAt, &updatedAt)
+	).Scan(&currentName, &currentDesc, &sizeGB, &status, &bootable, &attachedTo, &existingVolumeType, &createdAt, &updatedAt)
 
 	if err == pgx.ErrNoRows {
 		common.SendError(c, common.NewNotFoundError("volume"))
@@ -1430,15 +1444,30 @@ func (svc *Service) UpdateVolume(c *gin.Context) {
 		return
 	}
 
+	attachments := []interface{}{}
+	if attachedTo.Valid {
+		attachments = append(attachments, gin.H{
+			"server_id": attachedTo.String,
+			"device":    "/dev/vdb",
+		})
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"volume": gin.H{
-			"id":          volumeID,
-			"name":        currentName,
-			"description": currentDesc,
-			"size":        sizeGB,
-			"status":      status,
-			"created_at":  createdAt.Format("2006-01-02T15:04:05.000000"),
-			"updated_at":  now.Format("2006-01-02T15:04:05.000000"),
+			"id":                volumeID,
+			"name":              currentName,
+			"description":       currentDesc,
+			"tenant_id":         projectID,
+			"size":              sizeGB,
+			"status":            status,
+			"bootable":          fmt.Sprintf("%t", bootable),
+			"availability_zone": "nova",
+			"volume_type":       existingVolumeType,
+			"encrypted":         false,
+			"attachments":       attachments,
+			"metadata":          gin.H{},
+			"created_at":        createdAt.Format("2006-01-02T15:04:05.000000"),
+			"updated_at":        now.Format("2006-01-02T15:04:05.000000"),
 		},
 	})
 }

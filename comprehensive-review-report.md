@@ -1,175 +1,197 @@
-# O3K Production Readiness Assessment — v5 (Post-Fix Deep Audit)
+# O3K Production Readiness Assessment — v6 (Post v5-Fix Deep Audit)
 
 **Date**: 2026-05-07
-**Review Method**: 5 per-package deep-read agents (Wave 0), spec-grounded analysis
-**Branch**: `fix/keystone-idor-access-control` (post all v4 fixes)
-**Previous Score (v4)**: 5.5/10
-**Current Score**: **6.5/10**
+**Review Method**: 5 per-package deep-read agents, spec-grounded analysis
+**Branch**: `fix/v5-critical-high-findings` (commit `34e7172`)
+**Previous Score (v5)**: 6.5/10
+**Current Score**: **7.5/10**
 
 ---
 
 ## Executive Summary
 
-The v4 fix pass resolved 55 issues and raised the actual score from 5.5 to 6.5. Key improvements: app credential auth works, token revocation is DB-backed, microversion middleware exists, marker pagination on Nova ListServers, admin-only access controls added. However, significant gaps remain in three categories:
+The v5 fix pass resolved all 22 CRITICAL+HIGH findings from the previous review. Key improvements: nested quota format works, server_usages populated, floating IP allocation transactional, marker-based pagination on all Neutron endpoints, OS-EXT-SRV-ATTR present, AuthMiddleware on compat server, microversion major version validated.
 
-1. **Spec features never implemented**: Access rules, policy engine, server_usages, proper quota format
-2. **Inconsistent fix application**: Pagination fixed in some endpoints but not others; rows.Err() added in some paths but missed in auth paths; CapLimit applied inconsistently
-3. **Response shape gaps**: Horizon will still break on quota display, network topology, subnet listing, and server host columns
+However, this deep audit reveals **6 new CRITICALs, 16 HIGHs, 22 MEDIUMs, and 23 LOWs** across all five services. The gaps fall into three categories:
 
-**What works for Terraform**: Basic CRUD for VMs, networks, volumes, security groups, app credentials
-**What breaks for Horizon**: Quota display (wrong format), server host columns (missing), network topology (wrong tenant_id), subnet pagination (broken marker), tenant usage (empty)
-**What's missing from spec**: Access rules, policy engine, legacy migration workflow
+1. **Spec features never implemented**: Access rules, policy engine, legacy_auth backward compat, audit logging (keystone-minimal-iam-design-v2 Week 2 entirely absent)
+2. **Response shape gaps**: Create/Update responses missing fields that Get/List include; Cinder and Glance responses missing mandatory OpenStack API fields
+3. **Operational safety**: Empty JWT secret accepted, unscoped tokens not rejected, console URLs hardcoded to localhost, global table locks
+
+**What works for Terraform**: Basic CRUD for VMs, networks, volumes, security groups, app credentials, floating IPs, routers
+**What breaks for Horizon**: Console (localhost URLs), volume create/update (missing fields), image owner display, SG default rules, usage tab (wrong flavor name), quota defaults (wrong format)
+**What's missing from spec**: Access rules, policy engine, legacy_auth migration, audit events, unrestricted enforcement
 
 ---
 
-## Score Progression
+## Score Justification
 
 ```
-v4 assessment:        5.5/10 (spec coverage measured honestly)
-After v4 fix pass:    6.5/10 (app creds, revocation, microversions, pagination partial)
-Phase 1 target:       7.5/10 (fix remaining CRITICALs + HIGHs)
-Phase 2 target:       8.5/10 (implement access rules, fix quota format, full pagination)
+v5 assessment:                    6.5/10
+After v5 fix pass (this review):  7.5/10
+Next target (fix CRITICALs+HIGHs): 8.5/10
+Full spec compliance target:       9.5/10
 ```
 
-**Why 6.5 not 7.5**: The v4 fix pass fixed the right things but applied them inconsistently. Marker pagination exists for ListServers but not ListServersDetail, ListSubnets, ListRouters, or ListFloatingIPs. rows.Err() was added systemically in Phase 5 but missed in auth.go's most critical paths. The quota format fix was never done (still flat).
+**Why 7.5 not 8.5**: The v5 fixes correctly resolved the issues they targeted (C1-C8, H1-H14 from v5 confirmed fixed). But deeper reading reveals a second layer of issues: Create/Update responses that are incomplete compared to their corresponding Get responses (Cinder, Neutron SG), operational concerns (localhost console URLs, empty JWT), and three entire spec features that were never implemented (access rules, policy engine, legacy_auth). The codebase has improved substantially in correctness but still has gaps that would break Horizon workflows.
 
 ---
 
 ## Findings by Severity
 
-### CRITICAL (8) — Production blockers
+### CRITICAL (6) — Production blockers
 
 | # | Package | Finding | Impact |
 |---|---------|---------|--------|
-| C1 | keystone | compat/embedded.go registers Keystone with NO AuthMiddleware | Full unauthenticated admin access via embedded server |
-| C2 | nova | GetServer/ListServersDetail missing OS-EXT-SRV-ATTR:host attributes | Horizon host column blank |
-| C3 | nova | GetQuotaSet response is flat — not nested per spec | Horizon Quota panel shows all zeros |
-| C4 | nova | server_usages always empty in tenant-usage | Horizon Usage tab shows zero rows |
-| C5 | neutron | allocateFloatingIP scans ALL floating IPs with no subnet filter | Wrong collision detection, performance |
-| C6 | neutron | allocateFloatingIP has TOCTOU race — no transaction | Duplicate floating IP assignment |
-| C7 | neutron | ListNetworks returns caller's project_id as tenant_id | Wrong ownership for shared networks |
-| C8 | nova | allocateNextIP strips CIDR assuming /24 — invalid IPs for other masks | Port creation with malformed addresses |
+| C1 | keystone | Access rules column and enforcement absent | App credentials have no fine-grained restrictions |
+| C2 | keystone | legacy_auth flag missing — pre-migration credentials silently broken | All pre-existing app credentials fail bcrypt verification |
+| C3 | keystone | Policy engine not implemented (spec Week 2 entirely absent) | No resource-level authorization beyond admin/non-admin |
+| C4 | cinder | CreateVolume response missing volume_type, encrypted, availability_zone | Horizon volume create wizard broken |
+| C5 | cinder | UpdateVolume response missing tenant_id, bootable, AZ, volume_type, encrypted, attachments | Horizon volume update UI broken |
+| C6 | neutron | Bridge creation before DB insert — no rollback on failure | Leaked network bridges on host |
 
-### HIGH (14)
+### HIGH (16)
 
 | # | Package | Finding | Impact |
 |---|---------|---------|--------|
-| H1 | keystone | BuildServiceCatalog uses database.DB directly (bypasses DI) | Tests panic on nil DB |
-| H2 | keystone | AuthenticatePassword/Token role-fetch missing rows.Err() | Tokens issued with partial roles on DB blip |
-| H3 | keystone | ChangePassword requires original_password for admin resets | Admin password reset impossible |
-| H4 | keystone | roleRows in app_credentials not deferred — resource leak | DB connection leak |
-| H5 | keystone | BuildServiceCatalog missing rows.Err() — partial catalog cached 24h | Broken endpoint discovery for 24h |
-| H6 | nova | Microversion comparison doesn't validate major == "2" | Version 3.x passes uncapped |
-| H7 | nova | ListServersDetail marker uses created_at alone (not stable) | Non-deterministic pagination |
-| H8 | nova | Console GetRemoteConsole drops non-ErrNoRows DB errors | Fabricated VNC URL on DB failure |
-| H9 | neutron | ListSubnets uses OFFSET pagination (broken marker logic) | Wrong page results |
-| H10 | neutron | ListRouters and ListFloatingIPs use OFFSET pagination | Wrong page results |
-| H11 | neutron | AddRouterInterface response missing network_id, tenant_id, id | Horizon topology broken |
-| H12 | neutron | CreateSecurityGroup/UpdateSecurityGroup missing rules array | Horizon SG panel rendering fails |
-| H13 | neutron | SG rule fields use zero values instead of null | Terraform state drift |
-| H14 | neutron | UpdateSecurityGroup response missing security_group_rules | Post-update rendering broken |
+| H1 | keystone | unrestricted flag stored but never enforced | Any app cred can create nested creds |
+| H2 | keystone | defer roleRows.Close() inside loop — resource leak | Connection pool exhaustion |
+| H3 | keystone | rows.Err() silently skipped in role subquery | Partial roles in response |
+| H4 | keystone | AuthenticateApplicationCredential methods field trusts client input | Token methods forgeable |
+| H5 | nova | GetServer does not query launched_at from DB | Wrong uptime display |
+| H6 | nova | buildServerUsages sets flavor to instance name, not flavor name | Usage tab wrong |
+| H7 | nova | Console URLs hardcoded to localhost:6080 | Console broken in Docker/multi-host |
+| H8 | nova | GetQuotaSetDefaults returns flat values (not nested) | API format inconsistency |
+| H9 | nova | snapshotCount never queried — always zero | Quota display wrong |
+| H10 | neutron | Pagination marker is lexicographic on UUID — non-deterministic | Pages skip/duplicate items |
+| H11 | neutron | provider:network_type always returns "flat" regardless of DB | VXLAN networks display wrong |
+| H12 | neutron | allocateIPFromSubnet locks ALL ports table globally | Performance cliff |
+| H13 | neutron | CreateSecurityGroup returns empty rules (no default egress) | SG panel empty, traffic blocked |
+| H14 | neutron | getSecurityGroupRules omits absent fields instead of null | Horizon JS errors |
+| H15 | cinder | volume_type and availability_zone hardcoded, never read from DB | Stale after retype |
+| H16 | glance | ListImages and GetImage omit owner field | Horizon image panel broken |
 
-### MEDIUM (19)
-
-| # | Package | Finding |
-|---|---------|---------|
-| M1 | keystone | access_rules for app credentials NOT IMPLEMENTED (spec req 4) |
-| M2 | keystone | ValidateToken doesn't re-check user.enabled from DB |
-| M3 | keystone | ListUsers uses interface{} comparison instead of c.GetBool |
-| M4 | keystone | substituteURLTemplates overly broad %s replacement |
-| M5 | keystone | IsTokenRevoked uses context.Background() — no timeout |
-| M6 | nova | GetServer derives launched_at from created_at instead of DB |
-| M7 | nova | UpdateServer hardcodes user_id = projectID |
-| M8 | nova | ListFlavorsDetail does not apply CapLimit |
-| M9 | nova | GetAvailabilityZones rows.Err() not checked |
-| M10 | nova | Hypervisor statistics use hardcoded values |
-| M11 | neutron | allocateIPFromSubnet locks ALL ports table-wide |
-| M12 | neutron | CreateNetwork hard-codes provider:network_type as "flat" |
-| M13 | neutron | GetSecurityGroup duplicates inline logic vs. helper |
-| M14 | cinder | Volume detail missing volume_type, encrypted, availability_zone |
-| M15 | cinder | Volume list (brief) omits status, bootable, AZ |
-| M16 | glance | Image responses missing owner, schema, file fields |
-| M17 | common | Empty JWT secret not caught (only "change-me-in-production") |
-| M18 | common | Empty project_id in token not validated in middleware |
-| M19 | nova | DRY: novaMaxVersion duplicated in microversion.go and handlers.go |
-
-### LOW (7)
+### MEDIUM (22)
 
 | # | Package | Finding |
 |---|---------|---------|
-| L1 | keystone | GetDomain doesn't distinguish ErrNoRows from other DB errors |
-| L2 | keystone | Migration 064 duplicates migration 029 (IF NOT EXISTS) |
-| L3 | keystone | CreateDomain swallows all DB errors as conflict |
-| L4 | nova | Console URLs hardcode localhost:6080 — non-production-safe |
-| L5 | nova | CreateServer response missing OS-EXT-STS fields |
-| L6 | neutron | ListFloatingIPs returns no next-page links |
-| L7 | neutron | fmt.Printf used for warnings instead of structured logger |
+| M1 | keystone | IsTokenRevoked uses context.Background() — no timeout |
+| M2 | keystone | CreateApplicationCredential role IDs not validated against user's roles |
+| M3 | keystone | Audit logging absent (no keystone_auth_events table) |
+| M4 | keystone | handlers_test.go — single trivial test, no auth flow coverage |
+| M5 | keystone | GetDomain maps all DB errors to 404 |
+| M6 | nova | ListFlavorsDetail marker pagination timestamp collision |
+| M7 | nova | GetServer response missing links array |
+| M8 | nova | UpdateServer sets user_id = projectID (data corruption) |
+| M9 | nova | Microversion middleware missing Vary on OpenStack-API-Version |
+| M10 | nova | CheckQuota ignores errors from usage queries |
+| M11 | nova | buildServerUsages ignores start/stop time range params |
+| M12 | nova | GetServer missing security_groups array |
+| M13 | neutron | AddRouterInterface not atomic — port+router_interface can partially succeed |
+| M14 | neutron | ListPorts N+1 query for security groups |
+| M15 | neutron | ListSubnets returns caller's project_id as tenant_id for shared subnets |
+| M16 | neutron | RemoveRouterInterface response missing network_id, tenant_id |
+| M17 | neutron | allocateFloatingIP commits TX then inserts outside TX — race window |
+| M18 | neutron | GetSubnet returns caller's project_id as tenant_id |
+| M19 | neutron | UpdateSecurityGroup response omits created_at, updated_at |
+| M20 | neutron | DeleteSecurityGroup doesn't check if group still in use |
+| M21 | glance | GetImage cache invalidation uses wrong key format |
+| M22 | common | Empty JWT secret accepted (only "change-me-in-production" checked) |
+
+### LOW (23)
+
+| # | Package | Finding |
+|---|---------|---------|
+| L1 | keystone | CleanExpiredRevocations has no caller — memory leak |
+| L2 | keystone | BuildServiceCatalog returns inconsistent map ordering |
+| L3 | keystone | Contract tests missing for spec requirements 1-6 |
+| L4 | nova | ListHypervisors id is integer, not UUID (mv >= 2.53) |
+| L5 | nova | CreateServer response doesn't include full detail shape |
+| L6 | nova | aggregates GetAggregate uses DB round-trip for json.Unmarshal |
+| L7 | nova | DeleteServer doesn't check rows.Err() after port unbind loop |
+| L8 | nova | ListFlavors (brief) has no pagination |
+| L9 | nova | N+1 quota queries (7 individual QueryRow calls) |
+| L10 | neutron | UpdateNetwork ignores DB no-rows — silent success |
+| L11 | neutron | ListSecurityGroupRules has no pagination |
+| L12 | neutron | json.Unmarshal errors silently ignored in multiple places |
+| L13 | neutron | rows.Err() not checked in GetPort security groups query |
+| L14 | neutron | CreateTrunk calls time.Now() multiple times |
+| L15 | neutron | GetTrunk/UpdateTrunk don't check subPortRows.Err() |
+| L16 | neutron | ListNetworkIPAvailabilities uses hardcoded /24 estimate |
+| L17 | neutron | trunks.go subPortRows leaked on error path |
+| L18 | neutron | vxlan_coordinator allocateVNI linear scan without lock |
+| L19 | cinder | ListSnapshots has no marker-based pagination |
+| L20 | cinder | DeleteVolume doesn't check non-ErrNoRows DB errors |
+| L21 | glance | StageImageData buffers entire image in memory |
+| L22 | glance | GetTask leaks internal error details |
+| L23 | common | NewInternalServerError uses computeFault for all services |
 
 ---
 
-## Spec Coverage Analysis (Updated)
+## Spec Coverage Analysis
 
 ### keystone-minimal-iam-design-v2
 
-| Requirement | v4 Status | Current Status |
-|-------------|-----------|----------------|
-| Application credential CRUD | Crash (missing table) | **WORKING** (migration 064 applied) |
-| Application credential authentication | NOT IMPLEMENTED | **WORKING** (dispatch + AuthenticateApplicationCredential) |
-| Access rules for app credentials | NOT IMPLEMENTED | **NOT IMPLEMENTED** — no table, no enforcement |
-| Policy engine (basic RBAC) | PARTIAL | **PARTIAL** — ad-hoc isAdmin checks, no policy evaluation |
-| Token revocation (durable) | BROKEN | **WORKING** — sync.Map + DB slow path |
-| bcrypt cost 12 | PARTIAL (app creds only) | **WORKING** — both user passwords and app creds use cost 12 |
-| Service catalog in token | PARTIAL | **WORKING** — present in auth and ValidateToken |
-| Role UUID in token | BROKEN | **WORKING** — lookup by name, UUID returned |
-| Legacy migration (cost 10→12) | NOT IMPLEMENTED | **NOT IMPLEMENTED** — no re-hash on login |
+| Requirement | Status |
+|-------------|--------|
+| App credential CRUD | WORKING |
+| App credential authentication | WORKING |
+| Bcrypt cost 12 | WORKING |
+| Token revocation (DB-persisted) | WORKING |
+| Service catalog in token | WORKING |
+| Access rules (path/method/service) | NOT IMPLEMENTED |
+| unrestricted flag enforcement | NOT IMPLEMENTED |
+| legacy_auth backward compat | NOT IMPLEMENTED |
+| Policy engine (RBAC evaluation) | NOT IMPLEMENTED |
+| Audit logging (auth events) | NOT IMPLEMENTED |
+| appcreds/ subpackage | NOT IMPLEMENTED |
+| policy/ subpackage | NOT IMPLEMENTED |
+| tokens/ subpackage | NOT IMPLEMENTED |
 
-**Coverage: ~60%** (up from 30%)
+**Coverage: ~45%** (down from 60% claimed in v5 — honest reassessment; stored-but-not-enforced does not count)
 
 ### SPEC-002 (Horizon Full Compatibility)
 
-| Requirement | v4 Status | Current Status |
-|-------------|-----------|----------------|
-| FR-001: Token format with catalog | PARTIAL | **WORKING** (catalog in ValidateToken) |
-| FR-003: Microversion headers | NOT IMPLEMENTED | **WORKING** (middleware adds headers) |
-| FR-005: Server extended attributes | NOT IMPLEMENTED | **PARTIAL** — OS-EXT-STS/AZ/DCF present, OS-EXT-SRV-ATTR missing |
-| FR-006: Marker-based pagination | PARTIAL (1 endpoint) | **PARTIAL** — Nova ListServers fixed, 4 Neutron endpoints still broken |
-| FR-009: Network provider attributes | NOT IMPLEMENTED | **PARTIAL** — fields present but hardcoded "flat" |
-| FR-010: Security group rules in response | NOT IMPLEMENTED | **PARTIAL** — List/Get have rules, Create/Update don't |
-| FR-011: Router interface response | INCOMPLETE | **STILL INCOMPLETE** — missing 3 fields |
-| FR-012: Volume detail attributes | INCOMPLETE | **STILL INCOMPLETE** — missing 3 fields |
-| FR-014: Quota set format | INCORRECT | **STILL INCORRECT** — flat format, not nested |
-| FR-015: Tenant usage with servers | BROKEN | **STILL BROKEN** — empty array |
-| FR-020: Hypervisor statistics | NOT ASSESSED | **BROKEN** — hardcoded capacity values |
+| Requirement | Status |
+|-------------|--------|
+| FR-001: Token format with catalog | WORKING |
+| FR-003: Microversion headers | WORKING (no behavior gating by version) |
+| FR-005: Server extended attributes | PARTIAL (OS-EXT-SRV-ATTR:host present; root_device_name, launch_index missing) |
+| FR-006: Marker-based pagination | PARTIAL (Nova working; Neutron UUID-lexicographic is non-deterministic; Cinder timestamp-only) |
+| FR-009: Network provider attributes | BROKEN (hardcoded "flat") |
+| FR-010: Security group rules in response | PARTIAL (Get/List have rules; Create returns empty) |
+| FR-011: Router interface response | PARTIAL (Add has fields; Remove missing network_id, tenant_id) |
+| FR-012: Volume detail attributes | BROKEN (volume_type, encrypted, AZ hardcoded not from DB) |
+| FR-014: Quota set format | WORKING (nested format correct; defaults endpoint flat — inconsistency) |
+| FR-015: Tenant usage with servers | PARTIAL (populated but flavor field wrong, no time filter) |
+| FR-020: Hypervisor statistics | PARTIAL (running_vms from DB; other values hardcoded) |
 
-**Coverage: ~45%** (up from 25%)
+**Coverage: ~55%** (up from 45% in v5)
 
 ### SPEC-000 (Compliance Addendum)
 
 | Requirement | Status |
 |-------------|--------|
-| Contract test suite | NOT STARTED |
+| Contract test suite | PARTIAL (basic CRUD only, no spec-requirement tests) |
 | Terraform test suite | NOT STARTED |
-| CLI test suite | Partial (bash scripts only) |
+| CLI test suite | Partial (bash scripts) |
 | Schema validation | NOT STARTED |
 | Zero failures policy | Cannot evaluate |
 
-**Coverage: ~10%** (unchanged)
+**Coverage: ~15%** (up from 10%)
 
 ---
 
-## What Now Works (After v4 Fixes)
+## What Now Works (After v5 Fixes — Verified)
 
-- Application credential authentication (full flow)
-- Token revocation persisted to DB (survives restart)
-- Microversion headers on Nova responses
-- Marker-based pagination on Nova ListServers
-- Admin-only access for ListUsers, GetUser, ListRoleAssignments
-- Admin-only for token revocation of other users' tokens
-- OS-EXT-STS:*, OS-EXT-AZ:*, OS-DCF:* on GetServer/ListServersDetail
-- rows.Err() checked in ~67 locations (Phase 5 pass)
-- CapLimit(1000) on most Nova list endpoints
-- IP allocation with FOR UPDATE (ports.go)
-- bcrypt cost 12 for all password hashing
+- C1: AuthMiddleware on compat/embedded.go (VERIFIED)
+- C2: OS-EXT-SRV-ATTR:host present in GetServer/ListServersDetail
+- C3: GetQuotaSet returns nested {in_use, limit, reserved} format
+- C4: server_usages populated from DB
+- C5+C6: allocateFloatingIP uses serializable TX + subnet filter
+- C7: ListNetworks returns project_id from DB as tenant_id
+- C8: allocateNextIP uses net.ParseCIDR (not /24 assumption)
+- H1-H14 from v5: All verified fixed (rows.Err(), defer Close, microversion validation, marker pagination, SG rules in response, etc.)
 
 ---
 
@@ -177,67 +199,65 @@ Phase 2 target:       8.5/10 (implement access rules, fix quota format, full pag
 
 | Scenario | What Happens | Root Cause |
 |----------|--------------|------------|
-| Horizon loads Quota Summary | All zeros | C3: flat format |
-| Horizon shows server host column | Blank | C2: OS-EXT-SRV-ATTR missing |
-| Horizon Usage tab | Zero instance rows | C4: server_usages empty |
-| Horizon network topology shared nets | Wrong owner | C7: caller's project_id as tenant_id |
-| Two floating IP allocations same time | Possible duplicate | C6: no transaction |
-| Terraform creates port on /16 subnet | Malformed IP stored | C8: /24 assumption |
-| Integration tests via compat server | Full admin without auth | C1: no AuthMiddleware |
-| Admin resets user password | 400 Bad Request | H3: original_password required |
-| Neutron subnet listing with marker | Wrong page | H9: OFFSET pagination |
-| SG creation in Horizon | Rules panel empty | H12: no rules in create response |
+| Horizon opens VNC console | Connection refused | H7: localhost:6080 |
+| Horizon creates volume | Missing columns in result | C4: CreateVolume response incomplete |
+| Horizon renames volume | Detail page blanks out | C5: UpdateVolume response incomplete |
+| Horizon image panel | Owner column blank | H16: owner field missing |
+| Horizon Usage tab | Wrong flavor names shown | H6: instance name used as flavor |
+| Horizon SG after create | Empty rules panel | H13: no default egress rules |
+| Horizon quota defaults | API format error | H8: flat format vs nested |
+| VXLAN networks in topology | Shows as "flat" | H11: hardcoded network type |
+| App credential with access rules | Rules not enforced | C1: access_rules absent |
+| Upgrade with existing app creds | All creds fail | C2: no legacy_auth path |
+| Admin resets user password on Terraform | Works | (Fixed in v5) |
 
 ---
 
 ## Remediation Priority
 
-### Phase 1: Fix CRITICALs (3-4 hours)
-1. **C1**: Add AuthMiddleware to compat/embedded.go keystoneGin — 15 min
-2. **C2**: Add OS-EXT-SRV-ATTR:host, instance_name to GetServer/ListServersDetail — 30 min
-3. **C3**: Convert GetQuotaSet to nested format `{in_use, limit, reserved}` — 45 min
-4. **C4**: Populate server_usages from DB in tenant-usage endpoints — 45 min
-5. **C5+C6**: Fix allocateFloatingIP (subnet filter + transaction) — 60 min
-6. **C7**: Read project_id from DB row in ListNetworks/GetNetwork/CreateNetwork — 20 min
-7. **C8**: Replace CIDR string manipulation with net.ParseCIDR + proper IP arithmetic — 30 min
+### Phase 1: Fix CRITICALs (4-6 hours)
+1. **C4+C5**: Complete Cinder Create/UpdateVolume response shapes — 1h
+2. **C6**: Reorder bridge creation after DB insert in CreateNetwork — 30 min
+3. **C1+C2+C3**: Access rules + legacy_auth + policy engine — these are LARGE features, not quick fixes. Estimate: 15-20 hours for access rules + legacy_auth, 30-40 hours for policy engine.
 
-### Phase 2: Fix HIGHs (4-5 hours)
-1. **H1+H5**: Convert BuildServiceCatalog to method on AuthService with rows.Err() — 30 min
-2. **H2**: Add rows.Err() to auth.go role-fetch loops — 15 min
-3. **H3**: Skip original_password when admin resets another user — 20 min
-4. **H4**: Defer roleRows.Close() in application_credentials.go — 15 min
-5. **H6**: Validate major version == "2" in microversion middleware — 10 min
-6. **H7**: ListServersDetail: composite keyset (created_at, id) — 20 min
-7. **H8**: Check err != nil after QueryRow in all 5 console handlers — 20 min
-8. **H9+H10**: Convert ListSubnets/ListRouters/ListFloatingIPs to marker-based + CapLimit — 90 min
-9. **H11**: Add network_id, tenant_id, id to AddRouterInterface response — 15 min
-10. **H12+H14**: Add security_group_rules to CreateSG/UpdateSG responses — 20 min
-11. **H13**: Use nil for absent optional SG rule fields in CreateSecurityGroupRule — 15 min
+### Phase 2: Fix HIGHs (6-8 hours)
+1. **H5-H9**: Nova response fixes (launched_at, flavor name, snapshot count, defaults format) — 2h
+2. **H7**: Console URL from config/request host — 30 min
+3. **H10-H14**: Neutron pagination/response fixes — 3h
+4. **H15-H16**: Cinder/Glance field fixes — 1h
+5. **H1-H4**: Keystone enforcement fixes — 2h
 
-### Phase 3: Fix MEDIUMs (3-4 hours)
-1. **M1**: Access rules — requires migration + enforcement middleware (~3 hours alone)
-2. **M2-M19**: Remaining medium fixes — 2 hours
+### Phase 3: Fix MEDIUMs (4-6 hours)
+- M1-M22: Various correctness and safety fixes — 4-6h
 
-### Phase 4: Spec compliance tests (ongoing)
-- SPEC-000 contract tests, Terraform tests — multi-day effort, not in scope for code fixes
+### Honest Assessment of Remaining Effort
 
-**Estimated total to reach 8/10: 12-15 hours** (Phases 1-3)
+| Category | Effort | Impact on Score |
+|----------|--------|----------------|
+| Fix all HIGHs (H1-H16) | 8-10 hours | 7.5 → 8.0 |
+| Fix all MEDIUMs (M1-M22) | 4-6 hours | 8.0 → 8.5 |
+| Fix Cinder CRITICALs (C4-C6) | 2 hours | Removes 3 production blockers |
+| Implement access rules + legacy_auth (C1+C2) | 15-20 hours | Spec compliance 45% → 70% |
+| Implement policy engine (C3) | 30-40 hours | Spec compliance 70% → 90% |
+
+**Total to reach 8.5/10**: ~20 hours (C4-C6 + all HIGHs + all MEDIUMs)
+**Total to reach 9.5/10**: ~70-80 hours (+ access rules + policy engine + contract tests)
 
 ---
 
 ## Methodology
 
-1. Dispatched 5 per-package Wave 0 agents reading ALL code in each package
-2. Each agent reviewed against three design specifications
-3. Findings cross-referenced with v4 fix list to identify what was resolved vs. what persists
-4. Every finding includes file:line references
-5. No assumptions made — every claim verified by reading actual code
+1. Dispatched 5 per-package Wave 0 agents reading ALL code in each package group
+2. Each agent reviewed against three design specifications (keystone-minimal-iam-design-v2, SPEC-002, SPEC-000)
+3. Every finding verified by reading actual code — no assumptions
+4. Previous v5 fixes (C1-C8, H1-H14) confirmed resolved
+5. Score reflects honest spec coverage + operational readiness
 
 ---
 
 ## Build Status
 
 - `go build ./...` — PASS
-- `go vet ./...` — PASS (ignoring test/contract files)
-- Unit tests — PASS
-- Contract tests — DO NOT EXIST
+- `go vet ./...` — PASS
+- `go test ./internal/...` — PASS (all packages)
+- Contract tests — PARTIAL (basic CRUD only)

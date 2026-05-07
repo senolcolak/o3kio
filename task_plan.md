@@ -1,22 +1,28 @@
-# Task Plan: Fix Critical and High Findings from v5 Review
+# Task Plan: Fix v6 CRITICALs and HIGHs
 
 ## Goal
-Fix all 8 CRITICAL and 14 HIGH findings from the comprehensive review, bringing O3K from 6.5/10 to ~8/10.
+Fix all 6 CRITICAL and 16 HIGH findings from the v6 review, bringing O3K from 7.5/10 to ~8.5/10.
 
 ## Phases
-- [x] Phase 1: Create feature branch
-- [x] Phase 2: Fix CRITICALs (C1-C8) via parallel subagents
-- [x] Phase 3: Fix HIGHs (H1-H14) via parallel subagents
-- [x] Phase 4: Verify — build OK, vet OK, all tests pass
+- [ ] Phase 1: Triage — separate quick fixes from large features
+- [ ] Phase 2: Implement quick CRITICALs + all HIGHs via parallel subagents
+- [ ] Phase 3: Verify — build OK, vet OK, all tests pass
+- [ ] Phase 4: Commit
 
 ## Decisions Made
-- Dispatch by file grouping to avoid conflicts between agents
-- Agent 1: Keystone fixes (C1, H1-H5) — COMPLETE
-- Agent 2: Nova fixes (C2, C3, C4, C8, H6, H7, H8) — COMPLETE
-- Agent 3: Neutron fixes (C5, C6, C7, H9-H14) — COMPLETE
+- C1 (access rules), C2 (legacy_auth), C3 (policy engine): These are multi-day features, NOT quick fixes. Will defer to separate PRs.
+- C4+C5 (Cinder response shapes), C6 (Neutron bridge ordering): Quick fixes, include.
+- H1-H16: All implementable in this pass.
+- Dispatch by file grouping to avoid merge conflicts between agents.
+
+## Agent Assignments
+- Agent 1: Keystone (H1-H4) — unrestricted enforcement, roleRows leak, rows.Err, methods field
+- Agent 2: Nova (H5-H9) — launched_at, flavor name, console URLs, quota defaults, snapshotCount
+- Agent 3: Neutron (C6, H10-H14) — bridge order, pagination, network_type, port lock, SG rules, null fields
+- Agent 4: Cinder+Glance (C4, C5, H15, H16) — volume response shapes, volume_type persistence, glance owner
 
 ## Errors Encountered
-- None
+- (none yet)
 
 ## Status
-**COMPLETE** — All 22 findings fixed. Build passes, vet clean, all tests pass.
+**Currently in Phase 2** — Dispatching subagents

@@ -94,6 +94,11 @@ func (svc *Service) GetQuotaSet(c *gin.Context) {
 		WHERE project_id = $1
 	`, projectID).Scan(&volumeCount, &gigabyteCount)
 
+	// Snapshot usage
+	svc.activeDB().QueryRow(c.Request.Context(),
+		`SELECT COUNT(*) FROM volume_snapshots WHERE project_id = $1`, projectID,
+	).Scan(&snapshotCount)
+
 	// Network resource usage
 	var networkCount, subnetCount, portCount, routerCount, floatingipCount, sgCount, sgrCount int
 	svc.activeDB().QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM networks WHERE project_id = $1`, projectID).Scan(&networkCount)
@@ -187,21 +192,25 @@ func (svc *Service) UpdateQuotaSet(c *gin.Context) {
 func (svc *Service) GetQuotaSetDefaults(c *gin.Context) {
 	projectID := c.Param("id")
 
-	quotaSet := gin.H{
-		"id":                    projectID,
-		"instances":             10,
-		"cores":                 20,
-		"ram":                   51200,
-		"volumes":               10,
-		"gigabytes":             1000,
-		"snapshots":             10,
-		"networks":              10,
-		"subnets":               10,
-		"ports":                 50,
-		"routers":               10,
-		"floatingip":            10,
-		"security_groups":       10,
-		"security_group_rules":  100,
+	defaults := map[string]int{
+		"instances":            10,
+		"cores":                20,
+		"ram":                  51200,
+		"volumes":              10,
+		"gigabytes":            1000,
+		"snapshots":            10,
+		"networks":             10,
+		"subnets":              10,
+		"ports":                50,
+		"routers":              10,
+		"floatingip":           10,
+		"security_groups":      10,
+		"security_group_rules": 100,
+	}
+
+	quotaSet := gin.H{"id": projectID}
+	for resource, limit := range defaults {
+		quotaSet[resource] = gin.H{"in_use": 0, "limit": limit, "reserved": 0}
 	}
 
 	c.JSON(http.StatusOK, gin.H{"quota_set": quotaSet})
@@ -220,19 +229,19 @@ func (svc *Service) CheckQuota(c *gin.Context, resource string, requestedAmount 
 	if err == pgx.ErrNoRows {
 		// No quota set, use defaults
 		defaults := map[string]int{
-			"instances":             10,
-			"cores":                 20,
-			"ram":                   51200,
-			"volumes":               10,
-			"gigabytes":             1000,
-			"snapshots":             10,
-			"networks":              10,
-			"subnets":               10,
-			"ports":                 50,
-			"routers":               10,
-			"floatingip":            10,
-			"security_groups":       10,
-			"security_group_rules":  100,
+			"instances":            10,
+			"cores":                20,
+			"ram":                  51200,
+			"volumes":              10,
+			"gigabytes":            1000,
+			"snapshots":            10,
+			"networks":             10,
+			"subnets":              10,
+			"ports":                50,
+			"routers":              10,
+			"floatingip":           10,
+			"security_groups":      10,
+			"security_group_rules": 100,
 		}
 		limit = defaults[resource]
 	} else if err != nil {
@@ -271,9 +280,9 @@ func (svc *Service) CheckQuota(c *gin.Context, resource string, requestedAmount 
 	// Check if adding requested amount would exceed limit
 	if usage+requestedAmount > limit {
 		return &QuotaExceededError{
-			Resource: resource,
-			Limit:    limit,
-			Usage:    usage,
+			Resource:  resource,
+			Limit:     limit,
+			Usage:     usage,
 			Requested: requestedAmount,
 		}
 	}

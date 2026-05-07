@@ -204,7 +204,12 @@ func (svc *Service) AuthenticateToken(c *gin.Context) {
 		resp, tokenString, err = svc.authService.AuthenticateToken(c.Request.Context(), &req)
 	} else if req.Auth.Identity.ApplicationCredential != nil {
 		// Application credential authentication
-		resp, tokenString, err = svc.authService.AuthenticateApplicationCredential(c.Request.Context(), &req)
+		var unrestricted bool
+		resp, tokenString, unrestricted, err = svc.authService.AuthenticateApplicationCredential(c.Request.Context(), &req)
+		if err == nil {
+			c.Set("auth_method", "application_credential")
+			c.Set("app_credential_unrestricted", unrestricted)
+		}
 	} else if req.Auth.Identity.Password != nil {
 		// Password-based authentication
 		resp, tokenString, err = svc.authService.AuthenticatePassword(c.Request.Context(), &req)

@@ -467,14 +467,7 @@ func (svc *Service) CreateNetwork(c *gin.Context) {
 		shared = *req.Network.Shared
 	}
 
-	// Create bridge in default namespace (not project namespace) for libvirt access
-	if err := svc.brManager.CreateBridge(bridgeName, false, ""); err != nil {
-		log.Error().Err(err).Str("operation", "create_bridge").Str("bridge", bridgeName).Msg("failed to create bridge")
-		common.SendError(c, common.NewInternalServerError("failed to create bridge"))
-		return
-	}
-
-	// Insert into database
+	// Insert into database first; only create the bridge if the insert succeeds.
 	now := time.Now()
 
 	// Determine network type based on VXLAN coordinator
@@ -496,6 +489,15 @@ func (svc *Service) CreateNetwork(c *gin.Context) {
 		return
 	}
 
+	// Create bridge in default namespace (not project namespace) for libvirt access.
+	// If bridge creation fails the network row already exists — log a warning so an
+	// operator can reconcile, but don't return an error: the network is recoverable
+	// (bridge will be created lazily on next port attach).
+	if err := svc.brManager.CreateBridge(bridgeName, false, ""); err != nil {
+		log.Warn().Err(err).Str("operation", "create_bridge").Str("bridge", bridgeName).
+			Msg("bridge creation failed after DB insert; network exists but bridge is absent — reconcile manually")
+	}
+
 	c.JSON(http.StatusCreated, gin.H{
 		"network": gin.H{
 			"id":                        networkID,
@@ -505,7 +507,7 @@ func (svc *Service) CreateNetwork(c *gin.Context) {
 			"status":                    "ACTIVE",
 			"shared":                    shared,
 			"mtu":                       mtu,
-			"provider:network_type":     "flat",
+			"provider:network_type":     networkType,
 			"provider:physical_network": nil,
 			"provider:segmentation_id":  nil,
 			"router:external":           false,
@@ -528,14 +530,14 @@ func (svc *Service) ListNetworks(c *gin.Context) {
 	}
 	limit = common.CapLimit(limit)
 
-	// Marker-based pagination (by ID)
+	// Marker-based pagination using (created_at, id) for deterministic ordering.
 	var markerCondition string
 	var queryArgs []interface{}
 	queryArgs = append(queryArgs, projectID)
 	argIdx := 2
 
 	if marker := c.Query("marker"); marker != "" {
-		markerCondition = fmt.Sprintf(" AND n.id > $%d", argIdx)
+		markerCondition = fmt.Sprintf(` AND (n.created_at, n.id) > (SELECT created_at, id FROM networks WHERE id = $%d)`, argIdx)
 		queryArgs = append(queryArgs, marker)
 		argIdx++
 	}
@@ -543,10 +545,10 @@ func (svc *Service) ListNetworks(c *gin.Context) {
 	queryArgs = append(queryArgs, limit+1)
 
 	rows, err := svc.activeDB().Query(c.Request.Context(), fmt.Sprintf(`
-		SELECT n.id, n.name, n.project_id, n.admin_state_up, n.status, n.shared, n.mtu, n.created_at, n.updated_at
+		SELECT n.id, n.name, n.project_id, n.admin_state_up, n.status, n.shared, n.mtu, n.network_type, n.created_at, n.updated_at
 		FROM networks n
 		WHERE (n.project_id = $1 OR n.shared = true)%s
-		ORDER BY n.id ASC
+		ORDER BY n.created_at ASC, n.id ASC
 		LIMIT $%d
 	`, markerCondition, argIdx), queryArgs...)
 
@@ -559,12 +561,12 @@ func (svc *Service) ListNetworks(c *gin.Context) {
 
 	var networks []gin.H
 	for rows.Next() {
-		var id, name, ownerProjectID, status string
+		var id, name, ownerProjectID, status, networkType string
 		var adminStateUp, shared bool
 		var mtu int
 		var createdAt, updatedAt time.Time
 
-		if err := rows.Scan(&id, &name, &ownerProjectID, &adminStateUp, &status, &shared, &mtu, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&id, &name, &ownerProjectID, &adminStateUp, &status, &shared, &mtu, &networkType, &createdAt, &updatedAt); err != nil {
 			continue
 		}
 
@@ -576,7 +578,7 @@ func (svc *Service) ListNetworks(c *gin.Context) {
 			"status":                   status,
 			"shared":                   shared,
 			"mtu":                      mtu,
-			"provider:network_type":    "flat",
+			"provider:network_type":    networkType,
 			"provider:physical_network": nil,
 			"provider:segmentation_id": nil,
 			"router:external":          false,
@@ -625,17 +627,17 @@ func (svc *Service) GetNetwork(c *gin.Context) {
 	}
 
 	// Cache miss - query database
-	var id, name, ownerProjectID, status string
+	var id, name, ownerProjectID, status, networkType string
 	var adminStateUp, shared bool
 	var mtu int
 	var createdAt, updatedAt time.Time
 
 	err := svc.activeDB().QueryRow(ctx, `
-		SELECT id, name, project_id, admin_state_up, status, shared, mtu, created_at, updated_at
+		SELECT id, name, project_id, admin_state_up, status, shared, mtu, network_type, created_at, updated_at
 		FROM networks
 		WHERE (id::text = $1 OR name = $1) AND (project_id = $2 OR shared = true)
 		LIMIT 1
-	`, networkID, projectID).Scan(&id, &name, &ownerProjectID, &adminStateUp, &status, &shared, &mtu, &createdAt, &updatedAt)
+	`, networkID, projectID).Scan(&id, &name, &ownerProjectID, &adminStateUp, &status, &shared, &mtu, &networkType, &createdAt, &updatedAt)
 
 	if err == pgx.ErrNoRows {
 		common.SendError(c, common.NewNotFoundError("network"))
@@ -655,7 +657,7 @@ func (svc *Service) GetNetwork(c *gin.Context) {
 		"status":                   status,
 		"shared":                   shared,
 		"mtu":                      mtu,
-		"provider:network_type":    "flat",
+		"provider:network_type":    networkType,
 		"provider:physical_network": nil,
 		"provider:segmentation_id": nil,
 		"router:external":          false,
@@ -879,14 +881,14 @@ func (svc *Service) ListSubnets(c *gin.Context) {
 	}
 	limit = common.CapLimit(limit)
 
-	// Marker-based pagination (by ID)
+	// Marker-based pagination using (created_at, id) for deterministic ordering.
 	var markerCondition string
 	var queryArgs []interface{}
 	queryArgs = append(queryArgs, projectID)
 	argIdx := 2
 
 	if marker := c.Query("marker"); marker != "" {
-		markerCondition = fmt.Sprintf(" AND s.id > $%d", argIdx)
+		markerCondition = fmt.Sprintf(` AND (s.created_at, s.id) > (SELECT created_at, id FROM subnets WHERE id = $%d)`, argIdx)
 		queryArgs = append(queryArgs, marker)
 		argIdx++
 	}
@@ -898,7 +900,7 @@ func (svc *Service) ListSubnets(c *gin.Context) {
 		FROM subnets s
 		JOIN networks n ON s.network_id = n.id
 		WHERE (s.project_id = $1 OR n.shared = true)%s
-		ORDER BY s.id ASC
+		ORDER BY s.created_at ASC, s.id ASC
 		LIMIT $%d
 	`, markerCondition, argIdx), queryArgs...)
 

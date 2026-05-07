@@ -557,9 +557,12 @@ func (svc *Service) allocateIPFromSubnet(ctx context.Context, subnetID, cidr str
 	}
 	defer tx.Rollback(ctx)
 
-	// Lock and fetch all allocated IPs for this subnet within the transaction
+	// Lock and fetch allocated IPs only for ports that have a fixed IP in this subnet.
+	// Using a JSONB containment text check narrows the FOR UPDATE lock scope so we
+	// don't serialize all port allocations globally.
 	rows, err := tx.Query(ctx,
-		`SELECT fixed_ips FROM ports WHERE fixed_ips IS NOT NULL FOR UPDATE`,
+		`SELECT fixed_ips FROM ports WHERE fixed_ips IS NOT NULL AND fixed_ips::text LIKE '%' || $1 || '%' FOR UPDATE`,
+		subnetID,
 	)
 	if err != nil {
 		return "", fmt.Errorf("failed to query existing IPs: %w", err)
@@ -648,13 +651,57 @@ func (svc *Service) CreateSecurityGroup(c *gin.Context) {
 		return
 	}
 
+	// Insert two default allow-all egress rules (IPv4 and IPv6) that OpenStack
+	// creates automatically for every new security group.
+	egressRuleIPv4ID := uuid.New().String()
+	egressRuleIPv6ID := uuid.New().String()
+
+	svc.activeDB().Exec(c.Request.Context(), `
+		INSERT INTO security_group_rules (id, security_group_id, direction, ethertype, protocol, port_range_min, port_range_max, remote_ip_prefix, remote_group_id, created_at)
+		VALUES ($1, $2, 'egress', 'IPv4', NULL, NULL, NULL, NULL, NULL, $3)
+	`, egressRuleIPv4ID, sgID, now)
+
+	svc.activeDB().Exec(c.Request.Context(), `
+		INSERT INTO security_group_rules (id, security_group_id, direction, ethertype, protocol, port_range_min, port_range_max, remote_ip_prefix, remote_group_id, created_at)
+		VALUES ($1, $2, 'egress', 'IPv6', NULL, NULL, NULL, NULL, NULL, $3)
+	`, egressRuleIPv6ID, sgID, now)
+
+	defaultRules := []gin.H{
+		{
+			"id":                egressRuleIPv4ID,
+			"security_group_id": sgID,
+			"direction":         "egress",
+			"ethertype":         "IPv4",
+			"protocol":          nil,
+			"port_range_min":    nil,
+			"port_range_max":    nil,
+			"remote_ip_prefix":  nil,
+			"remote_group_id":   nil,
+			"tenant_id":         projectID,
+			"created_at":        now.Format(time.RFC3339),
+		},
+		{
+			"id":                egressRuleIPv6ID,
+			"security_group_id": sgID,
+			"direction":         "egress",
+			"ethertype":         "IPv6",
+			"protocol":          nil,
+			"port_range_min":    nil,
+			"port_range_max":    nil,
+			"remote_ip_prefix":  nil,
+			"remote_group_id":   nil,
+			"tenant_id":         projectID,
+			"created_at":        now.Format(time.RFC3339),
+		},
+	}
+
 	c.JSON(http.StatusCreated, gin.H{
 		"security_group": gin.H{
 			"id":                   sgID,
 			"name":                 req.SecurityGroup.Name,
 			"tenant_id":            projectID,
 			"description":          req.SecurityGroup.Description,
-			"security_group_rules": []gin.H{},
+			"security_group_rules": defaultRules,
 			"created_at":           now.Format(time.RFC3339),
 			"updated_at":           now.Format(time.RFC3339),
 		},
@@ -753,10 +800,11 @@ func (svc *Service) ListSecurityGroups(c *gin.Context) {
 // getSecurityGroupRules fetches all rules for a given security group ID.
 func (svc *Service) getSecurityGroupRules(ctx context.Context, sgID string) []gin.H {
 	rows, err := svc.activeDB().Query(ctx, `
-		SELECT id, direction, ethertype, protocol, port_range_min, port_range_max,
-		       remote_ip_prefix, remote_group_id, created_at
-		FROM security_group_rules
-		WHERE security_group_id = $1
+		SELECT sgr.id, sgr.direction, sgr.ethertype, sgr.protocol, sgr.port_range_min, sgr.port_range_max,
+		       sgr.remote_ip_prefix, sgr.remote_group_id, sgr.created_at, sg.project_id
+		FROM security_group_rules sgr
+		JOIN security_groups sg ON sg.id = sgr.security_group_id
+		WHERE sgr.security_group_id = $1
 	`, sgID)
 	if err != nil {
 		return []gin.H{}
@@ -765,25 +813,33 @@ func (svc *Service) getSecurityGroupRules(ctx context.Context, sgID string) []gi
 
 	rules := []gin.H{}
 	for rows.Next() {
-		var ruleID, direction, ethertype string
+		var ruleID, direction, ethertype, tenantID string
 		var protocol, remoteIPPrefix, remoteGroupID *string
 		var portRangeMin, portRangeMax *int
 		var ruleCreatedAt time.Time
 
 		if err := rows.Scan(&ruleID, &direction, &ethertype, &protocol, &portRangeMin, &portRangeMax,
-			&remoteIPPrefix, &remoteGroupID, &ruleCreatedAt); err != nil {
+			&remoteIPPrefix, &remoteGroupID, &ruleCreatedAt, &tenantID); err != nil {
 			continue
 		}
 
+		// Always include all fields; use nil for absent optional values so JSON
+		// serialises them as null (required by OpenStack API compatibility).
 		rule := gin.H{
 			"id":                ruleID,
 			"security_group_id": sgID,
 			"direction":         direction,
 			"ethertype":         ethertype,
+			"protocol":          nil,
+			"port_range_min":    nil,
+			"port_range_max":    nil,
+			"remote_ip_prefix":  nil,
+			"remote_group_id":   nil,
+			"tenant_id":         tenantID,
 			"created_at":        ruleCreatedAt.Format(time.RFC3339),
 		}
 
-		if protocol != nil {
+		if protocol != nil && *protocol != "" {
 			rule["protocol"] = *protocol
 		}
 		if portRangeMin != nil {
@@ -792,15 +848,11 @@ func (svc *Service) getSecurityGroupRules(ctx context.Context, sgID string) []gi
 		if portRangeMax != nil {
 			rule["port_range_max"] = *portRangeMax
 		}
-		if remoteIPPrefix != nil {
+		if remoteIPPrefix != nil && *remoteIPPrefix != "" {
 			rule["remote_ip_prefix"] = *remoteIPPrefix
-		} else {
-			rule["remote_ip_prefix"] = ""
 		}
-		if remoteGroupID != nil {
+		if remoteGroupID != nil && *remoteGroupID != "" {
 			rule["remote_group_id"] = *remoteGroupID
-		} else {
-			rule["remote_group_id"] = ""
 		}
 
 		rules = append(rules, rule)
@@ -836,68 +888,7 @@ func (svc *Service) GetSecurityGroup(c *gin.Context) {
 	}
 
 	// Fetch associated rules
-	rows, err := svc.activeDB().Query(c.Request.Context(), `
-		SELECT id, direction, ethertype, protocol, port_range_min, port_range_max,
-		       remote_ip_prefix, remote_group_id, created_at
-		FROM security_group_rules
-		WHERE security_group_id = $1
-	`, sgID)
-	if err != nil {
-		log.Error().Err(err).Str("operation", "get_sg_rules").Str("sg_id", sgID).Msg("database error")
-		common.SendError(c, common.NewInternalServerError("failed to get security group rules"))
-		return
-	}
-	defer rows.Close()
-
-	rules := []gin.H{}
-	for rows.Next() {
-		var ruleID, direction, ethertype string
-		var protocol, remoteIPPrefix, remoteGroupID *string
-		var portRangeMin, portRangeMax *int
-		var ruleCreatedAt time.Time
-
-		err := rows.Scan(&ruleID, &direction, &ethertype, &protocol, &portRangeMin, &portRangeMax,
-			&remoteIPPrefix, &remoteGroupID, &ruleCreatedAt)
-		if err != nil {
-			log.Warn().Err(err).Msg("failed to scan security group rule row")
-			continue
-		}
-
-		rule := gin.H{
-			"id":                ruleID,
-			"security_group_id": sgID,
-			"direction":         direction,
-			"ethertype":         ethertype,
-			"created_at":        ruleCreatedAt.Format(time.RFC3339),
-		}
-
-		if protocol != nil {
-			rule["protocol"] = *protocol
-		}
-		if portRangeMin != nil {
-			rule["port_range_min"] = *portRangeMin
-		}
-		if portRangeMax != nil {
-			rule["port_range_max"] = *portRangeMax
-		}
-		if remoteIPPrefix != nil {
-			rule["remote_ip_prefix"] = *remoteIPPrefix
-		} else {
-			rule["remote_ip_prefix"] = ""
-		}
-		if remoteGroupID != nil {
-			rule["remote_group_id"] = *remoteGroupID
-		} else {
-			rule["remote_group_id"] = ""
-		}
-
-		rules = append(rules, rule)
-	}
-	if err := rows.Err(); err != nil {
-		log.Error().Err(err).Str("operation", "get_sg_rules").Str("sg_id", sgID).Msg("rows iteration error")
-		common.SendError(c, common.NewInternalServerError("failed to get security group rules"))
-		return
-	}
+	rules := svc.getSecurityGroupRules(c.Request.Context(), sgID)
 
 	c.JSON(http.StatusOK, gin.H{
 		"security_group": gin.H{

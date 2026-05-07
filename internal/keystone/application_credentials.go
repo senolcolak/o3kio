@@ -84,7 +84,6 @@ func (svc *Service) ListApplicationCredentials(c *gin.Context) {
 			WHERE acr.application_credential_id = $1
 		`, id)
 		if err == nil {
-			defer roleRows.Close()
 			roles := []map[string]interface{}{}
 			for roleRows.Next() {
 				var roleID, roleName string
@@ -95,9 +94,11 @@ func (svc *Service) ListApplicationCredentials(c *gin.Context) {
 					})
 				}
 			}
-			if roleRows.Err() == nil {
-				credential["roles"] = roles
+			if roleRowsErr := roleRows.Err(); roleRowsErr != nil {
+				log.Warn().Err(roleRowsErr).Str("operation", "list_application_credentials").Str("credential_id", id).Msg("error iterating role rows")
 			}
+			roleRows.Close()
+			credential["roles"] = roles
 		}
 
 		credentials = append(credentials, credential)
@@ -142,6 +143,13 @@ func (svc *Service) CreateApplicationCredential(c *gin.Context) {
 			Unrestricted bool                     `json:"unrestricted"`
 			Roles        []map[string]interface{} `json:"roles"`
 		} `json:"application_credential"`
+	}
+
+	// H1: reject creation of new app credentials when caller authenticated via
+	// an app credential that does not have unrestricted=true.
+	if c.GetString("auth_method") == "application_credential" && !c.GetBool("app_credential_unrestricted") {
+		common.SendError(c, common.NewForbiddenError("application credentials cannot be created using a restricted application credential"))
+		return
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -298,7 +306,6 @@ func (svc *Service) GetApplicationCredential(c *gin.Context) {
 		WHERE acr.application_credential_id = $1
 	`, id)
 	if err == nil {
-		defer roleRows.Close()
 		roles := []map[string]interface{}{}
 		for roleRows.Next() {
 			var roleID, roleName string
@@ -309,9 +316,11 @@ func (svc *Service) GetApplicationCredential(c *gin.Context) {
 				})
 			}
 		}
-		if roleRows.Err() == nil {
-			credential["roles"] = roles
+		if roleRowsErr := roleRows.Err(); roleRowsErr != nil {
+			log.Warn().Err(roleRowsErr).Str("operation", "get_application_credential").Str("credential_id", id).Msg("error iterating role rows")
 		}
+		roleRows.Close()
+		credential["roles"] = roles
 	}
 
 	c.JSON(200, gin.H{"application_credential": credential})
@@ -415,7 +424,6 @@ func (svc *Service) GetApplicationCredentialByID(c *gin.Context) {
 		WHERE acr.application_credential_id = $1
 	`, id)
 	if err == nil {
-		defer roleRows.Close()
 		roles := []map[string]interface{}{}
 		for roleRows.Next() {
 			var roleID, roleName string
@@ -426,9 +434,11 @@ func (svc *Service) GetApplicationCredentialByID(c *gin.Context) {
 				})
 			}
 		}
-		if roleRows.Err() == nil {
-			credential["roles"] = roles
+		if roleRowsErr := roleRows.Err(); roleRowsErr != nil {
+			log.Warn().Err(roleRowsErr).Str("operation", "get_application_credential_by_id").Str("credential_id", id).Msg("error iterating role rows")
 		}
+		roleRows.Close()
+		credential["roles"] = roles
 	}
 
 	c.JSON(200, gin.H{"application_credential": credential})
