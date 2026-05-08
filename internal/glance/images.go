@@ -1,7 +1,9 @@
 package glance
 
 import (
+	"crypto/md5"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -218,6 +220,14 @@ func (svc *Service) CreateImage(c *gin.Context) {
 		return
 	}
 
+	// Persist tags
+	ctx := c.Request.Context()
+	for _, tag := range req.Tags {
+		_, _ = svc.activeDB().Exec(ctx,
+			`INSERT INTO image_tags (image_id, tag) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+			imageID, tag)
+	}
+
 	c.JSON(http.StatusCreated, gin.H{
 		"id":               imageID,
 		"name":             req.Name,
@@ -399,6 +409,8 @@ func (svc *Service) GetImage(c *gin.Context) {
 		"min_ram":          minRAM,
 		"owner":            imageOwner,
 		"protected":        false,
+		"locations":        []interface{}{},
+		"virtual_size":     nil,
 		"created_at":       createdAt.Format(time.RFC3339),
 		"updated_at":       updatedAt.Format(time.RFC3339),
 		"self":             fmt.Sprintf("/v2/images/%s", id),
@@ -412,6 +424,11 @@ func (svc *Service) GetImage(c *gin.Context) {
 
 	if checksum.Valid && checksum.String != "" {
 		image["checksum"] = checksum.String
+		image["os_hash_algo"] = "md5"
+		image["os_hash_value"] = checksum.String
+	} else {
+		image["os_hash_algo"] = nil
+		image["os_hash_value"] = nil
 	}
 
 	// Load tags
@@ -570,9 +587,10 @@ func (svc *Service) UploadImageData(c *gin.Context) {
 		"UPDATE images SET status = $1, updated_at = $2 WHERE id = $3",
 		"saving", time.Now(), imageID)
 
-	// Upload to storage (limit to 5GB)
+	// Upload to storage (limit to 5GB), tee through MD5 hasher
 	const maxImageUpload int64 = 5 * 1024 * 1024 * 1024
-	limitedBody := io.LimitReader(c.Request.Body, maxImageUpload)
+	h := md5.New()
+	limitedBody := io.LimitReader(io.TeeReader(c.Request.Body, h), maxImageUpload)
 	size, err := svc.imageStore.UploadImage(c.Request.Context(), imageID, limitedBody)
 	if err != nil {
 		svc.activeDB().Exec(c.Request.Context(),
@@ -583,10 +601,12 @@ func (svc *Service) UploadImageData(c *gin.Context) {
 		return
 	}
 
-	// Update status to active and set size
+	checksum := hex.EncodeToString(h.Sum(nil))
+
+	// Update status to active, set size and checksum
 	svc.activeDB().Exec(c.Request.Context(),
-		"UPDATE images SET status = $1, size_bytes = $2, updated_at = $3 WHERE id = $4",
-		"active", size, time.Now(), imageID)
+		"UPDATE images SET status = $1, size_bytes = $2, checksum = $3, updated_at = $4 WHERE id = $5",
+		"active", size, checksum, time.Now(), imageID)
 
 	c.Status(http.StatusNoContent)
 }

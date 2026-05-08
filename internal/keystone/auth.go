@@ -2,8 +2,10 @@ package keystone
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -179,6 +181,8 @@ type AuthResponse struct {
 		ExpiresAt string                   `json:"expires_at"`
 		IssuedAt  string                   `json:"issued_at"`
 		Methods   []string                 `json:"methods"`
+		AuditIDs  []string                 `json:"audit_ids"`
+		IsDomain  bool                     `json:"is_domain"`
 		User      map[string]interface{}   `json:"user"`
 		Catalog   []CatalogEntry           `json:"catalog,omitempty"`
 		Project   *map[string]interface{}  `json:"project,omitempty"`
@@ -347,6 +351,8 @@ func (s *AuthService) AuthenticatePassword(ctx context.Context, req *AuthRequest
 	resp.Token.ExpiresAt = expiresAt.Format(time.RFC3339)
 	resp.Token.IssuedAt = now.Format(time.RFC3339)
 	resp.Token.Methods = []string{"password"}
+	resp.Token.AuditIDs = []string{generateAuditID()}
+	resp.Token.IsDomain = false
 
 	// Query user's domain name
 	var userDomainName string
@@ -537,6 +543,8 @@ func (s *AuthService) AuthenticateToken(ctx context.Context, req *AuthRequest) (
 	resp.Token.ExpiresAt = expiresAt.Format(time.RFC3339)
 	resp.Token.IssuedAt = now.Format(time.RFC3339)
 	resp.Token.Methods = []string{"token"}
+	resp.Token.AuditIDs = []string{generateAuditID()}
+	resp.Token.IsDomain = false
 
 	// Query user's domain name
 	var userDomainName string
@@ -746,6 +754,8 @@ func (s *AuthService) AuthenticateApplicationCredential(ctx context.Context, req
 	resp.Token.ExpiresAt = expiresAtTime.Format(time.RFC3339)
 	resp.Token.IssuedAt = now.Format(time.RFC3339)
 	resp.Token.Methods = []string{"application_credential"}
+	resp.Token.AuditIDs = []string{generateAuditID()}
+	resp.Token.IsDomain = false
 
 	// Query user's domain name
 	var userDomainName string
@@ -943,6 +953,16 @@ func (s *AuthService) CheckPassword(password, hash string) bool {
 	return err == nil
 }
 
+// generateAuditID returns a random base64url-encoded 16-byte audit ID.
+func generateAuditID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		// Extremely unlikely; fall back to a fixed string rather than panic.
+		return "audit-id-unavailable"
+	}
+	return base64.URLEncoding.EncodeToString(b)
+}
+
 // BuildServiceCatalog builds the OpenStack service catalog from database
 func (s *AuthService) BuildServiceCatalog(projectID string, cacheInstance *cache.Cache) []CatalogEntry {
 	ctx := context.Background()
@@ -1070,48 +1090,46 @@ func buildHardcodedCatalog(projectID string) []CatalogEntry {
 	}
 	baseURL := "http://" + baseHost
 
+	// allInterfaces returns public/internal/admin endpoints for a URL.
+	// In O3K all interfaces point to the same binary, so all URLs are identical.
+	allInterfaces := func(url string) []Endpoint {
+		return []Endpoint{
+			{Interface: "public", Region: "RegionOne", URL: url},
+			{Interface: "internal", Region: "RegionOne", URL: url},
+			{Interface: "admin", Region: "RegionOne", URL: url},
+		}
+	}
+
 	return []CatalogEntry{
 		{
-			Type: "identity",
-			Name: "keystone",
-			Endpoints: []Endpoint{
-				{Interface: "public", Region: "RegionOne", URL: fmt.Sprintf("%s:35357/v3", baseURL)},
-			},
+			Type:      "identity",
+			Name:      "keystone",
+			Endpoints: allInterfaces(fmt.Sprintf("%s:35357/v3", baseURL)),
 		},
 		{
-			Type: "compute",
-			Name: "nova",
-			Endpoints: []Endpoint{
-				{Interface: "public", Region: "RegionOne", URL: fmt.Sprintf("%s:8774/v2.1/%s", baseURL, projectID)},
-			},
+			Type:      "compute",
+			Name:      "nova",
+			Endpoints: allInterfaces(fmt.Sprintf("%s:8774/v2.1/%s", baseURL, projectID)),
 		},
 		{
-			Type: "placement",
-			Name: "placement",
-			Endpoints: []Endpoint{
-				{Interface: "public", Region: "RegionOne", URL: fmt.Sprintf("%s:8778", baseURL)},
-			},
+			Type:      "placement",
+			Name:      "placement",
+			Endpoints: allInterfaces(fmt.Sprintf("%s:8778", baseURL)),
 		},
 		{
-			Type: "network",
-			Name: "neutron",
-			Endpoints: []Endpoint{
-				{Interface: "public", Region: "RegionOne", URL: fmt.Sprintf("%s:9696", baseURL)},
-			},
+			Type:      "network",
+			Name:      "neutron",
+			Endpoints: allInterfaces(fmt.Sprintf("%s:9696", baseURL)),
 		},
 		{
-			Type: "volumev3",
-			Name: "cinderv3",
-			Endpoints: []Endpoint{
-				{Interface: "public", Region: "RegionOne", URL: fmt.Sprintf("%s:8776/v3/%s", baseURL, projectID)},
-			},
+			Type:      "volumev3",
+			Name:      "cinderv3",
+			Endpoints: allInterfaces(fmt.Sprintf("%s:8776/v3/%s", baseURL, projectID)),
 		},
 		{
-			Type: "image",
-			Name: "glance",
-			Endpoints: []Endpoint{
-				{Interface: "public", Region: "RegionOne", URL: fmt.Sprintf("%s:9292", baseURL)},
-			},
+			Type:      "image",
+			Name:      "glance",
+			Endpoints: allInterfaces(fmt.Sprintf("%s:9292", baseURL)),
 		},
 	}
 }

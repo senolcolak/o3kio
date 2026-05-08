@@ -441,7 +441,7 @@ func (svc *Service) ListVolumesDetail(c *gin.Context) {
 	queryArgs = append(queryArgs, limit, offset)
 
 	rows, err := svc.activeDB().Query(c.Request.Context(), fmt.Sprintf(`
-		SELECT v.id, v.name, v.size_gb, v.status, v.bootable, v.attached_to_instance_id, v.created_at, v.updated_at, COALESCE(v.volume_type, '__DEFAULT__'), COALESCE(v.availability_zone, 'nova'), COALESCE(v.encrypted, false)
+		SELECT v.id, v.name, v.size_gb, v.status, v.bootable, v.attached_to_instance_id, v.created_at, v.updated_at, COALESCE(v.volume_type, '__DEFAULT__'), COALESCE(v.availability_zone, 'nova'), COALESCE(v.encrypted, false), v.description, v.user_id::text
 		FROM volumes v
 		WHERE v.project_id = $1%s
 		ORDER BY v.created_at DESC
@@ -461,34 +461,63 @@ func (svc *Service) ListVolumesDetail(c *gin.Context) {
 		var size int
 		var bootable, encrypted bool
 		var attachedTo sql.NullString
+		var description sql.NullString
+		var userID sql.NullString
 		var createdAt, updatedAt time.Time
 
-		if err := rows.Scan(&id, &name, &size, &status, &bootable, &attachedTo, &createdAt, &updatedAt, &volumeType, &availabilityZone, &encrypted); err != nil {
+		if err := rows.Scan(&id, &name, &size, &status, &bootable, &attachedTo, &createdAt, &updatedAt, &volumeType, &availabilityZone, &encrypted, &description, &userID); err != nil {
 			log.Warn().Err(err).Msg("failed to scan volume detail row")
 			continue
 		}
 
 		attachments := []interface{}{}
 		if attachedTo.Valid {
-			attachments = append(attachments, gin.H{
-				"server_id": attachedTo.String,
-				"device":    "/dev/vdb",
+			attachments = append(attachments, map[string]interface{}{
+				"id":            id,
+				"attachment_id": id,
+				"volume_id":     id,
+				"server_id":     attachedTo.String,
+				"host_name":     "",
+				"device":        "/dev/vdb",
+				"attached_at":   createdAt.Format("2006-01-02T15:04:05.000000"),
 			})
 		}
 
+		resolvedUserID := projectID
+		if userID.Valid && userID.String != "" {
+			resolvedUserID = userID.String
+		}
+
+		var descriptionVal interface{}
+		if description.Valid {
+			descriptionVal = description.String
+		}
+
 		volumes = append(volumes, gin.H{
-			"id":                id,
-			"name":              name,
-			"tenant_id":         projectID,
-			"size":              size,
-			"status":            status,
-			"bootable":          fmt.Sprintf("%t", bootable),
-			"availability_zone": availabilityZone,
-			"volume_type":       volumeType,
-			"encrypted":         encrypted,
-			"created_at":        createdAt.Format("2006-01-02T15:04:05.000000"),
-			"updated_at":        updatedAt.Format("2006-01-02T15:04:05.000000"),
-			"attachments":       attachments,
+			"id":                  id,
+			"name":                name,
+			"description":         descriptionVal,
+			"tenant_id":           projectID,
+			"user_id":             resolvedUserID,
+			"size":                size,
+			"status":              status,
+			"bootable":            fmt.Sprintf("%t", bootable),
+			"availability_zone":   availabilityZone,
+			"volume_type":         volumeType,
+			"encrypted":           encrypted,
+			"multiattach":         false,
+			"replication_status":  "disabled",
+			"migration_status":    nil,
+			"consistencygroup_id": nil,
+			"source_volid":        nil,
+			"snapshot_id":         nil,
+			"created_at":          createdAt.Format("2006-01-02T15:04:05.000000"),
+			"updated_at":          updatedAt.Format("2006-01-02T15:04:05.000000"),
+			"attachments":         attachments,
+			"links": []map[string]string{
+				{"rel": "self", "href": fmt.Sprintf("/v3/%s/volumes/%s", projectID, id)},
+				{"rel": "bookmark", "href": fmt.Sprintf("/volumes/%s", id)},
+			},
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -517,14 +546,16 @@ func (svc *Service) GetVolume(c *gin.Context) {
 	var size int
 	var bootable, encrypted bool
 	var attachedTo sql.NullString
+	var description sql.NullString
+	var userID sql.NullString
 	var createdAt, updatedAt time.Time
 
 	// Support lookup by ID or name
 	err := svc.activeDB().QueryRow(c.Request.Context(), `
-		SELECT id, name, size_gb, status, bootable, attached_to_instance_id, created_at, updated_at, COALESCE(volume_type, '__DEFAULT__'), COALESCE(availability_zone, 'nova'), COALESCE(encrypted, false)
+		SELECT id, name, size_gb, status, bootable, attached_to_instance_id, created_at, updated_at, COALESCE(volume_type, '__DEFAULT__'), COALESCE(availability_zone, 'nova'), COALESCE(encrypted, false), description, user_id::text
 		FROM volumes
 		WHERE project_id = $2 AND ((id::text = $1) OR (name = $1))
-	`, volumeID, projectID).Scan(&id, &name, &size, &status, &bootable, &attachedTo, &createdAt, &updatedAt, &volumeType, &availabilityZone, &encrypted)
+	`, volumeID, projectID).Scan(&id, &name, &size, &status, &bootable, &attachedTo, &createdAt, &updatedAt, &volumeType, &availabilityZone, &encrypted, &description, &userID)
 
 	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("volume"))
@@ -538,26 +569,54 @@ func (svc *Service) GetVolume(c *gin.Context) {
 
 	attachments := []interface{}{}
 	if attachedTo.Valid {
-		attachments = append(attachments, gin.H{
-			"server_id": attachedTo.String,
-			"device":    "/dev/vdb",
+		attachments = append(attachments, map[string]interface{}{
+			"id":            id,
+			"attachment_id": id,
+			"volume_id":     id,
+			"server_id":     attachedTo.String,
+			"host_name":     "",
+			"device":        "/dev/vdb",
+			"attached_at":   createdAt.Format("2006-01-02T15:04:05.000000"),
 		})
+	}
+
+	// user_id falls back to project_id if not set
+	resolvedUserID := projectID
+	if userID.Valid && userID.String != "" {
+		resolvedUserID = userID.String
+	}
+
+	var descriptionVal interface{}
+	if description.Valid {
+		descriptionVal = description.String
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"volume": gin.H{
-			"id":                id,
-			"name":              name,
-			"tenant_id":         projectID,
-			"size":              size,
-			"status":            status,
-			"bootable":          fmt.Sprintf("%t", bootable),
-			"availability_zone": availabilityZone,
-			"volume_type":       volumeType,
-			"encrypted":         encrypted,
-			"created_at":        createdAt.Format("2006-01-02T15:04:05.000000"),
-			"updated_at":        updatedAt.Format("2006-01-02T15:04:05.000000"),
-			"attachments":       attachments,
+			"id":                   id,
+			"name":                 name,
+			"description":          descriptionVal,
+			"tenant_id":            projectID,
+			"user_id":              resolvedUserID,
+			"size":                 size,
+			"status":               status,
+			"bootable":             fmt.Sprintf("%t", bootable),
+			"availability_zone":    availabilityZone,
+			"volume_type":          volumeType,
+			"encrypted":            encrypted,
+			"multiattach":          false,
+			"replication_status":   "disabled",
+			"migration_status":     nil,
+			"consistencygroup_id":  nil,
+			"source_volid":         nil,
+			"snapshot_id":          nil,
+			"created_at":           createdAt.Format("2006-01-02T15:04:05.000000"),
+			"updated_at":           updatedAt.Format("2006-01-02T15:04:05.000000"),
+			"attachments":          attachments,
+			"links": []map[string]string{
+				{"rel": "self", "href": fmt.Sprintf("/v3/%s/volumes/%s", projectID, id)},
+				{"rel": "bookmark", "href": fmt.Sprintf("/volumes/%s", id)},
+			},
 		},
 	})
 }

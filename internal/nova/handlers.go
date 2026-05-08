@@ -709,7 +709,7 @@ func (svc *Service) ListServersDetail(c *gin.Context) {
 	rows, err := svc.activeDB().Query(c.Request.Context(), fmt.Sprintf(`
 		SELECT i.id, i.name, i.status, i.power_state, i.project_id, i.user_id,
 		       i.flavor_id, i.image_id, i.created_at, i.updated_at, i.launched_at,
-		       f.vcpus, f.ram_mb, f.disk_gb, f.name as flavor_name, i.host
+		       f.vcpus, f.ram_mb, f.disk_gb, f.name as flavor_name, i.host, i.locked
 		FROM instances i
 		LEFT JOIN flavors f ON i.flavor_id = f.id
 		WHERE i.project_id = $1%s
@@ -732,10 +732,11 @@ func (svc *Service) ListServersDetail(c *gin.Context) {
 		var createdAt, updatedAt time.Time
 		var launchedAt *time.Time
 		var host sql.NullString
+		var locked bool
 
 		if err := rows.Scan(&id, &name, &status, &powerState, &projectID, &userID,
 			&flavorID, &imageID, &createdAt, &updatedAt, &launchedAt,
-			&vcpus, &ramMB, &diskGB, &flavorName, &host); err != nil {
+			&vcpus, &ramMB, &diskGB, &flavorName, &host, &locked); err != nil {
 			log.Warn().Err(err).Msg("failed to scan server detail row")
 			continue
 		}
@@ -769,8 +770,14 @@ func (svc *Service) ListServersDetail(c *gin.Context) {
 			vmState = "deleted"
 		}
 
+		// progress: 25 for BUILD, 0 otherwise
+		progress := 0
+		if status == "BUILD" || status == "BUILDING" {
+			progress = 25
+		}
+
 		hostStr := host.String // empty string if NULL
-		servers = append(servers, gin.H{
+		entry := gin.H{
 			"id":                                  id,
 			"name":                                name,
 			"status":                              status,
@@ -797,13 +804,30 @@ func (svc *Service) ListServersDetail(c *gin.Context) {
 				{"rel": "bookmark", "href": fmt.Sprintf("/servers/%s", id)},
 			},
 			"flavor": gin.H{
-				"id":    flavorID,
-				"vcpus": vcpus,
-				"ram":   ramMB,
-				"disk":  diskGB,
+				"id":            flavorID,
+				"vcpus":         vcpus,
+				"ram":           ramMB,
+				"disk":          diskGB,
+				"ephemeral":     0,
+				"swap":          0,
+				"original_name": flavorName,
 			},
-			"image": gin.H{"id": imageIDStr},
-		})
+			"image":        gin.H{"id": imageIDStr},
+			"config_drive": "",
+			"progress":     progress,
+			"locked":       locked,
+			"description":  nil,
+			"tags":         []string{},
+			"key_name":     nil,
+		}
+		if status == "ERROR" {
+			entry["fault"] = gin.H{
+				"code":    500,
+				"message": "Server in error state",
+				"created": createdAt.Format(time.RFC3339),
+			}
+		}
+		servers = append(servers, entry)
 	}
 
 	if servers == nil {
@@ -906,16 +930,22 @@ func (svc *Service) GetServer(c *gin.Context) {
 	var createdAt, updatedAt time.Time
 	var launchedAt *time.Time
 	var host sql.NullString
+	var locked bool
+	var vcpus, ramMB, diskGB int
+	var flavorName sql.NullString
 
 	// Try to find by ID first, then by name
 	// Use separate conditions to avoid type mismatch when id is UUID and param might be a name
 	err := svc.activeDB().QueryRow(c.Request.Context(), `
-		SELECT id, name, status, power_state, project_id, user_id, flavor_id, image_id, created_at, updated_at, host, launched_at
-		FROM instances
-		WHERE project_id = $2 AND (
-			(id::text = $1) OR (name = $1)
+		SELECT i.id, i.name, i.status, i.power_state, i.project_id, i.user_id,
+		       i.flavor_id, i.image_id, i.created_at, i.updated_at, i.host, i.launched_at,
+		       i.locked, COALESCE(f.vcpus, 0), COALESCE(f.ram_mb, 0), COALESCE(f.disk_gb, 0), f.name
+		FROM instances i
+		LEFT JOIN flavors f ON i.flavor_id = f.id
+		WHERE i.project_id = $2 AND (
+			(i.id::text = $1) OR (i.name = $1)
 		)
-	`, instanceID, projectID).Scan(&id, &name, &status, &powerState, &projID, &userID, &flavorID, &imageID, &createdAt, &updatedAt, &host, &launchedAt)
+	`, instanceID, projectID).Scan(&id, &name, &status, &powerState, &projID, &userID, &flavorID, &imageID, &createdAt, &updatedAt, &host, &launchedAt, &locked, &vcpus, &ramMB, &diskGB, &flavorName)
 
 	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("instance"))
@@ -955,6 +985,12 @@ func (svc *Service) GetServer(c *gin.Context) {
 		getLaunchedAt = createdAt.Format(time.RFC3339)
 	}
 
+	// progress: 25 for BUILD, 0 otherwise
+	getProgress := 0
+	if status == "BUILD" || status == "BUILDING" {
+		getProgress = 25
+	}
+
 	// Build response with nullable fields
 	hostStr := host.String // empty string if NULL
 	response := gin.H{
@@ -975,16 +1011,41 @@ func (svc *Service) GetServer(c *gin.Context) {
 		"OS-DCF:diskConfig":                   "AUTO",
 		"OS-SRV-USG:launched_at":              getLaunchedAt,
 		"OS-SRV-USG:terminated_at":            nil,
+		"config_drive":                        "",
+		"progress":                            getProgress,
+		"locked":                              locked,
+		"description":                         nil,
+		"tags":                                []string{},
+		"key_name":                            nil,
 	}
 
 	if userID != nil {
 		response["user_id"] = userID
 	}
 	if flavorID != nil {
-		response["flavor"] = gin.H{"id": flavorID}
+		fn := ""
+		if flavorName.Valid {
+			fn = flavorName.String
+		}
+		response["flavor"] = gin.H{
+			"id":            flavorID,
+			"vcpus":         vcpus,
+			"ram":           ramMB,
+			"disk":          diskGB,
+			"ephemeral":     0,
+			"swap":          0,
+			"original_name": fn,
+		}
 	}
 	if imageID != nil {
 		response["image"] = gin.H{"id": imageID}
+	}
+	if status == "ERROR" {
+		response["fault"] = gin.H{
+			"code":    500,
+			"message": "Server in error state",
+			"created": createdAt.Format(time.RFC3339),
+		}
 	}
 	response["security_groups"] = svc.getServerSecurityGroups(c.Request.Context(), id)
 	response["OS-EXT-SRV-ATTR:root_device_name"] = "/dev/vda"
