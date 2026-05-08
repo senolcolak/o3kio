@@ -4,20 +4,21 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"sync"
 	"time"
 
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/rs/zerolog/log"
 	"github.com/cobaltcore-dev/o3k/internal/common"
 	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/cobaltcore-dev/o3k/internal/keystone"
 	"github.com/cobaltcore-dev/o3k/pkg/storage"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/rs/zerolog/log"
 )
 
 // Service handles Cinder API endpoints
@@ -525,7 +526,7 @@ func (svc *Service) GetVolume(c *gin.Context) {
 		WHERE project_id = $2 AND ((id::text = $1) OR (name = $1))
 	`, volumeID, projectID).Scan(&id, &name, &size, &status, &bootable, &attachedTo, &createdAt, &updatedAt, &volumeType, &availabilityZone, &encrypted)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("volume"))
 		return
 	}
@@ -579,7 +580,7 @@ func (svc *Service) DeleteVolume(c *gin.Context) {
 		volumeID, projectID,
 	).Scan(&actualVolumeID, &attachedTo, &volumeUserID)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("volume"))
 		return
 	}
@@ -765,7 +766,7 @@ func (svc *Service) VolumeAction(c *gin.Context) {
 			newType,
 		).Scan(&typeID)
 
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			// Create new volume type if it doesn't exist
 			typeID = uuid.New().String()
 			_, err = svc.activeDB().Exec(c.Request.Context(),
@@ -970,7 +971,7 @@ func (svc *Service) VolumeAction(c *gin.Context) {
 			return
 		}
 
-		roleList := roles.([]string)
+		roleList, _ := roles.([]string)
 		isAdmin := false
 		for _, role := range roleList {
 			if role == "admin" {
@@ -1050,7 +1051,7 @@ func (svc *Service) CreateSnapshot(c *gin.Context) {
 		req.Snapshot.VolumeID, projectID,
 	).Scan(&volumeID, &size)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("volume"))
 		return
 	}
@@ -1266,7 +1267,7 @@ func (svc *Service) GetSnapshot(c *gin.Context) {
 		WHERE id = $1 AND project_id = $2
 	`, snapshotID, projectID).Scan(&id, &name, &volumeID, &size, &status, &createdAt)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("snapshot"))
 		return
 	}
@@ -1304,7 +1305,7 @@ func (svc *Service) DeleteSnapshot(c *gin.Context) {
 		snapshotID, projectID,
 	).Scan(&volumeID)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("snapshot"))
 		return
 	}
@@ -1391,7 +1392,7 @@ func (svc *Service) GetVolumeType(c *gin.Context) {
 		WHERE id = $1
 	`, typeID).Scan(&id, &name, &description, &isPublic)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("volume type"))
 		return
 	}
@@ -1441,7 +1442,7 @@ func (svc *Service) UpdateVolume(c *gin.Context) {
 		volumeID, projectID,
 	).Scan(&currentName, &currentDesc, &sizeGB, &status, &bootable, &attachedTo, &existingVolumeType, &createdAt, &updatedAt, &existingAZ, &existingEncrypted)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("volume"))
 		return
 	}
@@ -1525,7 +1526,7 @@ func (svc *Service) UpdateSnapshot(c *gin.Context) {
 		snapshotID, projectID,
 	).Scan(&currentName, &currentDesc, &volumeID, &sizeGB, &status, &createdAt)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("snapshot"))
 		return
 	}
@@ -1687,7 +1688,7 @@ func (svc *Service) GetVolumeMetadataKey(c *gin.Context) {
 		volumeID, key,
 	).Scan(&value)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("metadata key"))
 		return
 	}
@@ -1901,7 +1902,7 @@ func (svc *Service) GetSnapshotMetadataKey(c *gin.Context) {
 		snapshotID, key,
 	).Scan(&value)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("metadata key"))
 		return
 	}
@@ -2016,15 +2017,15 @@ func (svc *Service) GetLimits(c *gin.Context) {
 		"limits": gin.H{
 			"rate": []gin.H{}, // No rate limiting
 			"absolute": gin.H{
-				"maxTotalVolumes":       1000,
-				"maxTotalSnapshots":     1000,
-				"maxTotalVolumeGigabytes": 10000,
-				"maxTotalBackups":       100,
-				"maxTotalBackupGigabytes": 5000,
-				"totalVolumesUsed":      volumesUsed,
-				"totalSnapshotsUsed":    snapshotsUsed,
-				"totalGigabytesUsed":    gigabytesUsed,
-				"totalBackupsUsed":      0,
+				"maxTotalVolumes":          1000,
+				"maxTotalSnapshots":        1000,
+				"maxTotalVolumeGigabytes":  10000,
+				"maxTotalBackups":          100,
+				"maxTotalBackupGigabytes":  5000,
+				"totalVolumesUsed":         volumesUsed,
+				"totalSnapshotsUsed":       snapshotsUsed,
+				"totalGigabytesUsed":       gigabytesUsed,
+				"totalBackupsUsed":         0,
 				"totalBackupGigabytesUsed": 0,
 			},
 		},
@@ -2054,15 +2055,15 @@ func (svc *Service) GetLimitsNoProject(c *gin.Context) {
 		"limits": gin.H{
 			"rate": []gin.H{}, // No rate limiting
 			"absolute": gin.H{
-				"maxTotalVolumes":       1000,
-				"maxTotalSnapshots":     1000,
-				"maxTotalVolumeGigabytes": 10000,
-				"maxTotalBackups":       100,
-				"maxTotalBackupGigabytes": 5000,
-				"totalVolumesUsed":      volumesUsed,
-				"totalSnapshotsUsed":    snapshotsUsed,
-				"totalGigabytesUsed":    gigabytesUsed,
-				"totalBackupsUsed":      0,
+				"maxTotalVolumes":          1000,
+				"maxTotalSnapshots":        1000,
+				"maxTotalVolumeGigabytes":  10000,
+				"maxTotalBackups":          100,
+				"maxTotalBackupGigabytes":  5000,
+				"totalVolumesUsed":         volumesUsed,
+				"totalSnapshotsUsed":       snapshotsUsed,
+				"totalGigabytesUsed":       gigabytesUsed,
+				"totalBackupsUsed":         0,
 				"totalBackupGigabytesUsed": 0,
 			},
 		},
@@ -2078,30 +2079,30 @@ func (svc *Service) ListServices(c *gin.Context) {
 	c.JSON(200, gin.H{
 		"services": []gin.H{
 			{
-				"binary":         "cinder-volume",
-				"host":           "o3k-volume-1",
-				"zone":           "nova",
-				"status":         "enabled",
-				"state":          "up",
-				"updated_at":     now,
+				"binary":          "cinder-volume",
+				"host":            "o3k-volume-1",
+				"zone":            "nova",
+				"status":          "enabled",
+				"state":           "up",
+				"updated_at":      now,
 				"disabled_reason": nil,
 			},
 			{
-				"binary":         "cinder-scheduler",
-				"host":           "o3k-controller",
-				"zone":           "internal",
-				"status":         "enabled",
-				"state":          "up",
-				"updated_at":     now,
+				"binary":          "cinder-scheduler",
+				"host":            "o3k-controller",
+				"zone":            "internal",
+				"status":          "enabled",
+				"state":           "up",
+				"updated_at":      now,
 				"disabled_reason": nil,
 			},
 			{
-				"binary":         "cinder-backup",
-				"host":           "o3k-backup-1",
-				"zone":           "nova",
-				"status":         "enabled",
-				"state":          "up",
-				"updated_at":     now,
+				"binary":          "cinder-backup",
+				"host":            "o3k-backup-1",
+				"zone":            "nova",
+				"status":          "enabled",
+				"state":           "up",
+				"updated_at":      now,
 				"disabled_reason": nil,
 			},
 		},
@@ -2118,11 +2119,11 @@ func (svc *Service) GetVersions(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"versions": []gin.H{
 			{
-				"id":      "v3.0",
-				"status":  "CURRENT",
-				"version": "3.70",
+				"id":          "v3.0",
+				"status":      "CURRENT",
+				"version":     "3.70",
 				"min_version": "3.0",
-				"updated": "2021-04-07T00:00:00Z",
+				"updated":     "2021-04-07T00:00:00Z",
 				"links": []gin.H{
 					{
 						"rel":  "self",
@@ -2149,11 +2150,11 @@ func (svc *Service) GetVersionV3(c *gin.Context) {
 	baseURL := fmt.Sprintf("%s://%s/v3/", scheme, c.Request.Host)
 	c.JSON(http.StatusOK, gin.H{
 		"version": gin.H{
-			"id":      "v3.0",
-			"status":  "CURRENT",
-			"version": "3.71",
+			"id":          "v3.0",
+			"status":      "CURRENT",
+			"version":     "3.71",
 			"min_version": "3.0",
-			"updated": "2021-04-07T00:00:00Z",
+			"updated":     "2021-04-07T00:00:00Z",
 			"links": []gin.H{
 				{
 					"rel":  "self",

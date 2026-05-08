@@ -1,6 +1,7 @@
 package neutron
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -179,7 +180,7 @@ func (svc *Service) GetSubnetPool(c *gin.Context) {
 	`, poolID, projectID).Scan(&id, &name, &prefixes, &minPrefixlen, &maxPrefixlen, &defaultPrefixlen,
 		&shared, &isDefault, &ipVersion, &createdAt, &updatedAt)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("subnet pool"))
 		return
 	}

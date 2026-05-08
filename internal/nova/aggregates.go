@@ -2,6 +2,7 @@ package nova
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -140,7 +141,7 @@ func (svc *Service) GetAggregate(c *gin.Context) {
 		WHERE uuid = $1
 	`, aggregateID).Scan(&name, &availabilityZone, &metadata, &hosts, &createdAt, &updatedAt)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("aggregate"))
 		return
 	}
@@ -309,7 +310,7 @@ func (svc *Service) AddHostToAggregate(c *gin.Context, aggregateID string, actio
 		aggregateID,
 	).Scan(&hosts)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("aggregate"))
 		return
 	}
@@ -365,7 +366,7 @@ func (svc *Service) RemoveHostFromAggregate(c *gin.Context, aggregateID string, 
 		aggregateID,
 	).Scan(&hosts)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("aggregate"))
 		return
 	}

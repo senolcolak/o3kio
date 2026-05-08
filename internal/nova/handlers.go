@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -309,7 +310,7 @@ func (svc *Service) CreateServer(c *gin.Context) {
 	).Scan(&flavor.ID, &flavor.Name, &flavor.VCPUs, &flavor.RAMMB, &flavor.DiskGB)
 	middleware.LogDatabaseQuery(c, "SELECT flavor", time.Since(queryStart), err)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		logger.Warn().Str("flavor_ref", req.Server.FlavorRef).Msg("Flavor not found")
 		middleware.LogOperationEnd(c, "create", "server", req.Server.Name, time.Since(start), err)
 		common.SendError(c, common.NewNotFoundError("flavor"))
@@ -916,7 +917,7 @@ func (svc *Service) GetServer(c *gin.Context) {
 		)
 	`, instanceID, projectID).Scan(&id, &name, &status, &powerState, &projID, &userID, &flavorID, &imageID, &createdAt, &updatedAt, &host, &launchedAt)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("instance"))
 		return
 	}
@@ -1016,7 +1017,7 @@ func (svc *Service) DeleteServer(c *gin.Context) {
 	).Scan(&libvirtDomainID, &instanceUserID)
 	middleware.LogDatabaseQuery(c, "SELECT libvirt_domain_id", time.Since(queryStart), err)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		logger.Warn().Str("instance_id", instanceID).Msg("Instance not found")
 		middleware.LogOperationEnd(c, "delete", "server", instanceID, time.Since(start), err)
 		common.SendError(c, common.NewNotFoundError("instance"))
@@ -1235,7 +1236,7 @@ func (svc *Service) ServerAction(c *gin.Context) {
 		instanceID, projectID,
 	).Scan(&libvirtDomainID)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		log.Warn().Str("instance_id", instanceID).Msg("Instance not found in ServerAction")
 		common.SendError(c, common.NewNotFoundError("instance"))
 		return
@@ -1470,7 +1471,7 @@ func (svc *Service) GetFlavor(c *gin.Context) {
 		flavorID,
 	).Scan(&id, &name, &vcpus, &ramMB, &diskGB, &isPublic)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("flavor"))
 		return
 	}

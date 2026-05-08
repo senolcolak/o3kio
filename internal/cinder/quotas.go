@@ -2,6 +2,7 @@ package cinder
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/cobaltcore-dev/o3k/internal/common"
@@ -196,7 +197,7 @@ func (svc *Service) DeleteQuotaSet(c *gin.Context) {
 	_, err := svc.activeDB().Exec(c.Request.Context(),
 		"DELETE FROM cinder_quotas WHERE project_id = $1",
 		targetProjectID)
-	if err != nil && err != pgx.ErrNoRows {
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		log.Error().Err(err).Str("operation", "delete_quota_set").Msg("failed to reset quotas")
 		common.SendError(c, common.NewInternalServerError("failed to reset quotas"))
 		return

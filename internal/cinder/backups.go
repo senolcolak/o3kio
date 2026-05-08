@@ -1,6 +1,7 @@
 package cinder
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -101,7 +102,7 @@ func (svc *Service) CreateBackup(c *gin.Context) {
 		req.Backup.VolumeID, projectID,
 	).Scan(&volumeSize)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("volume"))
 		return
 	}
@@ -160,7 +161,7 @@ func (svc *Service) GetBackup(c *gin.Context) {
 		WHERE id = $1 AND project_id = $2
 	`, backupID, projectID).Scan(&volumeID, &name, &description, &status, &sizeGB, &createdAt, &updatedAt)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("backup"))
 		return
 	}
@@ -243,7 +244,7 @@ func (svc *Service) RestoreBackup(c *gin.Context) {
 		backupID, projectID,
 	).Scan(&originalVolumeID, &sizeGB)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("backup"))
 		return
 	}

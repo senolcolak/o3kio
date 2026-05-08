@@ -4,18 +4,19 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/cobaltcore-dev/o3k/internal/common"
+	"github.com/cobaltcore-dev/o3k/pkg/networking"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
-	"github.com/cobaltcore-dev/o3k/internal/common"
-	"github.com/cobaltcore-dev/o3k/pkg/networking"
 )
 
 // CreatePortRequest represents a port creation request
@@ -55,7 +56,7 @@ func (svc *Service) CreatePort(c *gin.Context) {
 		req.Port.NetworkID, projectID,
 	).Scan(&networkID)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("network"))
 		return
 	}
@@ -352,7 +353,7 @@ func (svc *Service) ListPorts(c *gin.Context) {
 	resp := gin.H{"ports": ports}
 	if len(ports) > limit {
 		ports = ports[:limit]
-		lastID := ports[limit-1]["id"].(string)
+		lastID, _ := ports[limit-1]["id"].(string)
 		resp = gin.H{
 			"ports":       ports,
 			"ports_links": []gin.H{{"rel": "next", "href": fmt.Sprintf("?marker=%s&limit=%d", lastID, limit)}},
@@ -381,7 +382,7 @@ func (svc *Service) GetPort(c *gin.Context) {
 		WHERE p.id = $1 AND (p.project_id = $2 OR n.shared = true)
 	`, portID, projectID).Scan(&id, &name, &networkID, &deviceID, &deviceOwner, &macAddress, &adminStateUp, &status, &fixedIPsJSON, &createdAt, &updatedAt)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("port"))
 		return
 	}
@@ -817,7 +818,7 @@ func (svc *Service) ListSecurityGroups(c *gin.Context) {
 	resp := gin.H{"security_groups": securityGroups}
 	if len(securityGroups) > limit {
 		securityGroups = securityGroups[:limit]
-		lastID := securityGroups[limit-1]["id"].(string)
+		lastID, _ := securityGroups[limit-1]["id"].(string)
 		resp = gin.H{
 			"security_groups":       securityGroups,
 			"security_groups_links": []gin.H{{"rel": "next", "href": fmt.Sprintf("?marker=%s&limit=%d", lastID, limit)}},
@@ -907,7 +908,7 @@ func (svc *Service) GetSecurityGroup(c *gin.Context) {
 		WHERE id = $1 AND project_id = $2
 	`, sgID, projectID).Scan(&id, &name, &description, &createdAt, &updatedAt)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("security group"))
 		return
 	}
@@ -980,7 +981,7 @@ func (svc *Service) UpdateSecurityGroup(c *gin.Context) {
 		sgID, projectID,
 	).Scan(&currentName, &currentDesc)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("security group"))
 		return
 	}
@@ -1021,7 +1022,6 @@ func (svc *Service) UpdateSecurityGroup(c *gin.Context) {
 	})
 }
 
-
 // CreateSecurityGroupRuleRequest represents a security group rule creation request
 type CreateSecurityGroupRuleRequest struct {
 	SecurityGroupRule struct {
@@ -1036,7 +1036,7 @@ type CreateSecurityGroupRuleRequest struct {
 	} `json:"security_group_rule"`
 }
 
-	// CreateSecurityGroupRule creates a new security group rule
+// CreateSecurityGroupRule creates a new security group rule
 func (svc *Service) CreateSecurityGroupRule(c *gin.Context) {
 	var req CreateSecurityGroupRuleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -1127,16 +1127,16 @@ func (svc *Service) CreateSecurityGroupRule(c *gin.Context) {
 
 	c.JSON(http.StatusCreated, gin.H{
 		"security_group_rule": gin.H{
-			"id":                 ruleID,
-			"security_group_id":  req.SecurityGroupRule.SecurityGroupID,
-			"direction":          req.SecurityGroupRule.Direction,
-			"ethertype":          etherType,
-			"protocol":           protocolVal,
-			"port_range_min":     portMinVal,
-			"port_range_max":     portMaxVal,
-			"remote_ip_prefix":   remoteIPVal,
-			"remote_group_id":    remoteGroupVal,
-			"created_at":         now.Format(time.RFC3339),
+			"id":                ruleID,
+			"security_group_id": req.SecurityGroupRule.SecurityGroupID,
+			"direction":         req.SecurityGroupRule.Direction,
+			"ethertype":         etherType,
+			"protocol":          protocolVal,
+			"port_range_min":    portMinVal,
+			"port_range_max":    portMaxVal,
+			"remote_ip_prefix":  remoteIPVal,
+			"remote_group_id":   remoteGroupVal,
+			"created_at":        now.Format(time.RFC3339),
 		},
 	})
 }
@@ -1277,7 +1277,7 @@ func (svc *Service) AllocatePortForInstance(ctx context.Context, networkID, proj
 		networkID, projectID,
 	).Scan(&netID)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("network %s not found", networkID)
 	}
 	if err != nil {

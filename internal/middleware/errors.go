@@ -48,7 +48,9 @@ func ErrorHandlingMiddleware() gin.HandlerFunc {
 // getRequestID extracts request ID from context
 func getRequestID(c *gin.Context) string {
 	if reqID, exists := c.Get("request_id"); exists {
-		return reqID.(string)
+		if s, ok := reqID.(string); ok {
+			return s
+		}
 	}
 	return "unknown"
 }

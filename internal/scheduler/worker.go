@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/cobaltcore-dev/o3k/internal/database"
@@ -93,7 +94,7 @@ func (w *Worker) claimTask(ctx context.Context) (taskID, agentID, taskType strin
 
 	err = row.Scan(&taskID, &taskType, &payload, &timeoutSec, &reqVcpu, &reqRam, &reqDisk, &resourceID, &retries)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			err = nil
 		}
 		return
@@ -112,7 +113,7 @@ func (w *Worker) claimTask(ctx context.Context) (taskID, agentID, taskType strin
 
 	err = agentRow.Scan(&agentID)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			err = nil
 			taskID = ""
 		}

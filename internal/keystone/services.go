@@ -1,6 +1,7 @@
 package keystone
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -123,7 +124,7 @@ func (svc *Service) GetService(c *gin.Context) {
 		WHERE id = $1
 	`, serviceID).Scan(&id, &svcType, &name, &description, &enabled)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("service"))
 		return
 	}
@@ -239,7 +240,7 @@ func (svc *Service) UpdateService(c *gin.Context) {
 	)
 
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			common.SendError(c, common.NewNotFoundError("service"))
 			return
 		}

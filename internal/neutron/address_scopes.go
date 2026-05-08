@@ -1,6 +1,7 @@
 package neutron
 
 import (
+	"errors"
 	"net/http"
 	"time"
 
@@ -138,7 +139,7 @@ func (svc *Service) GetAddressScope(c *gin.Context) {
 		WHERE id = $1 AND project_id = $2
 	`, scopeID, projectID).Scan(&projID, &name, &ipVersion, &shared, &createdAt, &updatedAt)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("address scope"))
 		return
 	}

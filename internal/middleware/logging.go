@@ -79,10 +79,14 @@ func LoggingMiddleware() gin.HandlerFunc {
 			Str("user_agent", c.Request.UserAgent())
 
 		if userID != nil {
-			logEvent.Str("user_id", userID.(string))
+			if s, ok := userID.(string); ok {
+				logEvent.Str("user_id", s)
+			}
 		}
 		if projectID != nil {
-			logEvent.Str("project_id", projectID.(string))
+			if s, ok := projectID.(string); ok {
+				logEvent.Str("project_id", s)
+			}
 		}
 
 		logEvent.Msg("incoming request")
@@ -113,10 +117,14 @@ func LoggingMiddleware() gin.HandlerFunc {
 			Dur("duration_ms", duration/time.Millisecond)
 
 		if userID != nil {
-			logEvent.Str("user_id", userID.(string))
+			if s, ok := userID.(string); ok {
+				logEvent.Str("user_id", s)
+			}
 		}
 		if projectID != nil {
-			logEvent.Str("project_id", projectID.(string))
+			if s, ok := projectID.(string); ok {
+				logEvent.Str("project_id", s)
+			}
 		}
 
 		// Add slow request warning
@@ -165,14 +173,19 @@ func GetLogger(c *gin.Context) *zerolog.Logger {
 		return &logger
 	}
 
-	ctxLogger := logger.With().Str("request_id", requestID.(string))
+	reqIDStr, _ := requestID.(string)
+	ctxLogger := logger.With().Str("request_id", reqIDStr)
 
 	// Add user and project context if available
 	if userID, exists := c.Get("user_id"); exists {
-		ctxLogger = ctxLogger.Str("user_id", userID.(string))
+		if s, ok := userID.(string); ok {
+			ctxLogger = ctxLogger.Str("user_id", s)
+		}
 	}
 	if projectID, exists := c.Get("project_id"); exists {
-		ctxLogger = ctxLogger.Str("project_id", projectID.(string))
+		if s, ok := projectID.(string); ok {
+			ctxLogger = ctxLogger.Str("project_id", s)
+		}
 	}
 
 	loggerWithContext := ctxLogger.Logger()

@@ -2,20 +2,21 @@ package glance
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
 	"time"
 
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/rs/zerolog/log"
 	"github.com/cobaltcore-dev/o3k/internal/common"
 	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/cobaltcore-dev/o3k/pkg/cache"
 	"github.com/cobaltcore-dev/o3k/pkg/storage"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/rs/zerolog/log"
 )
 
 // Service handles Glance API endpoints
@@ -133,13 +134,13 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 
 // CreateImageRequest represents an image creation request
 type CreateImageRequest struct {
-	Name            string  `json:"name"`
-	DiskFormat      string  `json:"disk_format"`
-	ContainerFormat string  `json:"container_format"`
-	Visibility      string  `json:"visibility"`
-	MinDisk         int     `json:"min_disk"`
-	MinRAM          int     `json:"min_ram"`
-	Protected       bool    `json:"protected"`
+	Name            string   `json:"name"`
+	DiskFormat      string   `json:"disk_format"`
+	ContainerFormat string   `json:"container_format"`
+	Visibility      string   `json:"visibility"`
+	MinDisk         int      `json:"min_disk"`
+	MinRAM          int      `json:"min_ram"`
+	Protected       bool     `json:"protected"`
 	Tags            []string `json:"tags"`
 }
 
@@ -218,21 +219,21 @@ func (svc *Service) CreateImage(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
-		"id":                imageID,
-		"name":              req.Name,
-		"status":            "queued",
-		"visibility":        visibility,
-		"disk_format":       diskFormat,
-		"container_format":  containerFormat,
-		"min_disk":          req.MinDisk,
-		"min_ram":           req.MinRAM,
-		"protected":         req.Protected,
-		"tags":              req.Tags,
-		"created_at":        now.Format(time.RFC3339),
-		"updated_at":        now.Format(time.RFC3339),
-		"self":              fmt.Sprintf("/v2/images/%s", imageID),
-		"file":              fmt.Sprintf("/v2/images/%s/file", imageID),
-		"schema":            "/v2/schemas/image",
+		"id":               imageID,
+		"name":             req.Name,
+		"status":           "queued",
+		"visibility":       visibility,
+		"disk_format":      diskFormat,
+		"container_format": containerFormat,
+		"min_disk":         req.MinDisk,
+		"min_ram":          req.MinRAM,
+		"protected":        req.Protected,
+		"tags":             req.Tags,
+		"created_at":       now.Format(time.RFC3339),
+		"updated_at":       now.Format(time.RFC3339),
+		"self":             fmt.Sprintf("/v2/images/%s", imageID),
+		"file":             fmt.Sprintf("/v2/images/%s/file", imageID),
+		"schema":           "/v2/schemas/image",
 	})
 }
 
@@ -339,8 +340,8 @@ func (svc *Service) ListImages(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"images": images,
-		"schema":  "/v2/schemas/images",
-		"first":   "/v2/images",
+		"schema": "/v2/schemas/images",
+		"first":  "/v2/images",
 	})
 }
 
@@ -377,7 +378,7 @@ func (svc *Service) GetImage(c *gin.Context) {
 		LIMIT 1
 	`, imageID, projectID).Scan(&id, &name, &status, &visibility, &sizeBytes, &diskFormat, &containerFormat, &minDisk, &minRAM, &checksum, &createdAt, &updatedAt, &imageOwner)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("image"))
 		return
 	}
@@ -554,7 +555,7 @@ func (svc *Service) UploadImageData(c *gin.Context) {
 		imageID, projectID,
 	).Scan(&status)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("image"))
 		return
 	}
@@ -603,7 +604,7 @@ func (svc *Service) DownloadImageData(c *gin.Context) {
 		imageID, projectID,
 	).Scan(&status, &sizeBytes)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("image"))
 		return
 	}
@@ -631,19 +632,19 @@ func (svc *Service) DownloadImageData(c *gin.Context) {
 // GetImageSchema returns the image schema
 func (svc *Service) GetImageSchema(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
-		"name":       "image",
+		"name": "image",
 		"properties": gin.H{
-			"id":                gin.H{"type": "string"},
-			"name":              gin.H{"type": "string"},
-			"status":            gin.H{"type": "string"},
-			"visibility":        gin.H{"type": "string"},
-			"size":              gin.H{"type": "integer"},
-			"disk_format":       gin.H{"type": "string"},
-			"container_format":  gin.H{"type": "string"},
-			"min_disk":          gin.H{"type": "integer"},
-			"min_ram":           gin.H{"type": "integer"},
-			"created_at":        gin.H{"type": "string"},
-			"updated_at":        gin.H{"type": "string"},
+			"id":               gin.H{"type": "string"},
+			"name":             gin.H{"type": "string"},
+			"status":           gin.H{"type": "string"},
+			"visibility":       gin.H{"type": "string"},
+			"size":             gin.H{"type": "integer"},
+			"disk_format":      gin.H{"type": "string"},
+			"container_format": gin.H{"type": "string"},
+			"min_disk":         gin.H{"type": "integer"},
+			"min_ram":          gin.H{"type": "integer"},
+			"created_at":       gin.H{"type": "string"},
+			"updated_at":       gin.H{"type": "string"},
 		},
 	})
 }
@@ -684,7 +685,7 @@ func (svc *Service) CreateImageMember(c *gin.Context) {
 		imageID,
 	).Scan(&ownerID)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("image"))
 		return
 	}
@@ -735,7 +736,7 @@ func (svc *Service) ListImageMembers(c *gin.Context) {
 		imageID,
 	).Scan(&ownerID)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("image"))
 		return
 	}
@@ -813,7 +814,7 @@ func (svc *Service) GetImageMember(c *gin.Context) {
 		imageID,
 	).Scan(&ownerID)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("image"))
 		return
 	}
@@ -837,7 +838,7 @@ func (svc *Service) GetImageMember(c *gin.Context) {
 		WHERE image_id = $1 AND member_id = $2
 	`, imageID, memberID).Scan(&status, &createdAt, &updatedAt)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("member"))
 		return
 	}
@@ -884,7 +885,7 @@ func (svc *Service) UpdateImageMember(c *gin.Context) {
 		imageID,
 	).Scan(&ownerID)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("image"))
 		return
 	}
@@ -962,7 +963,7 @@ func (svc *Service) DeleteImageMember(c *gin.Context) {
 		imageID,
 	).Scan(&ownerID)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("image"))
 		return
 	}
@@ -1005,7 +1006,7 @@ func (svc *Service) AddImageTag(c *gin.Context) {
 		imageID,
 	).Scan(&ownerID)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("image"))
 		return
 	}
@@ -1050,7 +1051,7 @@ func (svc *Service) DeleteImageTag(c *gin.Context) {
 		imageID,
 	).Scan(&ownerID)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("image"))
 		return
 	}
@@ -1092,7 +1093,7 @@ func (svc *Service) DeactivateImage(c *gin.Context) {
 		imageID,
 	).Scan(&ownerID)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("image"))
 		return
 	}
@@ -1134,7 +1135,7 @@ func (svc *Service) ReactivateImage(c *gin.Context) {
 		imageID,
 	).Scan(&ownerID)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("image"))
 		return
 	}

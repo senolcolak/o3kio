@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/cobaltcore-dev/o3k/internal/common"
@@ -269,7 +270,9 @@ func (svc *Service) CreateApplicationCredential(c *gin.Context) {
 		credential["description"] = req.ApplicationCredential.Description
 	}
 	if expiresAt != nil {
-		credential["expires_at"] = expiresAt.(time.Time).Format(time.RFC3339)
+		if t, ok := expiresAt.(time.Time); ok {
+			credential["expires_at"] = t.Format(time.RFC3339)
+		}
 	}
 
 	// Add roles to response
@@ -319,7 +322,7 @@ func (svc *Service) GetApplicationCredential(c *gin.Context) {
 		WHERE id = $1 AND user_id = $2
 	`, credID, userID).Scan(&id, &userIDVal, &projectID, &name, &description, &expiresAt, &unrestricted, &accessRulesJSON)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("application credential"))
 		return
 	}
@@ -440,7 +443,7 @@ func (svc *Service) GetApplicationCredentialByID(c *gin.Context) {
 		WHERE id = $1
 	`, credID).Scan(&id, &userID, &projectID, &name, &description, &expiresAt, &unrestricted, &accessRulesJSON)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("application credential"))
 		return
 	}

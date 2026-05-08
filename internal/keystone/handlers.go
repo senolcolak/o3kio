@@ -583,6 +583,15 @@ func (svc *Service) ListProjects(c *gin.Context) {
 func (svc *Service) GetProject(c *gin.Context) {
 	projectID := c.Param("id")
 
+	isAdmin := c.GetBool("is_admin")
+	callerProjectID := c.GetString("project_id")
+
+	// Non-admin users can only see the project scoped in their token.
+	if !isAdmin && projectID != callerProjectID {
+		common.SendError(c, common.NewNotFoundError("project"))
+		return
+	}
+
 	var id, name, description, domainID string
 	var enabled bool
 	err := svc.activeDB().QueryRow(c.Request.Context(),

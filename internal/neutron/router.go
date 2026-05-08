@@ -4,17 +4,18 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/cobaltcore-dev/o3k/internal/common"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
-	"github.com/cobaltcore-dev/o3k/internal/common"
 )
 
 // Router represents a Neutron L3 router
@@ -33,17 +34,17 @@ type Router struct {
 
 // FloatingIP represents a floating IP address
 type FloatingIP struct {
-	ID                 string    `json:"id"`
-	ProjectID          string    `json:"tenant_id"`
-	FloatingNetworkID  string    `json:"floating_network_id"`
-	FloatingIPAddress  string    `json:"floating_ip_address"`
-	FixedIPAddress     string    `json:"fixed_ip_address"`
-	PortID             string    `json:"port_id"`
-	RouterID           string    `json:"router_id"`
-	Status             string    `json:"status"`
-	Description        string    `json:"description"`
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
+	ID                string    `json:"id"`
+	ProjectID         string    `json:"tenant_id"`
+	FloatingNetworkID string    `json:"floating_network_id"`
+	FloatingIPAddress string    `json:"floating_ip_address"`
+	FixedIPAddress    string    `json:"fixed_ip_address"`
+	PortID            string    `json:"port_id"`
+	RouterID          string    `json:"router_id"`
+	Status            string    `json:"status"`
+	Description       string    `json:"description"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 // CreateRouterRequest represents a router creation request
@@ -152,7 +153,7 @@ func (svc *Service) ListRouters(c *gin.Context) {
 	resp := gin.H{"routers": routers}
 	if len(routers) > limit {
 		routers = routers[:limit]
-		lastID := routers[limit-1]["id"].(string)
+		lastID, _ := routers[limit-1]["id"].(string)
 		resp = gin.H{
 			"routers":       routers,
 			"routers_links": []gin.H{{"rel": "next", "href": fmt.Sprintf("?marker=%s&limit=%d", lastID, limit)}},
@@ -253,7 +254,7 @@ func (svc *Service) GetRouter(c *gin.Context) {
 	`, routerID, projectID).Scan(&r.ID, &r.Name, &r.ProjectID, &r.AdminStateUp, &r.Status,
 		&gatewayInfo, &r.Distributed, &r.HA, &r.CreatedAt, &r.UpdatedAt)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("router"))
 		return
 	}
@@ -361,7 +362,7 @@ func (svc *Service) DeleteRouter(c *gin.Context) {
 		routerID,
 	).Scan(&interfaceCount)
 
-	if err != nil && err != pgx.ErrNoRows {
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		log.Error().Err(err).Str("operation", "delete_router_check").Str("router_id", routerID).Msg("database error")
 		common.SendError(c, common.NewInternalServerError("failed to check router interfaces"))
 		return
@@ -429,7 +430,7 @@ func (svc *Service) AddRouterInterface(c *gin.Context) {
 		req.SubnetID, projectID,
 	).Scan(&subnetID, &networkID, &cidr, &gatewayIP)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("subnet"))
 		return
 	}
@@ -518,7 +519,7 @@ func (svc *Service) RemoveRouterInterface(c *gin.Context) {
 			routerID, req.SubnetID,
 		).Scan(&portID)
 
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			common.SendError(c, common.NewNotFoundError("router interface"))
 			return
 		}

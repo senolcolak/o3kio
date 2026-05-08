@@ -3,6 +3,7 @@ package cinder
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"time"
 
@@ -36,7 +37,7 @@ func (svc *Service) CreateVolumeTransfer(c *gin.Context) {
 		req.Transfer.VolumeID, projectID,
 	).Scan(&volumeStatus)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("volume"))
 		return
 	}
@@ -73,10 +74,10 @@ func (svc *Service) CreateVolumeTransfer(c *gin.Context) {
 
 	c.JSON(http.StatusAccepted, gin.H{
 		"transfer": gin.H{
-			"id":        transferID,
-			"volume_id": req.Transfer.VolumeID,
-			"name":      req.Transfer.Name,
-			"auth_key":  authKey,
+			"id":         transferID,
+			"volume_id":  req.Transfer.VolumeID,
+			"name":       req.Transfer.Name,
+			"auth_key":   authKey,
 			"created_at": now.Format(time.RFC3339),
 		},
 	})
@@ -146,7 +147,7 @@ func (svc *Service) GetVolumeTransfer(c *gin.Context) {
 		WHERE id = $1 AND source_project_id = $2 AND accepted = false
 	`, transferID, projectID).Scan(&volumeID, &name, &createdAt)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("transfer"))
 		return
 	}
@@ -216,7 +217,7 @@ func (svc *Service) AcceptVolumeTransfer(c *gin.Context) {
 		WHERE id = $1 AND accepted = false
 	`, transferID).Scan(&volumeID, &name, &storedAuthKey, &sourceProjectID)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("transfer"))
 		return
 	}

@@ -1,6 +1,7 @@
 package cinder
 
 import (
+	"errors"
 	"net/http"
 	"time"
 
@@ -132,7 +133,7 @@ func (svc *Service) GetGroup(c *gin.Context) {
 		WHERE id = $1 AND project_id = $2
 	`, groupID, projectID).Scan(&name, &description, &status, &groupType, &createdAt, &updatedAt)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("group"))
 		return
 	}

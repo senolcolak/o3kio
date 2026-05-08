@@ -3,6 +3,7 @@ package nova
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -43,7 +44,7 @@ func (svc *Service) AttachInterface(c *gin.Context) {
 		instanceID, projectID,
 	).Scan(&libvirtDomainID, &status)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("instance"))
 		return
 	}
@@ -65,7 +66,7 @@ func (svc *Service) AttachInterface(c *gin.Context) {
 			portID, projectID,
 		).Scan(&networkID, &fixedIPsJSON, &macAddress, &deviceID)
 
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			common.SendError(c, common.NewNotFoundError("port"))
 			return
 		}
@@ -105,7 +106,7 @@ func (svc *Service) AttachInterface(c *gin.Context) {
 			networkID,
 		).Scan(&cidr)
 
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			common.SendError(c, common.NewBadRequestError("network has no subnet"))
 			return
 		}
@@ -206,7 +207,7 @@ func (svc *Service) DetachInterface(c *gin.Context) {
 		portID,
 	).Scan(&attachedInstanceID)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("port"))
 		return
 	}
@@ -349,7 +350,7 @@ func allocateNextIP(ctx context.Context, db database.DBIF, networkID, cidr strin
 		networkID,
 	).Scan(&fixedIPsJSON)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		// First allocation: use base+10
 		return base.String(), nil
 	}

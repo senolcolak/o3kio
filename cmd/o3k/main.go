@@ -293,9 +293,7 @@ func runServer(args []string) {
 	log.Printf("Glance initialized in %s mode", glanceStorageMode)
 
 	// Initialize metadata service
-	// testMode=true when libvirt is in stub mode (development); allows X-Instance-ID header
-	metadataTestMode := libvirtMode == "stub"
-	metadataService := metadata.NewService("localhost:8775", metadataTestMode)
+	metadataService := metadata.NewService("localhost:8775")
 	log.Println("Metadata service initialized")
 
 	// Initialize placement service
@@ -453,8 +451,11 @@ func createKeystoneServer(cfg *common.Config, svc *keystone.Service, authService
 	svc.RegisterRoutes(r.Group(""), middleware.RequireRole("admin"))
 
 	return &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.Keystone.Port),
-		Handler: r,
+		Addr:         fmt.Sprintf(":%d", cfg.Keystone.Port),
+		Handler:      r,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
 }
 
@@ -474,8 +475,11 @@ func createNovaServer(cfg *common.Config, svc *nova.Service, authService *keysto
 	svc.RegisterRoutes(r.Group(""))
 
 	return &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.Nova.Port),
-		Handler: r,
+		Addr:         fmt.Sprintf(":%d", cfg.Nova.Port),
+		Handler:      r,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
 }
 
@@ -494,8 +498,11 @@ func createNeutronServer(cfg *common.Config, svc *neutron.Service, authService *
 	svc.RegisterRoutes(r.Group(""))
 
 	return &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.Neutron.Port),
-		Handler: r,
+		Addr:         fmt.Sprintf(":%d", cfg.Neutron.Port),
+		Handler:      r,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
 }
 
@@ -514,8 +521,11 @@ func createCinderServer(cfg *common.Config, svc *cinder.Service, authService *ke
 	svc.RegisterRoutes(r.Group(""))
 
 	return &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.Cinder.Port),
-		Handler: r,
+		Addr:         fmt.Sprintf(":%d", cfg.Cinder.Port),
+		Handler:      r,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
 }
 
@@ -541,8 +551,11 @@ func createGlanceServer(cfg *common.Config, svc *glance.Service, authService *ke
 	svc.RegisterRoutes(authGroup)
 
 	return &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.Glance.Port),
-		Handler: r,
+		Addr:         fmt.Sprintf(":%d", cfg.Glance.Port),
+		Handler:      r,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 10 * time.Minute,
+		IdleTimeout:  120 * time.Second,
 	}
 }
 
@@ -560,8 +573,11 @@ func createPlacementServer(cfg *common.Config, svc *placement.Service, authServi
 	svc.RegisterRoutes(r.Group(""))
 
 	return &http.Server{
-		Addr:    ":8778",
-		Handler: r,
+		Addr:         ":8778",
+		Handler:      r,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
 }
 
@@ -578,7 +594,10 @@ func createMetadataServer(svc *metadata.Service) *http.Server {
 	svc.RegisterRoutes(r.Group(""))
 
 	return &http.Server{
-		Addr:    ":8775",
-		Handler: r,
+		Addr:         ":8775",
+		Handler:      r,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
 }

@@ -1,14 +1,15 @@
 package neutron
 
 import (
+	"errors"
 	"net/http"
 	"time"
 
+	"github.com/cobaltcore-dev/o3k/internal/common"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
-	"github.com/cobaltcore-dev/o3k/internal/common"
 )
 
 // GetAutoAllocatedTopology returns the auto-allocated network topology for a project
@@ -24,7 +25,7 @@ func (svc *Service) GetAutoAllocatedTopology(c *gin.Context) {
 		LIMIT 1
 	`, projectID).Scan(&networkID, &networkName)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		c.JSON(http.StatusNotFound, gin.H{
 			"NeutronError": gin.H{
 				"type":    "AutoAllocationNotAvailable",
@@ -132,7 +133,7 @@ func (svc *Service) DeleteAutoAllocatedTopology(c *gin.Context) {
 		LIMIT 1
 	`, projectID).Scan(&networkID)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("auto-allocated topology"))
 		return
 	}

@@ -3,17 +3,18 @@ package nova
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/cobaltcore-dev/o3k/internal/common"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/crypto/bcrypt"
-	"github.com/cobaltcore-dev/o3k/internal/common"
 )
 
 // Suspend suspends a running instance (saves RAM to disk)
@@ -30,7 +31,7 @@ func (svc *Service) SuspendInstance(c *gin.Context) {
 		instanceID, projectID,
 	).Scan(&libvirtDomainID, &status, &powerState)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("instance"))
 		return
 	}
@@ -89,7 +90,7 @@ func (svc *Service) ResumeInstance(c *gin.Context) {
 		instanceID, projectID,
 	).Scan(&libvirtDomainID, &status)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("instance"))
 		return
 	}
@@ -148,7 +149,7 @@ func (svc *Service) ShelveInstance(c *gin.Context) {
 		instanceID, projectID,
 	).Scan(&libvirtDomainID, &status)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("instance"))
 		return
 	}
@@ -216,7 +217,7 @@ func (svc *Service) UnshelveInstance(c *gin.Context) {
 		instanceID, projectID,
 	).Scan(&status)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("instance"))
 		return
 	}
@@ -296,7 +297,7 @@ func (svc *Service) resizeInstance(c *gin.Context, instanceID, projectID, flavor
 		instanceID, projectID,
 	).Scan(&status, &currentFlavorID)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("instance"))
 		return
 	}
@@ -314,7 +315,7 @@ func (svc *Service) resizeInstance(c *gin.Context, instanceID, projectID, flavor
 		flavorRef,
 	).Scan(&newFlavorID)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("flavor"))
 		return
 	}
@@ -429,7 +430,7 @@ func (svc *Service) RevertResizeInstance(c *gin.Context) {
 		instanceID, projectID,
 	).Scan(&status)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("instance"))
 		return
 	}
@@ -503,7 +504,7 @@ func (svc *Service) EvacuateInstance(c *gin.Context) {
 		instanceID, projectID,
 	).Scan(&status)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("instance"))
 		return
 	}
@@ -533,7 +534,7 @@ func (svc *Service) MigrateInstance(c *gin.Context) {
 		instanceID, projectID,
 	).Scan(&status)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("instance"))
 		return
 	}
@@ -618,7 +619,7 @@ func (svc *Service) LiveMigrateInstance(c *gin.Context) {
 		instanceID, projectID,
 	).Scan(&status)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("instance"))
 		return
 	}
@@ -685,7 +686,7 @@ func (svc *Service) AddSecurityGroup(c *gin.Context) {
 		sgName, projectID,
 	).Scan(&sgID)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("security group"))
 		return
 	}
@@ -768,7 +769,7 @@ func (svc *Service) RemoveSecurityGroup(c *gin.Context) {
 		sgName, projectID,
 	).Scan(&sgID)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("security group"))
 		return
 	}
@@ -857,7 +858,7 @@ func (svc *Service) ChangePassword(c *gin.Context) {
 		instanceID, projectID,
 	).Scan(&status)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("instance"))
 		return
 	}
@@ -912,7 +913,7 @@ func (svc *Service) RestoreInstance(c *gin.Context) {
 		instanceID, projectID,
 	).Scan(&status)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("instance"))
 		return
 	}
@@ -979,7 +980,7 @@ func (svc *Service) CreateBackupAction(c *gin.Context) {
 		instanceID, projectID,
 	).Scan(&sourceImageID)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("instance"))
 		return
 	}

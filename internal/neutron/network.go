@@ -2,21 +2,22 @@ package neutron
 
 import (
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"strconv"
 	"time"
 
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/rs/zerolog/log"
 	"github.com/cobaltcore-dev/o3k/internal/common"
 	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/cobaltcore-dev/o3k/internal/keystone"
 	"github.com/cobaltcore-dev/o3k/pkg/cache"
 	"github.com/cobaltcore-dev/o3k/pkg/networking"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/rs/zerolog/log"
 )
 
 // Service handles Neutron API endpoints
@@ -163,7 +164,6 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		v2.GET("/floatingips/:id", svc.GetFloatingIP)
 		v2.PUT("/floatingips/:id", svc.UpdateFloatingIP)
 		v2.DELETE("/floatingips/:id", svc.DeleteFloatingIP)
-
 
 		// Port Forwarding (nested under floatingips)
 		v2.GET("/floatingips/:id/port_forwardings", svc.ListPortForwardings)
@@ -349,12 +349,12 @@ func (svc *Service) GetQuota(c *gin.Context) {
 	// Return quota response
 	c.JSON(200, gin.H{
 		"quota": gin.H{
-			"network":            100,
-			"subnet":             100,
-			"port":               500,
-			"router":             10,
-			"floatingip":         50,
-			"security_group":     100,
+			"network":             100,
+			"subnet":              100,
+			"port":                500,
+			"router":              10,
+			"floatingip":          50,
+			"security_group":      100,
 			"security_group_rule": 500,
 		},
 	})
@@ -572,19 +572,19 @@ func (svc *Service) ListNetworks(c *gin.Context) {
 		}
 
 		networks = append(networks, gin.H{
-			"id":                       id,
-			"name":                     name,
-			"tenant_id":                ownerProjectID,
-			"admin_state_up":           adminStateUp,
-			"status":                   status,
-			"shared":                   shared,
-			"mtu":                      mtu,
-			"provider:network_type":    networkType,
+			"id":                        id,
+			"name":                      name,
+			"tenant_id":                 ownerProjectID,
+			"admin_state_up":            adminStateUp,
+			"status":                    status,
+			"shared":                    shared,
+			"mtu":                       mtu,
+			"provider:network_type":     networkType,
 			"provider:physical_network": nil,
-			"provider:segmentation_id": nil,
-			"router:external":          false,
-			"created_at":               createdAt.Format(time.RFC3339),
-			"updated_at":               updatedAt.Format(time.RFC3339),
+			"provider:segmentation_id":  nil,
+			"router:external":           false,
+			"created_at":                createdAt.Format(time.RFC3339),
+			"updated_at":                updatedAt.Format(time.RFC3339),
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -601,7 +601,7 @@ func (svc *Service) ListNetworks(c *gin.Context) {
 	resp := gin.H{"networks": networks}
 	if len(networks) > limit {
 		networks = networks[:limit]
-		lastID := networks[limit-1]["id"].(string)
+		lastID, _ := networks[limit-1]["id"].(string)
 		resp = gin.H{
 			"networks":       networks,
 			"networks_links": []gin.H{{"rel": "next", "href": fmt.Sprintf("?marker=%s&limit=%d", lastID, limit)}},
@@ -640,7 +640,7 @@ func (svc *Service) GetNetwork(c *gin.Context) {
 		LIMIT 1
 	`, networkID, projectID).Scan(&id, &name, &ownerProjectID, &adminStateUp, &status, &shared, &mtu, &networkType, &createdAt, &updatedAt)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("network"))
 		return
 	}
@@ -651,19 +651,19 @@ func (svc *Service) GetNetwork(c *gin.Context) {
 	}
 
 	network := gin.H{
-		"id":                       id,
-		"name":                     name,
-		"tenant_id":                ownerProjectID,
-		"admin_state_up":           adminStateUp,
-		"status":                   status,
-		"shared":                   shared,
-		"mtu":                      mtu,
-		"provider:network_type":    networkType,
+		"id":                        id,
+		"name":                      name,
+		"tenant_id":                 ownerProjectID,
+		"admin_state_up":            adminStateUp,
+		"status":                    status,
+		"shared":                    shared,
+		"mtu":                       mtu,
+		"provider:network_type":     networkType,
 		"provider:physical_network": nil,
-		"provider:segmentation_id": nil,
-		"router:external":          false,
-		"created_at":               createdAt.Format(time.RFC3339),
-		"updated_at":               updatedAt.Format(time.RFC3339),
+		"provider:segmentation_id":  nil,
+		"router:external":           false,
+		"created_at":                createdAt.Format(time.RFC3339),
+		"updated_at":                updatedAt.Format(time.RFC3339),
 	}
 
 	// Store in cache (30min TTL per config)
@@ -686,7 +686,7 @@ func (svc *Service) DeleteNetwork(c *gin.Context) {
 		"SELECT project_id FROM networks WHERE (id::text = $1 OR name = $1) AND (project_id = $2 OR shared = true)",
 		networkID, projectID,
 	).Scan(&networkProjectID)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("network"))
 		return
 	}
@@ -878,7 +878,7 @@ func (svc *Service) CreateSubnet(c *gin.Context) {
 	// Calculate allocation pools (entire subnet minus gateway)
 	allocationPools := []gin.H{
 		{
-			"start": incrementIP(ipNet.IP, 2).String(), // Skip network address and gateway
+			"start": incrementIP(ipNet.IP, 2).String(),         // Skip network address and gateway
 			"end":   decrementIP(broadcast(ipNet), 1).String(), // Skip broadcast
 		},
 	}
@@ -984,7 +984,7 @@ func (svc *Service) ListSubnets(c *gin.Context) {
 	resp := gin.H{"subnets": subnets}
 	if len(subnets) > limit {
 		subnets = subnets[:limit]
-		lastID := subnets[limit-1]["id"].(string)
+		lastID, _ := subnets[limit-1]["id"].(string)
 		resp = gin.H{
 			"subnets":       subnets,
 			"subnets_links": []gin.H{{"rel": "next", "href": fmt.Sprintf("?marker=%s&limit=%d", lastID, limit)}},
@@ -1012,7 +1012,7 @@ func (svc *Service) GetSubnet(c *gin.Context) {
 		WHERE s.id = $1 AND (s.project_id = $2 OR n.shared = true)
 	`, subnetID, projectID).Scan(&id, &name, &networkID, &cidr, &gatewayIP, &ipVersion, &enableDHCP, &dnsNameservers, &createdAt, &updatedAt)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("subnet"))
 		return
 	}
@@ -1092,7 +1092,7 @@ func (svc *Service) UpdateSubnet(c *gin.Context) {
 		subnetID, projectID,
 	).Scan(&currentName)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("subnet"))
 		return
 	}
@@ -1133,13 +1133,13 @@ func (svc *Service) UpdateSubnet(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"subnet": gin.H{
-			"id":          subnetID,
-			"name":        currentName,
-			"network_id":  networkID,
-			"cidr":        cidr,
-			"gateway_ip":  gatewayIP,
-			"ip_version":  ipVersion,
-			"tenant_id":   projectID,
+			"id":         subnetID,
+			"name":       currentName,
+			"network_id": networkID,
+			"cidr":       cidr,
+			"gateway_ip": gatewayIP,
+			"ip_version": ipVersion,
+			"tenant_id":  projectID,
 		},
 	})
 }

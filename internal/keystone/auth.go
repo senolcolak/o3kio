@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -51,11 +52,13 @@ type AuthService struct {
 
 // NewAuthService creates a new auth service
 func NewAuthService(jwtSecret string, tokenTTL time.Duration, cacheInstance *cache.Cache) *AuthService {
-	return &AuthService{
+	svc := &AuthService{
 		jwtSecret: []byte(jwtSecret),
 		tokenTTL:  tokenTTL,
 		cache:     cacheInstance,
 	}
+	svc.loadRevokedTokens()
+	return svc
 }
 
 // NewAuthServiceWithDB creates an AuthService with an injected DB for testing.
@@ -63,6 +66,35 @@ func NewAuthServiceWithDB(db database.DBIF, jwtSecret string, tokenTTL time.Dura
 	svc := NewAuthService(jwtSecret, tokenTTL, cacheInstance)
 	svc.db = db
 	return svc
+}
+
+// loadRevokedTokens preloads non-expired revoked tokens from the DB into the in-memory map.
+// Called at startup. Logs a warning and returns silently if the DB is unavailable.
+func (s *AuthService) loadRevokedTokens() {
+	db := s.activeDB()
+	if db == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	rows, err := db.Query(ctx,
+		`SELECT token_hash, expires_at FROM revoked_tokens WHERE expires_at > NOW()`)
+	if err != nil {
+		log.Warn().Err(err).Msg("keystone: failed to preload revoked tokens; in-memory map starts empty")
+		return
+	}
+	defer rows.Close()
+	count := 0
+	for rows.Next() {
+		var hash string
+		var expiresAt time.Time
+		if err := rows.Scan(&hash, &expiresAt); err != nil {
+			continue
+		}
+		s.revokedTokens.Store(hash, expiresAt)
+		count++
+	}
+	log.Info().Int("count", count).Msg("keystone: preloaded revoked tokens into memory")
 }
 
 // activeDB returns the injected DB or falls back to the global.
@@ -190,7 +222,7 @@ func (s *AuthService) AuthenticatePassword(ctx context.Context, req *AuthRequest
 		domainName,
 	).Scan(&domainID)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, "", common.NewUnauthorizedError("invalid domain")
 	}
 	if err != nil {
@@ -204,7 +236,7 @@ func (s *AuthService) AuthenticatePassword(ctx context.Context, req *AuthRequest
 		username, domainID,
 	).Scan(&user.ID, &user.Name, &user.PasswordHash, &user.Enabled, &user.DomainID)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, "", common.NewUnauthorizedError("invalid credentials")
 	}
 	if err != nil {
@@ -246,7 +278,7 @@ func (s *AuthService) AuthenticatePassword(ctx context.Context, req *AuthRequest
 		err := s.activeDB().QueryRow(ctx, query, params...).Scan(
 			&proj.ID, &proj.Name, &proj.Description, &proj.Enabled, &proj.DomainID,
 		)
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, "", common.NewUnauthorizedError("project not found")
 		}
 		if err != nil {
@@ -398,7 +430,7 @@ func (s *AuthService) AuthenticateToken(ctx context.Context, req *AuthRequest) (
 		claims.UserID,
 	).Scan(&user.ID, &user.Name, &user.PasswordHash, &user.Enabled, &user.DomainID)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, "", common.NewUnauthorizedError("user not found")
 	}
 	if err != nil {
@@ -437,7 +469,7 @@ func (s *AuthService) AuthenticateToken(ctx context.Context, req *AuthRequest) (
 		err := s.activeDB().QueryRow(ctx, query, params...).Scan(
 			&proj.ID, &proj.Name, &proj.Description, &proj.Enabled, &proj.DomainID,
 		)
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, "", common.NewUnauthorizedError("project not found")
 		}
 		if err != nil {
@@ -596,7 +628,7 @@ func (s *AuthService) AuthenticateApplicationCredential(ctx context.Context, req
 		WHERE id = $1
 	`, credID).Scan(&userID, &projectID, &secretHash, &name, &expiresAt, &unrestricted, &legacyAuth, &accessRulesJSON)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, "", false, common.NewUnauthorizedError("invalid application credential")
 	}
 	if err != nil {
@@ -644,7 +676,7 @@ func (s *AuthService) AuthenticateApplicationCredential(ctx context.Context, req
 		"SELECT id, name, password_hash, enabled, domain_id FROM users WHERE id = $1",
 		userID,
 	).Scan(&user.ID, &user.Name, &user.PasswordHash, &user.Enabled, &user.DomainID)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, "", false, common.NewUnauthorizedError("user not found for application credential")
 	}
 	if err != nil {
@@ -833,7 +865,11 @@ func (s *AuthService) IsTokenRevoked(tokenString string) bool {
 
 	// Fast path: check in-memory map
 	if val, ok := s.revokedTokens.Load(hash); ok {
-		expiry := val.(time.Time)
+		expiry, ok := val.(time.Time)
+		if !ok {
+			s.revokedTokens.Delete(hash)
+			return false
+		}
 		if time.Now().After(expiry) {
 			s.revokedTokens.Delete(hash)
 			return false
@@ -848,7 +884,9 @@ func (s *AuthService) IsTokenRevoked(tokenString string) bool {
 	}
 
 	var expiresAt time.Time
-	err := db.QueryRow(context.Background(),
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err := db.QueryRow(ctx,
 		"SELECT expires_at FROM revoked_tokens WHERE token_hash = $1",
 		hash,
 	).Scan(&expiresAt)
@@ -874,8 +912,9 @@ func (s *AuthService) IsTokenRevoked(tokenString string) bool {
 // CleanExpiredRevocations removes expired entries from the denylist (in-memory and DB)
 func (s *AuthService) CleanExpiredRevocations() {
 	now := time.Now()
-	s.revokedTokens.Range(func(key, value interface{}) bool {
-		if now.After(value.(time.Time)) {
+	s.revokedTokens.Range(func(key, value any) bool {
+		expiry, ok := value.(time.Time)
+		if !ok || now.After(expiry) {
 			s.revokedTokens.Delete(key)
 		}
 		return true
