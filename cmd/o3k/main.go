@@ -36,7 +36,7 @@ import (
 // isSubcommand reports whether s is a recognised o3k subcommand.
 func isSubcommand(s string) bool {
 	switch s {
-	case "server", "agent", "token":
+	case "server", "agent", "token", "migrate-datastore":
 		return true
 	}
 	return false
@@ -58,6 +58,8 @@ func main() {
 			runAgent(os.Args[2:])
 		case "token":
 			runTokenCmd(os.Args[2:])
+		case "migrate-datastore":
+			runMigrateDatastore(os.Args[2:])
 		}
 		return
 	}
