@@ -441,9 +441,10 @@ func (svc *Service) GetNamespaceManager() *networking.NetworkNamespaceManager {
 // CreateNetworkRequest represents a network creation request
 type CreateNetworkRequest struct {
 	Network struct {
-		Name         string `json:"name" binding:"required"`
-		AdminStateUp *bool  `json:"admin_state_up"`
-		Shared       *bool  `json:"shared"`
+		Name           string `json:"name" binding:"required"`
+		AdminStateUp   *bool  `json:"admin_state_up"`
+		Shared         *bool  `json:"shared"`
+		RouterExternal *bool  `json:"router:external"`
 	} `json:"network"`
 }
 
@@ -469,6 +470,11 @@ func (svc *Service) CreateNetwork(c *gin.Context) {
 		shared = *req.Network.Shared
 	}
 
+	isExternal := false
+	if req.Network.RouterExternal != nil {
+		isExternal = *req.Network.RouterExternal
+	}
+
 	// Insert into database first; only create the bridge if the insert succeeds.
 	now := time.Now()
 
@@ -481,9 +487,9 @@ func (svc *Service) CreateNetwork(c *gin.Context) {
 	}
 
 	_, err := svc.activeDB().Exec(c.Request.Context(), `
-		INSERT INTO networks (id, name, project_id, admin_state_up, status, shared, network_type, mtu, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-	`, networkID, req.Network.Name, projectID, adminStateUp, "ACTIVE", shared, networkType, mtu, now, now)
+		INSERT INTO networks (id, name, project_id, admin_state_up, status, shared, network_type, mtu, is_external, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	`, networkID, req.Network.Name, projectID, adminStateUp, "ACTIVE", shared, networkType, mtu, isExternal, now, now)
 
 	if err != nil {
 		log.Error().Err(err).Str("operation", "create_network").Msg("database error")
@@ -512,7 +518,7 @@ func (svc *Service) CreateNetwork(c *gin.Context) {
 			"provider:network_type":     networkType,
 			"provider:physical_network": nil,
 			"provider:segmentation_id":  nil,
-			"router:external":           false,
+			"router:external":           isExternal,
 			"created_at":                now.Format(time.RFC3339),
 			"updated_at":                now.Format(time.RFC3339),
 		},
@@ -561,6 +567,13 @@ func (svc *Service) ListNetworks(c *gin.Context) {
 			argIdx++
 		}
 	}
+	if v := c.Query("router:external"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			conditions = append(conditions, fmt.Sprintf("n.is_external = $%d", argIdx))
+			queryArgs = append(queryArgs, b)
+			argIdx++
+		}
+	}
 
 	// Marker-based pagination using (created_at, id) for deterministic ordering.
 	if marker := c.Query("marker"); marker != "" {
@@ -572,7 +585,7 @@ func (svc *Service) ListNetworks(c *gin.Context) {
 	queryArgs = append(queryArgs, limit+1)
 
 	rows, err := svc.activeDB().Query(c.Request.Context(), fmt.Sprintf(`
-		SELECT n.id, n.name, n.project_id, n.admin_state_up, n.status, n.shared, n.mtu, n.network_type, n.created_at, n.updated_at
+		SELECT n.id, n.name, n.project_id, n.admin_state_up, n.status, n.shared, n.mtu, n.network_type, n.is_external, n.created_at, n.updated_at
 		FROM networks n
 		WHERE %s
 		ORDER BY n.created_at ASC, n.id ASC
@@ -589,11 +602,11 @@ func (svc *Service) ListNetworks(c *gin.Context) {
 	var networks []gin.H
 	for rows.Next() {
 		var id, name, ownerProjectID, status, networkType string
-		var adminStateUp, shared bool
+		var adminStateUp, shared, isExternal bool
 		var mtu int
 		var createdAt, updatedAt time.Time
 
-		if err := rows.Scan(&id, &name, &ownerProjectID, &adminStateUp, &status, &shared, &mtu, &networkType, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&id, &name, &ownerProjectID, &adminStateUp, &status, &shared, &mtu, &networkType, &isExternal, &createdAt, &updatedAt); err != nil {
 			continue
 		}
 
@@ -608,7 +621,7 @@ func (svc *Service) ListNetworks(c *gin.Context) {
 			"provider:network_type":     networkType,
 			"provider:physical_network": nil,
 			"provider:segmentation_id":  nil,
-			"router:external":           false,
+			"router:external":           isExternal,
 			"created_at":                createdAt.Format(time.RFC3339),
 			"updated_at":                updatedAt.Format(time.RFC3339),
 		})
@@ -655,16 +668,16 @@ func (svc *Service) GetNetwork(c *gin.Context) {
 
 	// Cache miss - query database
 	var id, name, ownerProjectID, status, networkType string
-	var adminStateUp, shared bool
+	var adminStateUp, shared, isExternal bool
 	var mtu int
 	var createdAt, updatedAt time.Time
 
 	err := svc.activeDB().QueryRow(ctx, `
-		SELECT id, name, project_id, admin_state_up, status, shared, mtu, network_type, created_at, updated_at
+		SELECT id, name, project_id, admin_state_up, status, shared, mtu, network_type, is_external, created_at, updated_at
 		FROM networks
 		WHERE (id::text = $1 OR name = $1) AND (project_id = $2 OR shared = true)
 		LIMIT 1
-	`, networkID, projectID).Scan(&id, &name, &ownerProjectID, &adminStateUp, &status, &shared, &mtu, &networkType, &createdAt, &updatedAt)
+	`, networkID, projectID).Scan(&id, &name, &ownerProjectID, &adminStateUp, &status, &shared, &mtu, &networkType, &isExternal, &createdAt, &updatedAt)
 
 	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("network"))
@@ -687,7 +700,7 @@ func (svc *Service) GetNetwork(c *gin.Context) {
 		"provider:network_type":     networkType,
 		"provider:physical_network": nil,
 		"provider:segmentation_id":  nil,
-		"router:external":           false,
+		"router:external":           isExternal,
 		"created_at":                createdAt.Format(time.RFC3339),
 		"updated_at":                updatedAt.Format(time.RFC3339),
 	}
@@ -771,8 +784,9 @@ func (svc *Service) UpdateNetwork(c *gin.Context) {
 
 	var req struct {
 		Network struct {
-			Name         *string `json:"name"`
-			AdminStateUp *bool   `json:"admin_state_up"`
+			Name           *string `json:"name"`
+			AdminStateUp   *bool   `json:"admin_state_up"`
+			RouterExternal *bool   `json:"router:external"`
 		} `json:"network"`
 	}
 
@@ -794,6 +808,12 @@ func (svc *Service) UpdateNetwork(c *gin.Context) {
 	if req.Network.AdminStateUp != nil {
 		updates = append(updates, fmt.Sprintf("admin_state_up = $%d", argID))
 		args = append(args, *req.Network.AdminStateUp)
+		argID++
+	}
+
+	if req.Network.RouterExternal != nil {
+		updates = append(updates, fmt.Sprintf("is_external = $%d", argID))
+		args = append(args, *req.Network.RouterExternal)
 		argID++
 	}
 

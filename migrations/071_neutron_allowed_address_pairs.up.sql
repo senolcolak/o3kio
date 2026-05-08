@@ -1,0 +1,1 @@
+ALTER TABLE ports ADD COLUMN IF NOT EXISTS allowed_address_pairs JSONB NOT NULL DEFAULT '[]';

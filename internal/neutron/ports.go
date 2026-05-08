@@ -23,12 +23,13 @@ import (
 // CreatePortRequest represents a port creation request
 type CreatePortRequest struct {
 	Port struct {
-		Name           string   `json:"name"`
-		NetworkID      string   `json:"network_id" binding:"required"`
-		AdminStateUp   *bool    `json:"admin_state_up"`
-		DeviceID       string   `json:"device_id"`
-		DeviceOwner    string   `json:"device_owner"`
-		SecurityGroups []string `json:"security_groups"` // Security group IDs
+		Name                string                   `json:"name"`
+		NetworkID           string                   `json:"network_id" binding:"required"`
+		AdminStateUp        *bool                    `json:"admin_state_up"`
+		DeviceID            string                   `json:"device_id"`
+		DeviceOwner         string                   `json:"device_owner"`
+		SecurityGroups      []string                 `json:"security_groups"` // Security group IDs
+		AllowedAddressPairs []map[string]interface{} `json:"allowed_address_pairs"`
 	} `json:"port"`
 }
 
@@ -88,6 +89,12 @@ func (svc *Service) CreatePort(c *gin.Context) {
 
 	fixedIPsJSON, _ := json.Marshal(fixedIPs)
 
+	allowedAddressPairs := req.Port.AllowedAddressPairs
+	if allowedAddressPairs == nil {
+		allowedAddressPairs = []map[string]interface{}{}
+	}
+	allowedAddressPairsJSON, _ := json.Marshal(allowedAddressPairs)
+
 	// Create TAP device in namespace
 	nsName := svc.nsManager.GetNamespaceName(projectID)
 	if err := svc.tapManager.CreateTAPDevice(tapName, true, nsName); err != nil {
@@ -107,10 +114,10 @@ func (svc *Service) CreatePort(c *gin.Context) {
 	// Insert into database
 	now := time.Now()
 	_, err = svc.activeDB().Exec(c.Request.Context(), `
-		INSERT INTO ports (id, name, network_id, project_id, device_id, device_owner, mac_address, admin_state_up, status, fixed_ips, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		INSERT INTO ports (id, name, network_id, project_id, device_id, device_owner, mac_address, admin_state_up, status, fixed_ips, allowed_address_pairs, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 	`, portID, req.Port.Name, req.Port.NetworkID, projectID, sql.NullString{String: req.Port.DeviceID, Valid: req.Port.DeviceID != ""},
-		sql.NullString{String: req.Port.DeviceOwner, Valid: req.Port.DeviceOwner != ""}, macAddress, adminStateUp, "ACTIVE", fixedIPsJSON, now, now)
+		sql.NullString{String: req.Port.DeviceOwner, Valid: req.Port.DeviceOwner != ""}, macAddress, adminStateUp, "ACTIVE", fixedIPsJSON, allowedAddressPairsJSON, now, now)
 
 	if err != nil {
 		log.Error().Err(err).Str("operation", "create_port").Msg("database error")
@@ -202,19 +209,20 @@ func (svc *Service) CreatePort(c *gin.Context) {
 
 	c.JSON(http.StatusCreated, gin.H{
 		"port": gin.H{
-			"id":              portID,
-			"name":            req.Port.Name,
-			"network_id":      req.Port.NetworkID,
-			"tenant_id":       projectID,
-			"device_id":       req.Port.DeviceID,
-			"device_owner":    req.Port.DeviceOwner,
-			"mac_address":     macAddress,
-			"admin_state_up":  adminStateUp,
-			"status":          "ACTIVE",
-			"fixed_ips":       fixedIPs,
-			"security_groups": securityGroups,
-			"created_at":      now.Format(time.RFC3339),
-			"updated_at":      now.Format(time.RFC3339),
+			"id":                    portID,
+			"name":                  req.Port.Name,
+			"network_id":            req.Port.NetworkID,
+			"tenant_id":             projectID,
+			"device_id":             req.Port.DeviceID,
+			"device_owner":          req.Port.DeviceOwner,
+			"mac_address":           macAddress,
+			"admin_state_up":        adminStateUp,
+			"status":                "ACTIVE",
+			"fixed_ips":             fixedIPs,
+			"security_groups":       securityGroups,
+			"allowed_address_pairs": allowedAddressPairs,
+			"created_at":            now.Format(time.RFC3339),
+			"updated_at":            now.Format(time.RFC3339),
 		},
 	})
 }
@@ -273,7 +281,7 @@ func (svc *Service) ListPorts(c *gin.Context) {
 	queryArgs = append(queryArgs, limit+1)
 
 	rows, err := svc.activeDB().Query(c.Request.Context(), fmt.Sprintf(`
-		SELECT p.id, p.name, p.network_id, p.device_id, p.device_owner, p.mac_address, p.admin_state_up, p.status, p.fixed_ips, p.created_at, p.updated_at
+		SELECT p.id, p.name, p.network_id, p.device_id, p.device_owner, p.mac_address, p.admin_state_up, p.status, p.fixed_ips, p.allowed_address_pairs, p.created_at, p.updated_at
 		FROM ports p
 		JOIN networks n ON p.network_id = n.id
 		WHERE %s
@@ -289,24 +297,25 @@ func (svc *Service) ListPorts(c *gin.Context) {
 	defer rows.Close()
 
 	type portRow struct {
-		id           string
-		name         string
-		networkID    string
-		deviceID     sql.NullString
-		deviceOwner  sql.NullString
-		macAddress   string
-		adminStateUp bool
-		status       string
-		fixedIPsJSON []byte
-		createdAt    time.Time
-		updatedAt    time.Time
+		id                  string
+		name                string
+		networkID           string
+		deviceID            sql.NullString
+		deviceOwner         sql.NullString
+		macAddress          string
+		adminStateUp        bool
+		status              string
+		fixedIPsJSON        []byte
+		allowedAddrPairJSON []byte
+		createdAt           time.Time
+		updatedAt           time.Time
 	}
 
 	var portRows []portRow
 	var portIDs []string
 	for rows.Next() {
 		var pr portRow
-		if err := rows.Scan(&pr.id, &pr.name, &pr.networkID, &pr.deviceID, &pr.deviceOwner, &pr.macAddress, &pr.adminStateUp, &pr.status, &pr.fixedIPsJSON, &pr.createdAt, &pr.updatedAt); err != nil {
+		if err := rows.Scan(&pr.id, &pr.name, &pr.networkID, &pr.deviceID, &pr.deviceOwner, &pr.macAddress, &pr.adminStateUp, &pr.status, &pr.fixedIPsJSON, &pr.allowedAddrPairJSON, &pr.createdAt, &pr.updatedAt); err != nil {
 			log.Warn().Err(err).Msg("failed to scan port row")
 			continue
 		}
@@ -350,6 +359,11 @@ func (svc *Service) ListPorts(c *gin.Context) {
 		var fixedIPs []map[string]interface{}
 		json.Unmarshal(pr.fixedIPsJSON, &fixedIPs)
 
+		var allowedAddrPairs []map[string]interface{}
+		if err := json.Unmarshal(pr.allowedAddrPairJSON, &allowedAddrPairs); err != nil || allowedAddrPairs == nil {
+			allowedAddrPairs = []map[string]interface{}{}
+		}
+
 		sgs := sgByPort[pr.id]
 		if sgs == nil {
 			sgs = []string{}
@@ -374,7 +388,7 @@ func (svc *Service) ListPorts(c *gin.Context) {
 			"binding:vif_details":   map[string]interface{}{"port_filter": true, "connectivity": "l2"},
 			"binding:profile":       map[string]interface{}{},
 			"port_security_enabled": true,
-			"allowed_address_pairs": []interface{}{},
+			"allowed_address_pairs": allowedAddrPairs,
 			"dns_name":              "",
 			"dns_assignment":        []interface{}{},
 			"created_at":            pr.createdAt.Format(time.RFC3339),
@@ -409,15 +423,15 @@ func (svc *Service) GetPort(c *gin.Context) {
 	var deviceID, deviceOwner sql.NullString
 	var macAddress, status string
 	var adminStateUp bool
-	var fixedIPsJSON []byte
+	var fixedIPsJSON, allowedAddrPairJSON []byte
 	var createdAt, updatedAt time.Time
 
 	err := svc.activeDB().QueryRow(c.Request.Context(), `
-		SELECT p.id, p.name, p.network_id, p.device_id, p.device_owner, p.mac_address, p.admin_state_up, p.status, p.fixed_ips, p.created_at, p.updated_at
+		SELECT p.id, p.name, p.network_id, p.device_id, p.device_owner, p.mac_address, p.admin_state_up, p.status, p.fixed_ips, p.allowed_address_pairs, p.created_at, p.updated_at
 		FROM ports p
 		JOIN networks n ON p.network_id = n.id
 		WHERE p.id = $1 AND (p.project_id = $2 OR n.shared = true)
-	`, portID, projectID).Scan(&id, &name, &networkID, &deviceID, &deviceOwner, &macAddress, &adminStateUp, &status, &fixedIPsJSON, &createdAt, &updatedAt)
+	`, portID, projectID).Scan(&id, &name, &networkID, &deviceID, &deviceOwner, &macAddress, &adminStateUp, &status, &fixedIPsJSON, &allowedAddrPairJSON, &createdAt, &updatedAt)
 
 	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("port"))
@@ -431,6 +445,11 @@ func (svc *Service) GetPort(c *gin.Context) {
 
 	var fixedIPs []map[string]interface{}
 	json.Unmarshal(fixedIPsJSON, &fixedIPs)
+
+	var allowedAddrPairs []map[string]interface{}
+	if err := json.Unmarshal(allowedAddrPairJSON, &allowedAddrPairs); err != nil || allowedAddrPairs == nil {
+		allowedAddrPairs = []map[string]interface{}{}
+	}
 
 	// Fetch associated security groups
 	securityGroups := []string{}
@@ -473,7 +492,7 @@ func (svc *Service) GetPort(c *gin.Context) {
 			"binding:vif_details":   map[string]interface{}{"port_filter": true, "connectivity": "l2"},
 			"binding:profile":       map[string]interface{}{},
 			"port_security_enabled": true,
-			"allowed_address_pairs": []interface{}{},
+			"allowed_address_pairs": allowedAddrPairs,
 			"dns_name":              "",
 			"dns_assignment":        []interface{}{},
 			"created_at":            createdAt.Format(time.RFC3339),
@@ -542,10 +561,11 @@ func (svc *Service) UpdatePort(c *gin.Context) {
 
 	var req struct {
 		Port struct {
-			Name         *string `json:"name"`
-			AdminStateUp *bool   `json:"admin_state_up"`
-			DeviceID     *string `json:"device_id"`
-			DeviceOwner  *string `json:"device_owner"`
+			Name                *string                  `json:"name"`
+			AdminStateUp        *bool                    `json:"admin_state_up"`
+			DeviceID            *string                  `json:"device_id"`
+			DeviceOwner         *string                  `json:"device_owner"`
+			AllowedAddressPairs []map[string]interface{} `json:"allowed_address_pairs"`
 		} `json:"port"`
 	}
 
@@ -579,6 +599,13 @@ func (svc *Service) UpdatePort(c *gin.Context) {
 	if req.Port.DeviceOwner != nil {
 		updates = append(updates, fmt.Sprintf("device_owner = $%d", argID))
 		args = append(args, *req.Port.DeviceOwner)
+		argID++
+	}
+
+	if req.Port.AllowedAddressPairs != nil {
+		pairsJSON, _ := json.Marshal(req.Port.AllowedAddressPairs)
+		updates = append(updates, fmt.Sprintf("allowed_address_pairs = $%d", argID))
+		args = append(args, pairsJSON)
 		argID++
 	}
 
