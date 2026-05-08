@@ -70,6 +70,9 @@ jobs:
           CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="-w -s -X main.Version=${{ steps.version.outputs.version }}" -o dist/o3k-darwin-arm64 ./cmd/o3k
           CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="-w -s -X main.Version=${{ steps.version.outputs.version }}" -o dist/compat-check-darwin-arm64 ./cmd/compat-check
 
+      - name: Copy install script
+        run: cp scripts/install.sh dist/install.sh
+
       - name: Create checksums
         run: |
           cd dist
@@ -99,6 +102,7 @@ jobs:
             dist/compat-check-linux-amd64
             dist/compat-check-linux-arm64
             dist/compat-check-darwin-arm64
+            dist/install.sh
             dist/checksums.txt
           generate_release_notes: false
 
