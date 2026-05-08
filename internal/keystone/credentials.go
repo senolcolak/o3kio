@@ -1,6 +1,7 @@
 package keystone
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -147,7 +148,7 @@ func (svc *Service) GetCredential(c *gin.Context) {
 		WHERE id = $1 AND user_id = $2
 	`, credID, authUserID).Scan(&id, &userID, &projectID, &credType, &blob)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("credential"))
 		return
 	}

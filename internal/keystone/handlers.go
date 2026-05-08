@@ -449,9 +449,29 @@ func (svc *Service) ListUsers(c *gin.Context) {
 	var err error
 
 	if isAdmin == true {
-		rows, err = svc.activeDB().Query(ctx,
-			"SELECT id, name, enabled, domain_id FROM users ORDER BY name",
-		)
+		query := "SELECT id, name, enabled, domain_id FROM users WHERE 1=1"
+		args := []any{}
+		argIdx := 1
+
+		if name := c.Query("name"); name != "" {
+			query += fmt.Sprintf(" AND name = $%d", argIdx)
+			args = append(args, name)
+			argIdx++
+		}
+		if enabledStr := c.Query("enabled"); enabledStr != "" {
+			query += fmt.Sprintf(" AND enabled = $%d", argIdx)
+			args = append(args, enabledStr == "true")
+			argIdx++
+		}
+		if domainID := c.Query("domain_id"); domainID != "" {
+			query += fmt.Sprintf(" AND domain_id = $%d", argIdx)
+			args = append(args, domainID)
+			argIdx++
+		}
+		_ = argIdx // suppress unused warning if no filters added
+
+		query += " ORDER BY name"
+		rows, err = svc.activeDB().Query(ctx, query, args...)
 	} else {
 		rows, err = svc.activeDB().Query(ctx,
 			"SELECT id, name, enabled, domain_id FROM users WHERE id = $1",
@@ -534,9 +554,29 @@ func (svc *Service) ListProjects(c *gin.Context) {
 	var err error
 
 	if isAdmin {
-		rows, err = svc.activeDB().Query(ctx,
-			"SELECT id, name, description, enabled, domain_id FROM projects ORDER BY name",
-		)
+		query := "SELECT id, name, description, enabled, domain_id FROM projects WHERE 1=1"
+		args := []any{}
+		argIdx := 1
+
+		if name := c.Query("name"); name != "" {
+			query += fmt.Sprintf(" AND name = $%d", argIdx)
+			args = append(args, name)
+			argIdx++
+		}
+		if enabledStr := c.Query("enabled"); enabledStr != "" {
+			query += fmt.Sprintf(" AND enabled = $%d", argIdx)
+			args = append(args, enabledStr == "true")
+			argIdx++
+		}
+		if domainID := c.Query("domain_id"); domainID != "" {
+			query += fmt.Sprintf(" AND domain_id = $%d", argIdx)
+			args = append(args, domainID)
+			argIdx++
+		}
+		_ = argIdx // suppress unused warning if no filters added
+
+		query += " ORDER BY name"
+		rows, err = svc.activeDB().Query(ctx, query, args...)
 	} else {
 		rows, err = svc.activeDB().Query(ctx,
 			`SELECT DISTINCT p.id, p.name, p.description, p.enabled, p.domain_id
@@ -582,6 +622,15 @@ func (svc *Service) ListProjects(c *gin.Context) {
 // GetProject returns a single project
 func (svc *Service) GetProject(c *gin.Context) {
 	projectID := c.Param("id")
+
+	isAdmin := c.GetBool("is_admin")
+	callerProjectID := c.GetString("project_id")
+
+	// Non-admin users can only see the project scoped in their token.
+	if !isAdmin && projectID != callerProjectID {
+		common.SendError(c, common.NewNotFoundError("project"))
+		return
+	}
 
 	var id, name, description, domainID string
 	var enabled bool

@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -90,7 +91,7 @@ func (svc *Service) GetKeypair(c *gin.Context) {
 		WHERE user_id = $1 AND name = $2
 	`, userID, keypairName).Scan(&name, &publicKey, &fingerprint, &createdAt)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("keypair"))
 		return
 	}

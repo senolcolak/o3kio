@@ -1,6 +1,7 @@
 package glance
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"time"
@@ -21,7 +22,7 @@ func (svc *Service) StageImageData(c *gin.Context) {
 		imageID, projectID,
 	).Scan(&status)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		c.JSON(http.StatusNotFound, gin.H{"message": "Image not found"})
 		return
 	}
@@ -93,7 +94,7 @@ func (svc *Service) ImportImage(c *gin.Context) {
 		imageID, projectID,
 	).Scan(&status)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		c.JSON(http.StatusNotFound, gin.H{"message": "Image not found"})
 		return
 	}

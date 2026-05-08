@@ -1,6 +1,7 @@
 package nova
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -46,7 +47,7 @@ func (svc *Service) UpdateServer(c *gin.Context) {
 		&currentFlavorID, &currentImageID, &createdAt, &updatedAt,
 	)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("instance"))
 		return
 	}

@@ -1,6 +1,7 @@
 package cinder
 
 import (
+	"errors"
 	"net/http"
 	"time"
 
@@ -128,7 +129,7 @@ func (svc *Service) GetQosSpec(c *gin.Context) {
 		WHERE id = $1 AND project_id = $2
 	`, qosID, projectID).Scan(&name, &consumer, &specs, &createdAt)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("QoS spec"))
 		return
 	}
@@ -169,7 +170,7 @@ func (svc *Service) UpdateQosSpec(c *gin.Context) {
 		qosID, projectID,
 	).Scan(&currentSpecs)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("QoS spec"))
 		return
 	}

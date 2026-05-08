@@ -2,21 +2,23 @@ package neutron
 
 import (
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/rs/zerolog/log"
 	"github.com/cobaltcore-dev/o3k/internal/common"
 	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/cobaltcore-dev/o3k/internal/keystone"
 	"github.com/cobaltcore-dev/o3k/pkg/cache"
 	"github.com/cobaltcore-dev/o3k/pkg/networking"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/rs/zerolog/log"
 )
 
 // Service handles Neutron API endpoints
@@ -163,7 +165,6 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 		v2.GET("/floatingips/:id", svc.GetFloatingIP)
 		v2.PUT("/floatingips/:id", svc.UpdateFloatingIP)
 		v2.DELETE("/floatingips/:id", svc.DeleteFloatingIP)
-
 
 		// Port Forwarding (nested under floatingips)
 		v2.GET("/floatingips/:id/port_forwardings", svc.ListPortForwardings)
@@ -349,12 +350,12 @@ func (svc *Service) GetQuota(c *gin.Context) {
 	// Return quota response
 	c.JSON(200, gin.H{
 		"quota": gin.H{
-			"network":            100,
-			"subnet":             100,
-			"port":               500,
-			"router":             10,
-			"floatingip":         50,
-			"security_group":     100,
+			"network":             100,
+			"subnet":              100,
+			"port":                500,
+			"router":              10,
+			"floatingip":          50,
+			"security_group":      100,
 			"security_group_rule": 500,
 		},
 	})
@@ -440,9 +441,10 @@ func (svc *Service) GetNamespaceManager() *networking.NetworkNamespaceManager {
 // CreateNetworkRequest represents a network creation request
 type CreateNetworkRequest struct {
 	Network struct {
-		Name         string `json:"name" binding:"required"`
-		AdminStateUp *bool  `json:"admin_state_up"`
-		Shared       *bool  `json:"shared"`
+		Name           string `json:"name" binding:"required"`
+		AdminStateUp   *bool  `json:"admin_state_up"`
+		Shared         *bool  `json:"shared"`
+		RouterExternal *bool  `json:"router:external"`
 	} `json:"network"`
 }
 
@@ -468,6 +470,11 @@ func (svc *Service) CreateNetwork(c *gin.Context) {
 		shared = *req.Network.Shared
 	}
 
+	isExternal := false
+	if req.Network.RouterExternal != nil {
+		isExternal = *req.Network.RouterExternal
+	}
+
 	// Insert into database first; only create the bridge if the insert succeeds.
 	now := time.Now()
 
@@ -480,9 +487,9 @@ func (svc *Service) CreateNetwork(c *gin.Context) {
 	}
 
 	_, err := svc.activeDB().Exec(c.Request.Context(), `
-		INSERT INTO networks (id, name, project_id, admin_state_up, status, shared, network_type, mtu, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-	`, networkID, req.Network.Name, projectID, adminStateUp, "ACTIVE", shared, networkType, mtu, now, now)
+		INSERT INTO networks (id, name, project_id, admin_state_up, status, shared, network_type, mtu, is_external, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	`, networkID, req.Network.Name, projectID, adminStateUp, "ACTIVE", shared, networkType, mtu, isExternal, now, now)
 
 	if err != nil {
 		log.Error().Err(err).Str("operation", "create_network").Msg("database error")
@@ -511,7 +518,7 @@ func (svc *Service) CreateNetwork(c *gin.Context) {
 			"provider:network_type":     networkType,
 			"provider:physical_network": nil,
 			"provider:segmentation_id":  nil,
-			"router:external":           false,
+			"router:external":           isExternal,
 			"created_at":                now.Format(time.RFC3339),
 			"updated_at":                now.Format(time.RFC3339),
 		},
@@ -531,14 +538,46 @@ func (svc *Service) ListNetworks(c *gin.Context) {
 	}
 	limit = common.CapLimit(limit)
 
-	// Marker-based pagination using (created_at, id) for deterministic ordering.
-	var markerCondition string
-	var queryArgs []interface{}
-	queryArgs = append(queryArgs, projectID)
+	// Build dynamic WHERE clause (project visibility is always first condition).
+	conditions := []string{"(n.project_id = $1 OR n.shared = true)"}
+	queryArgs := []interface{}{projectID}
 	argIdx := 2
 
+	if name := c.Query("name"); name != "" {
+		conditions = append(conditions, fmt.Sprintf("n.name = $%d", argIdx))
+		queryArgs = append(queryArgs, name)
+		argIdx++
+	}
+	if status := c.Query("status"); status != "" {
+		conditions = append(conditions, fmt.Sprintf("n.status = $%d", argIdx))
+		queryArgs = append(queryArgs, status)
+		argIdx++
+	}
+	if v := c.Query("admin_state_up"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			conditions = append(conditions, fmt.Sprintf("n.admin_state_up = $%d", argIdx))
+			queryArgs = append(queryArgs, b)
+			argIdx++
+		}
+	}
+	if v := c.Query("shared"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			conditions = append(conditions, fmt.Sprintf("n.shared = $%d", argIdx))
+			queryArgs = append(queryArgs, b)
+			argIdx++
+		}
+	}
+	if v := c.Query("router:external"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			conditions = append(conditions, fmt.Sprintf("n.is_external = $%d", argIdx))
+			queryArgs = append(queryArgs, b)
+			argIdx++
+		}
+	}
+
+	// Marker-based pagination using (created_at, id) for deterministic ordering.
 	if marker := c.Query("marker"); marker != "" {
-		markerCondition = fmt.Sprintf(` AND (n.created_at, n.id) > (SELECT created_at, id FROM networks WHERE id = $%d)`, argIdx)
+		conditions = append(conditions, fmt.Sprintf(`(n.created_at, n.id) > (SELECT created_at, id FROM networks WHERE id = $%d)`, argIdx))
 		queryArgs = append(queryArgs, marker)
 		argIdx++
 	}
@@ -546,12 +585,12 @@ func (svc *Service) ListNetworks(c *gin.Context) {
 	queryArgs = append(queryArgs, limit+1)
 
 	rows, err := svc.activeDB().Query(c.Request.Context(), fmt.Sprintf(`
-		SELECT n.id, n.name, n.project_id, n.admin_state_up, n.status, n.shared, n.mtu, n.network_type, n.created_at, n.updated_at
+		SELECT n.id, n.name, n.project_id, n.admin_state_up, n.status, n.shared, n.mtu, n.network_type, n.is_external, n.created_at, n.updated_at
 		FROM networks n
-		WHERE (n.project_id = $1 OR n.shared = true)%s
+		WHERE %s
 		ORDER BY n.created_at ASC, n.id ASC
 		LIMIT $%d
-	`, markerCondition, argIdx), queryArgs...)
+	`, strings.Join(conditions, " AND "), argIdx), queryArgs...)
 
 	if err != nil {
 		log.Error().Err(err).Str("operation", "list_networks").Msg("database error")
@@ -563,28 +602,28 @@ func (svc *Service) ListNetworks(c *gin.Context) {
 	var networks []gin.H
 	for rows.Next() {
 		var id, name, ownerProjectID, status, networkType string
-		var adminStateUp, shared bool
+		var adminStateUp, shared, isExternal bool
 		var mtu int
 		var createdAt, updatedAt time.Time
 
-		if err := rows.Scan(&id, &name, &ownerProjectID, &adminStateUp, &status, &shared, &mtu, &networkType, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&id, &name, &ownerProjectID, &adminStateUp, &status, &shared, &mtu, &networkType, &isExternal, &createdAt, &updatedAt); err != nil {
 			continue
 		}
 
 		networks = append(networks, gin.H{
-			"id":                       id,
-			"name":                     name,
-			"tenant_id":                ownerProjectID,
-			"admin_state_up":           adminStateUp,
-			"status":                   status,
-			"shared":                   shared,
-			"mtu":                      mtu,
-			"provider:network_type":    networkType,
+			"id":                        id,
+			"name":                      name,
+			"tenant_id":                 ownerProjectID,
+			"admin_state_up":            adminStateUp,
+			"status":                    status,
+			"shared":                    shared,
+			"mtu":                       mtu,
+			"provider:network_type":     networkType,
 			"provider:physical_network": nil,
-			"provider:segmentation_id": nil,
-			"router:external":          false,
-			"created_at":               createdAt.Format(time.RFC3339),
-			"updated_at":               updatedAt.Format(time.RFC3339),
+			"provider:segmentation_id":  nil,
+			"router:external":           isExternal,
+			"created_at":                createdAt.Format(time.RFC3339),
+			"updated_at":                updatedAt.Format(time.RFC3339),
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -601,7 +640,7 @@ func (svc *Service) ListNetworks(c *gin.Context) {
 	resp := gin.H{"networks": networks}
 	if len(networks) > limit {
 		networks = networks[:limit]
-		lastID := networks[limit-1]["id"].(string)
+		lastID, _ := networks[limit-1]["id"].(string)
 		resp = gin.H{
 			"networks":       networks,
 			"networks_links": []gin.H{{"rel": "next", "href": fmt.Sprintf("?marker=%s&limit=%d", lastID, limit)}},
@@ -629,18 +668,18 @@ func (svc *Service) GetNetwork(c *gin.Context) {
 
 	// Cache miss - query database
 	var id, name, ownerProjectID, status, networkType string
-	var adminStateUp, shared bool
+	var adminStateUp, shared, isExternal bool
 	var mtu int
 	var createdAt, updatedAt time.Time
 
 	err := svc.activeDB().QueryRow(ctx, `
-		SELECT id, name, project_id, admin_state_up, status, shared, mtu, network_type, created_at, updated_at
+		SELECT id, name, project_id, admin_state_up, status, shared, mtu, network_type, is_external, created_at, updated_at
 		FROM networks
 		WHERE (id::text = $1 OR name = $1) AND (project_id = $2 OR shared = true)
 		LIMIT 1
-	`, networkID, projectID).Scan(&id, &name, &ownerProjectID, &adminStateUp, &status, &shared, &mtu, &networkType, &createdAt, &updatedAt)
+	`, networkID, projectID).Scan(&id, &name, &ownerProjectID, &adminStateUp, &status, &shared, &mtu, &networkType, &isExternal, &createdAt, &updatedAt)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("network"))
 		return
 	}
@@ -651,19 +690,19 @@ func (svc *Service) GetNetwork(c *gin.Context) {
 	}
 
 	network := gin.H{
-		"id":                       id,
-		"name":                     name,
-		"tenant_id":                ownerProjectID,
-		"admin_state_up":           adminStateUp,
-		"status":                   status,
-		"shared":                   shared,
-		"mtu":                      mtu,
-		"provider:network_type":    networkType,
+		"id":                        id,
+		"name":                      name,
+		"tenant_id":                 ownerProjectID,
+		"admin_state_up":            adminStateUp,
+		"status":                    status,
+		"shared":                    shared,
+		"mtu":                       mtu,
+		"provider:network_type":     networkType,
 		"provider:physical_network": nil,
-		"provider:segmentation_id": nil,
-		"router:external":          false,
-		"created_at":               createdAt.Format(time.RFC3339),
-		"updated_at":               updatedAt.Format(time.RFC3339),
+		"provider:segmentation_id":  nil,
+		"router:external":           isExternal,
+		"created_at":                createdAt.Format(time.RFC3339),
+		"updated_at":                updatedAt.Format(time.RFC3339),
 	}
 
 	// Store in cache (30min TTL per config)
@@ -686,7 +725,7 @@ func (svc *Service) DeleteNetwork(c *gin.Context) {
 		"SELECT project_id FROM networks WHERE (id::text = $1 OR name = $1) AND (project_id = $2 OR shared = true)",
 		networkID, projectID,
 	).Scan(&networkProjectID)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("network"))
 		return
 	}
@@ -745,8 +784,9 @@ func (svc *Service) UpdateNetwork(c *gin.Context) {
 
 	var req struct {
 		Network struct {
-			Name         *string `json:"name"`
-			AdminStateUp *bool   `json:"admin_state_up"`
+			Name           *string `json:"name"`
+			AdminStateUp   *bool   `json:"admin_state_up"`
+			RouterExternal *bool   `json:"router:external"`
 		} `json:"network"`
 	}
 
@@ -768,6 +808,12 @@ func (svc *Service) UpdateNetwork(c *gin.Context) {
 	if req.Network.AdminStateUp != nil {
 		updates = append(updates, fmt.Sprintf("admin_state_up = $%d", argID))
 		args = append(args, *req.Network.AdminStateUp)
+		argID++
+	}
+
+	if req.Network.RouterExternal != nil {
+		updates = append(updates, fmt.Sprintf("is_external = $%d", argID))
+		args = append(args, *req.Network.RouterExternal)
 		argID++
 	}
 
@@ -878,7 +924,7 @@ func (svc *Service) CreateSubnet(c *gin.Context) {
 	// Calculate allocation pools (entire subnet minus gateway)
 	allocationPools := []gin.H{
 		{
-			"start": incrementIP(ipNet.IP, 2).String(), // Skip network address and gateway
+			"start": incrementIP(ipNet.IP, 2).String(),         // Skip network address and gateway
 			"end":   decrementIP(broadcast(ipNet), 1).String(), // Skip broadcast
 		},
 	}
@@ -914,14 +960,37 @@ func (svc *Service) ListSubnets(c *gin.Context) {
 	}
 	limit = common.CapLimit(limit)
 
-	// Marker-based pagination using (created_at, id) for deterministic ordering.
-	var markerCondition string
-	var queryArgs []interface{}
-	queryArgs = append(queryArgs, projectID)
+	// Build dynamic WHERE clause.
+	conditions := []string{"(s.project_id = $1 OR n.shared = true)"}
+	queryArgs := []interface{}{projectID}
 	argIdx := 2
 
+	if v := c.Query("network_id"); v != "" {
+		conditions = append(conditions, fmt.Sprintf("s.network_id = $%d", argIdx))
+		queryArgs = append(queryArgs, v)
+		argIdx++
+	}
+	if v := c.Query("name"); v != "" {
+		conditions = append(conditions, fmt.Sprintf("s.name = $%d", argIdx))
+		queryArgs = append(queryArgs, v)
+		argIdx++
+	}
+	if v := c.Query("cidr"); v != "" {
+		conditions = append(conditions, fmt.Sprintf("s.cidr = $%d", argIdx))
+		queryArgs = append(queryArgs, v)
+		argIdx++
+	}
+	if v := c.Query("ip_version"); v != "" {
+		if ipv, err := strconv.Atoi(v); err == nil && (ipv == 4 || ipv == 6) {
+			conditions = append(conditions, fmt.Sprintf("s.ip_version = $%d", argIdx))
+			queryArgs = append(queryArgs, ipv)
+			argIdx++
+		}
+	}
+
+	// Marker-based pagination using (created_at, id) for deterministic ordering.
 	if marker := c.Query("marker"); marker != "" {
-		markerCondition = fmt.Sprintf(` AND (s.created_at, s.id) > (SELECT created_at, id FROM subnets WHERE id = $%d)`, argIdx)
+		conditions = append(conditions, fmt.Sprintf(`(s.created_at, s.id) > (SELECT created_at, id FROM subnets WHERE id = $%d)`, argIdx))
 		queryArgs = append(queryArgs, marker)
 		argIdx++
 	}
@@ -932,10 +1001,10 @@ func (svc *Service) ListSubnets(c *gin.Context) {
 		SELECT s.id, s.name, s.network_id, s.cidr, s.gateway_ip, s.ip_version, s.enable_dhcp, s.dns_nameservers, s.created_at, s.updated_at
 		FROM subnets s
 		JOIN networks n ON s.network_id = n.id
-		WHERE (s.project_id = $1 OR n.shared = true)%s
+		WHERE %s
 		ORDER BY s.created_at ASC, s.id ASC
 		LIMIT $%d
-	`, markerCondition, argIdx), queryArgs...)
+	`, strings.Join(conditions, " AND "), argIdx), queryArgs...)
 
 	if err != nil {
 		log.Error().Err(err).Str("operation", "list_subnets").Msg("database error")
@@ -984,7 +1053,7 @@ func (svc *Service) ListSubnets(c *gin.Context) {
 	resp := gin.H{"subnets": subnets}
 	if len(subnets) > limit {
 		subnets = subnets[:limit]
-		lastID := subnets[limit-1]["id"].(string)
+		lastID, _ := subnets[limit-1]["id"].(string)
 		resp = gin.H{
 			"subnets":       subnets,
 			"subnets_links": []gin.H{{"rel": "next", "href": fmt.Sprintf("?marker=%s&limit=%d", lastID, limit)}},
@@ -1012,7 +1081,7 @@ func (svc *Service) GetSubnet(c *gin.Context) {
 		WHERE s.id = $1 AND (s.project_id = $2 OR n.shared = true)
 	`, subnetID, projectID).Scan(&id, &name, &networkID, &cidr, &gatewayIP, &ipVersion, &enableDHCP, &dnsNameservers, &createdAt, &updatedAt)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("subnet"))
 		return
 	}
@@ -1092,7 +1161,7 @@ func (svc *Service) UpdateSubnet(c *gin.Context) {
 		subnetID, projectID,
 	).Scan(&currentName)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("subnet"))
 		return
 	}
@@ -1133,13 +1202,13 @@ func (svc *Service) UpdateSubnet(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"subnet": gin.H{
-			"id":          subnetID,
-			"name":        currentName,
-			"network_id":  networkID,
-			"cidr":        cidr,
-			"gateway_ip":  gatewayIP,
-			"ip_version":  ipVersion,
-			"tenant_id":   projectID,
+			"id":         subnetID,
+			"name":       currentName,
+			"network_id": networkID,
+			"cidr":       cidr,
+			"gateway_ip": gatewayIP,
+			"ip_version": ipVersion,
+			"tenant_id":  projectID,
 		},
 	})
 }

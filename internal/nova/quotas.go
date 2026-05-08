@@ -1,6 +1,7 @@
 package nova
 
 import (
+	"errors"
 	"net/http"
 	"time"
 
@@ -226,7 +227,7 @@ func (svc *Service) CheckQuota(c *gin.Context, resource string, requestedAmount 
 		SELECT hard_limit FROM quotas WHERE project_id = $1 AND resource = $2
 	`, projectID, resource).Scan(&limit)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		// No quota set, use defaults
 		defaults := map[string]int{
 			"instances":            10,

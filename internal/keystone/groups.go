@@ -1,6 +1,7 @@
 package keystone
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -116,7 +117,7 @@ func (svc *Service) GetGroup(c *gin.Context) {
 		groupID,
 	).Scan(&name, &domainID, &description, &createdAt)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("group"))
 		return
 	}

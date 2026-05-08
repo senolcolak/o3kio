@@ -3,6 +3,7 @@ package keystone
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -155,7 +156,7 @@ func (svc *Service) GetPolicy(c *gin.Context) {
 		"SELECT id, type, blob, created_at, updated_at FROM keystone_policies WHERE id = $1",
 		policyID).Scan(&id, &pType, &blob, &createdAt, &updatedAt)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("policy"))
 		return
 	}

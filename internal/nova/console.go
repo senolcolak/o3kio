@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -43,7 +44,7 @@ func (svc *Service) GetRemoteConsole(c *gin.Context) {
 		instanceID, projectID,
 	).Scan(&libvirtDomainID, &vncPort, &vncPassword)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("instance"))
 		return
 	}
@@ -146,7 +147,7 @@ func (svc *Service) getVNCConsoleResponse(c *gin.Context, instanceID, projectID,
 		instanceID, projectID,
 	).Scan(&libvirtDomainID, &vncPort, &vncPassword)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("instance"))
 		return
 	}
@@ -246,7 +247,7 @@ func (svc *Service) GetConsoleOutputAction(c *gin.Context, consoleOutput interfa
 		instanceID, projectID,
 	).Scan(&id)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("instance"))
 		return
 	}
@@ -293,7 +294,7 @@ func (svc *Service) GetSerialConsoleAction(c *gin.Context, serialConsole interfa
 		instanceID, projectID,
 	).Scan(&id)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("instance"))
 		return
 	}
@@ -339,7 +340,7 @@ func (svc *Service) GetSPICEConsoleAction(c *gin.Context, spiceConsole interface
 		instanceID, projectID,
 	).Scan(&id)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("instance"))
 		return
 	}
@@ -385,7 +386,7 @@ func (svc *Service) GetRDPConsoleAction(c *gin.Context, rdpConsole interface{}) 
 		instanceID, projectID,
 	).Scan(&id)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("instance"))
 		return
 	}

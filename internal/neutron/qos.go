@@ -1,6 +1,7 @@
 package neutron
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -140,7 +141,7 @@ func (svc *Service) GetQoSPolicy(c *gin.Context) {
 		WHERE id = $1 AND (project_id = $2 OR shared = true)
 	`, policyID, projectID).Scan(&projID, &name, &description, &shared, &createdAt, &updatedAt)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("policy"))
 		return
 	}
@@ -420,7 +421,7 @@ func (svc *Service) GetBandwidthLimitRule(c *gin.Context) {
 		WHERE id = $1 AND qos_policy_id = $2
 	`, ruleID, policyID).Scan(&maxKbps, &maxBurstKbps, &direction, &createdAt, &updatedAt)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("rule"))
 		return
 	}

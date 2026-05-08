@@ -1,579 +1,213 @@
-# O3K - OpenStack Lightweight Cloud Platform
+# O3K — Lightweight OpenStack in a Single Binary
 
-[![CI](https://github.com/senolcolak/o3kio/actions/workflows/ci.yml/badge.svg)](https://github.com/senolcolak/o3kio/actions/workflows/ci.yml)
-
-**Version**: v0.8.0 | **API Coverage**: 342/330 endpoints (104%) | **Terraform Compatible**: Yes | **PostgreSQL**: 17
-
-O3K is a lightweight OpenStack implementation in Go. Single binary, 5 services, drop-in compatible with Terraform, Horizon, and the OpenStack CLI.
-
----
-
-## 🆕 Current Release: v0.8.0
-
-### Production Status
-
-| Capability | Status | Notes |
-|-----------|--------|-------|
-| API Surface | Production | 342 endpoints across 5 services |
-| Terraform Compatibility | Production | `o3k compat-check` validates E2E |
-| Stub Mode (any OS) | Production | Full API without KVM/libvirt |
-| KVM Real Mode (Linux) | Beta | VM lifecycle works, networking wiring in progress |
-| Server/Agent (multi-node) | Alpha | Task queue + executor functional, HA via load balancer + PostgreSQL |
-
-### What's in v0.8.0
-
-- **Server/Agent Execution Loop**: `o3k server` + `o3k agent` dispatch and execute VM tasks via PostgreSQL-coordinated task queue
-- **compat-check**: `o3k compat-check --dir <terraform>` produces `compatible:true` against real Terraform configs
-- **Database DI**: All 660+ DB call sites migrated to injectable interface — every service unit-testable
-- **mTLS**: CA generation, cert signing, mutual TLS for gRPC tunnel
-- **VM Networking**: BindPort/UnbindPort wires DHCP leases before VM boot
-- **Reconciler**: Detects stalled tasks past 2x timeout, requeues or fails them
-
-See [CHANGELOG.md](CHANGELOG.md) for complete release history.
-
-## 📦 What's Included
-
-### OpenStack Services (342 Endpoints)
-- **Keystone v3** (Identity) - 61 endpoints - JWT authentication, domains, service catalog, credentials
-- **Nova v2.1** (Compute) - 72 endpoints - VM lifecycle, migrations, console access, availability zones
-- **Neutron v2.0** (Network) - 98 endpoints - L3 routing, security groups, port forwarding, QoS
-- **Cinder v3** (Block Storage) - 73 endpoints - Multi-backend volumes, snapshots, backups, volume groups
-- **Glance v2** (Image Service) - 38 endpoints - Multi-backend images, sharing, import workflow, metadefs
-
-**Total: 342 implemented endpoints** across all five core services (+12 beyond baseline).
-
-### Key Properties
-- **Single ~35MB binary** — all 5 services in one process
-- **PostgreSQL 17** — unified state, 62 migrations
-- **Synchronous by default** — no message queues (async opt-in for multi-node)
-- **libvirt/KVM** — real compute with stub mode fallback
-- **Fail-fast** — 1-second timeouts on external dependencies
-- **Multi-mode** — stub (dev) → iptables/eBPF (prod) per service
-
-### Client Compatibility
-
-**Zero-Modification Migration**: O3K provides complete API compatibility - use your existing tools unchanged.
-
-- ✅ **Terraform Provider**: All `openstack_*` resources work identically (compute, network, storage)
-- ✅ **Horizon Dashboard**: 100% UI compatibility - same workflows, same interface
-- ✅ **OpenStack CLI**: All `openstack` commands function identically
-- ✅ **gophercloud SDK**: Full Go client library compatibility
-- ✅ **python-openstackclient**: Python client verified
-
-**Migration Path**: Point your Terraform provider or OpenStack client to O3K endpoints - no script changes required.
-
-### Architecture
-- **Single Binary**: All services in one process (~35MB)
-- **PostgreSQL 17**: Unified state management (62 migrations)
-- **Synchronous Architecture**: No RabbitMQ/message queues (10x faster)
-- **libvirt/KVM**: Real compute virtualization (stub mode for development)
-- **Storage Backends**: Ceph RBD, AWS S3, MinIO, local filesystem (hybrid failover support)
-- **Network Isolation**: Linux namespaces, VXLAN multi-node, iptables security groups
-- **JWT Tokens**: Stateless authentication (HMAC-SHA256, 24-hour TTL)
-- **Multi-Mode Support**: Seamless development (stub) to production (real) transition
-
-## 🏗️ Architecture
+O3K replaces the entire OpenStack control plane with one Go binary. Like K3s did for Kubernetes — same API surface, dramatically less complexity.
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                         O3K Binary                           │
-├─────────────────────────────────────────────────────────────┤
-│  Keystone (Identity)      :35357   [61 endpoints]          │
-│  Nova (Compute)           :8774    [72 endpoints]          │
-│  Neutron (Network)        :9696    [98 endpoints]          │
-│  Cinder (Block Storage)   :8776    [73 endpoints]          │
-│  Glance (Image)           :9292    [38 endpoints]          │
-└─────────────────────────────────────────────────────────────┘
-                         ↓
-        ┌────────────────┼────────────────┐
-        ↓                ↓                ↓
-   PostgreSQL       libvirt (KVM)    Multi-Backend Storage
-   (State DB)      (Compute)         (RBD/S3/Local)
-                         ↓
-                   netlink
-                   (Networking)
+Single binary → 5 services → 342 endpoint routes registered → PostgreSQL only
 ```
 
-## 🎯 Design Philosophy
-
-### K3s Inspiration
-Just as K3s removed heavyweight components from Kubernetes:
-- **Removed**: RabbitMQ, memcached, multiple Python processes
-- **Replaced with**: Single Go binary, PostgreSQL, direct API calls
-- **Result**: 95% smaller, 10x faster, easier to deploy
-
-### Synchronous Architecture
-- No message queues (RabbitMQ/AMQP)
-- Direct libvirt/Ceph/netlink calls
-- Fail-fast design (1-second timeouts)
-- Horizontal scaling via load balancer
-
-### High Availability (k3s model)
-- PostgreSQL is the single source of truth (like etcd/SQLite in k3s)
-- Run multiple `o3k server` instances behind a load balancer
-- All servers share the same PostgreSQL — `FOR UPDATE SKIP LOCKED` prevents conflicts
-- Agents connect to any server via the load balancer VIP
-- No special HA configuration needed — the database IS the coordination layer
-- For PostgreSQL HA: use Patroni, pg_auto_failover, or managed PostgreSQL
-
-### Multi-Tenancy
-- Network namespace per project
-- Linux bridges (single-node) or VXLAN (multi-node)
-- iptables-based security groups (eBPF in future)
-- Project-scoped JWT tokens
-
-## 📚 Documentation
-
-**Complete Documentation Index**: **[docs/INDEX.md](docs/INDEX.md)** - Full table of contents with learning paths and categorized guides.
-
-**Quick Links**:
-- [Getting Started](docs/QUICKSTART.md) - 5-minute quick start
-- [Single-Node Deployment](docs/SINGLE_NODE_DEPLOYMENT.md) - Deploy with real KVM on one host
-- [Production Scaling](docs/SCALING.md) - Multi-node HA cluster (3-node to 10+)
-- [Horizon Full Compatibility Report](docs/HORIZON_FULL_COMPATIBILITY_REPORT.md) ⭐ **NEW** - Complete 100% Horizon compatibility verification
-- [Horizon Integration](docs/HORIZON_INTEGRATION.md) - Web dashboard integration architecture
-- [API Coverage Report](docs/API_COVERAGE_REPORT.md) - Complete 104% coverage analysis
-
-**Learning Paths**:
-| Goal | Guide | Time |
-|------|-------|------|
-| Quick Evaluation | [QUICKSTART](docs/QUICKSTART.md) → [QUICK_REFERENCE](docs/QUICK_REFERENCE.md) | 30 min |
-| Demo/POC | [SINGLE_NODE_DEPLOYMENT](docs/SINGLE_NODE_DEPLOYMENT.md) → [HORIZON_INTEGRATION](docs/HORIZON_INTEGRATION.md) | 1 day |
-| Production | [ARCHITECTURE](docs/ARCHITECTURE.md) → [SCALING](docs/SCALING.md) → [OPERATIONS](docs/OPERATIONS.md) | 1-2 weeks |
-
----
+> **Status: Alpha.** Basic CRUD works for all services. Query filters, response schema completeness, state machine validation, and production safety features are still in progress. See [Project Status](#project-status) for honest details.
 
 ## Quick Start
 
-### 🚀 Automated Single-Node Deployment (Recommended for Production Demos)
-
-**Deploy O3K + KVM Hypervisor on a single Linux host with one command**:
-
 ```bash
-# Download and run interactive deployment script
-wget https://raw.githubusercontent.com/cobaltcore-dev/o3k/main/scripts/deploy-single-node.sh
-chmod +x deploy-single-node.sh
-sudo ./deploy-single-node.sh
-```
-
-**What you get** (in 15-20 minutes):
-- ✅ Full O3K installation with real KVM virtualization
-- ✅ PostgreSQL database configured
-- ✅ Network bridge for external connectivity
-- ✅ Horizon dashboard + noVNC console
-- ✅ OpenStack CLI tools ready to use
-- ✅ Systemd service for automatic startup
-
-**Requirements**: Ubuntu 24.04/22.04 or Debian 12, 16GB+ RAM, CPU with VT-x/AMD-V
-
-**Documentation**: [scripts/README.md](scripts/README.md) | [docs/SINGLE_NODE_DEPLOYMENT.md](docs/SINGLE_NODE_DEPLOYMENT.md)
-
----
-
-### ⚡ Quick Evaluation with Docker (Recommended for Testing)
-
-**Deploy O3K + Horizon Dashboard in Docker Compose**:
-
-```bash
-# 1. Clone repository
-git clone https://github.com/cobaltcore-dev/o3k.git
-cd o3k/deployments
-
-# 2. Start all services (O3K + Horizon + PostgreSQL + noVNC)
+cd deployments/
 docker compose -f docker-compose-horizon.yml up -d
 
-# 3. Access Horizon Dashboard
-open http://localhost/dashboard
-# Login: Domain=Default, User=admin, Password=secret
-```
+# Access Horizon: http://localhost/dashboard
+# Credentials: admin / secret (domain: Default)
 
-**What's included**:
-- PostgreSQL 17 database
-- O3K services (Keystone, Nova, Neutron, Cinder, Glance)
-- Horizon Dashboard (OpenStack Flamingo 2025.2)
-- noVNC console proxy
-- Complete web UI for cloud management
-
-**Documentation**: [docs/UNIFIED_DEPLOYMENT.md](docs/UNIFIED_DEPLOYMENT.md) | [docs/QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md)
-
----
-
-### ⚡ API-Only Setup (CLI/SDK Development)
-
-For headless deployment without web UI:
-
-```bash
-# 1. Clone repository
-git clone https://github.com/cobaltcore-dev/o3k.git
-cd o3k
-
-# 2. Start O3K services only
-docker compose -f deployments/docker-compose.yml up -d
-
-# 3. Install OpenStack CLI
-brew install pipx && pipx install python-openstackclient
-
-# 4. Configure environment
+# Or use the CLI:
 export OS_AUTH_URL=http://localhost:35357/v3
-export OS_PROJECT_NAME=default
-export OS_USERNAME=admin
-export OS_PASSWORD=secret
-export OS_USER_DOMAIN_NAME=Default
-export OS_PROJECT_DOMAIN_NAME=Default
-
-# 5. Test it!
+export OS_USERNAME=admin OS_PASSWORD=secret
+export OS_PROJECT_NAME=default OS_USER_DOMAIN_NAME=Default OS_PROJECT_DOMAIN_NAME=Default
 openstack token issue
 openstack server create --flavor m1.small --image cirros --network my-net test-vm
 ```
 
-See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the complete quick start guide.
+## Architecture
 
----
-
-### 🖥️ Horizon Dashboard Features
-
-**IMPORTANT**: Horizon dashboard integration is **extended functionality** (not core O3K feature). Horizon requires independent setup and configuration to work with O3K. See setup guides below for detailed integration steps.
-
-O3K provides 100% API compatibility with OpenStack Horizon dashboard (Flamingo 2025.2 and later). All Horizon features work seamlessly with O3K as the backend.
-
-**Features**:
-- ✅ Instance lifecycle (launch, start, stop, delete, resize, rebuild)
-- ✅ VNC console access (integrated with noVNC proxy)
-- ✅ Network topology visualization
-- ✅ Volume management (create, attach, snapshot)
-- ✅ Image management (upload, download, launch)
-- ✅ Security groups and firewall rules
-- ✅ Floating IPs and port forwarding
-- ✅ Multi-project isolation and RBAC
-
-**Deployment Guides**:
-- **Unified Deployment** (Recommended): [docs/UNIFIED_DEPLOYMENT.md](docs/UNIFIED_DEPLOYMENT.md) - O3K + Horizon in one docker-compose file
-- **Separate Horizon**: [docs/HORIZON_DEPLOYMENT.md](docs/HORIZON_DEPLOYMENT.md) - Deploy Horizon separately to existing O3K
-- **Quick Reference**: [docs/QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md) - Command cheat sheet
-- **Integration Details**: [docs/HORIZON_INTEGRATION.md](docs/HORIZON_INTEGRATION.md) - Architecture and troubleshooting
-
-**Version Requirements**:
-- O3K supports OpenStack **Flamingo (2025.2) and later versions only**
-- Earlier OpenStack releases (Zed, Yoga, etc.) are **not supported**
-- Use Horizon Flamingo image: `quay.io/openstack.kolla/horizon:2025.2-ubuntu-noble`
-
-**Configuration**:
-
-Horizon connects to O3K services using standard OpenStack configuration:
-
-```python
-# local_settings.py
-OPENSTACK_HOST = "o3k"  # or your O3K server address
-OPENSTACK_KEYSTONE_URL = "http://%s:35357/v3" % OPENSTACK_HOST
-OPENSTACK_API_VERSIONS = {
-    "identity": 3,
-    "image": 2,
-    "volume": 3,
-    "compute": 2.1,
-}
-OPENSTACK_KEYSTONE_MULTIDOMAIN_SUPPORT = True
-OPENSTACK_KEYSTONE_DEFAULT_DOMAIN = "Default"
-SESSION_TIMEOUT = 14400  # 4 hours (matches O3K token TTL)
-CONSOLE_TYPE = 'novnc'
+```
+┌──────────────────────────────────────────────────┐
+│                  O3K Binary (~35MB)               │
+│                                                  │
+│  Keystone · Nova · Neutron · Cinder · Glance    │
+│                                                  │
+│  Shared: JWT auth, connection pool, middleware   │
+└──────────────────────┬───────────────────────────┘
+                       │
+              ┌────────┴────────┐
+              │   PostgreSQL 17 │
+              └─────────────────┘
 ```
 
-**Login Credentials**: Domain=Default, User=admin, Password=secret
+No RabbitMQ. No Conductor. No Scheduler daemons. One process, one database.
 
-### 📖 Installation & Deployment
+### Operating Modes
 
-**Quick Start - Docker Compose (Recommended for Development)**:
-- See [docs/QUICKSTART.md](docs/QUICKSTART.md) - Get running in 5 minutes
-- See [docs/UNIFIED_DEPLOYMENT.md](docs/UNIFIED_DEPLOYMENT.md) - O3K + Horizon in one command
-- Works on ARM64 (Apple Silicon) and AMD64 (Intel/AMD)
+| Component | Development | Production |
+|-----------|------------|------------|
+| Compute | `stub` (fake VMs) | `real` (libvirt/KVM) |
+| Networking | `stub` (no netns) | `iptables` or `ebpf` |
+| Storage | `stub` or `local` | `rbd` (Ceph), `s3` (MinIO/AWS) |
+| Overlay | disabled | VXLAN (multi-node) |
 
-**Automated Single-Node Deployment (For Demos with Real KVM)** ⭐ NEW:
-- Interactive script: [scripts/deploy-single-node.sh](scripts/deploy-single-node.sh)
-- One command deployment on Linux with KVM hypervisor
-- Includes Horizon dashboard and noVNC console
-- 15-20 minute automated installation
-- See [scripts/README.md](scripts/README.md) for usage
+## Project Status
 
-**Production Multi-Node Deployment (For Scaling)** ⭐ NEW:
-- See [docs/SCALING.md](docs/SCALING.md)
-- Scale from 3-node HA cluster to 10+ node production
-- High availability with HAProxy + Keepalived + Patroni
-- Shared storage with Ceph, VXLAN multi-node networking
-- Load balancing, monitoring, backup, disaster recovery
+### What Works Today
 
-**Upgrading O3K** ⭐ NEW:
-- Automated upgrade script: [scripts/upgrade-o3k.sh](scripts/upgrade-o3k.sh)
-- Safe upgrade with automatic backup and rollback
-- Supports version pinning and force rebuild
-- 2-5 minute upgrade process
-- See [scripts/README.md](scripts/README.md) for usage
+| Capability | Status | Confidence |
+|-----------|--------|------------|
+| Basic CRUD (create/list/show/delete) for all 5 services | Working | High |
+| Keystone password auth → JWT token | Working | High |
+| Docker Compose single-node deployment | Working | High |
+| Stub mode on macOS/Linux | Working | High |
+| Unit tests (15 packages pass) | Working | High |
+| Horizon login + basic resource lists | Partial | Medium |
+| OpenStack CLI simple commands | Partial | Medium |
+| Simple Terraform plans (create/delete) | Partial | Medium |
+
+### What Does NOT Work Yet
+
+| Capability | Status | Impact |
+|-----------|--------|--------|
+| List endpoint query filters (all services) | Not implemented | Horizon shows incomplete data, CLI filtering broken |
+| Complete response schemas | ~60% of fields present | SDK nil dereferences, Terraform data source failures |
+| State machine validation | Missing | Can delete attached volumes, no server state transitions |
+| Multi-tenant security (RBAC on writes) | Missing | Any authenticated user can modify other users |
+| Production timeouts/health checks | Missing | Vulnerable to hangs and DoS |
+| Real libvirt mode (stable) | Has blocking bugs | No timeout, no mutex, will hang or crash |
+| Real storage (Ceph) | Won't compile | Build tag issues in ceph_rbd.go |
+| SPEC-002 auth (OAuth2, SAML, LDAP, MFA) | Not started | Only basic password auth works |
+| Modular architecture (SPEC-001) | Not started | Still monolithic |
+
+### API Surface
+
+342 endpoint routes are registered. However, "route registered" ≠ "fully implemented":
+
+| Service | Routes | Estimated Fidelity | Notes |
+|---------|--------|-------------------|-------|
+| Keystone (Identity) | 61 | ~50% | Auth works; list filters, domains, regions missing |
+| Nova (Compute) | 72 | ~40% | CRUD works; actions, filters, full response fields missing |
+| Neutron (Network) | 98 | ~45% | CRUD works; port binding, router:external, QoS missing |
+| Cinder (Block Storage) | 73 | ~35% | CRUD works; project_id routing broken, no state machine |
+| Glance (Image) | 38 | ~40% | CRUD works; tags dropped, no checksums, filters ignored |
+
+"Fidelity" means: would a real OpenStack client (gophercloud, Terraform, Horizon) get correct behavior from this endpoint without workarounds?
+
+### Client Compatibility (Honest Assessment)
+
+| Client | Simple Operations | Full Workflow | Notes |
+|--------|------------------|--------------|-------|
+| OpenStack CLI | Works | Partial | Filtering doesn't work, some subcommands missing |
+| Terraform | Basic resources | Breaks | Data sources fail, state drift from missing fields |
+| Horizon | Login + lists | Partial | Network tab broken, server actions missing |
+| gophercloud | Basic CRUD | Breaks | Missing response fields cause nil dereferences |
+
+### Contract Tests
+
+```
+Unit tests: 15/15 packages passing
+Contract tests: Require running server (not CI-integrated yet)
+Integration tests: 20+ bash scripts (manual)
+```
 
 ## Configuration
 
-O3K can be configured through YAML files or environment variables.
-
-**Quick configuration:**
 ```yaml
 # config/o3k.yaml
 database:
-  url: "postgres://lightstack:secret@localhost/lightstack?sslmode=disable"
-
+  url: "postgres://o3k:secret@localhost:5432/o3k?sslmode=disable"
 keystone:
-  jwt_secret: "change-me-in-production"
-  token_ttl: 24h
-
+  jwt_secret: ""  # MUST set via O3K_JWT_SECRET env var in production
 nova:
-  libvirt_mode: stub  # "stub" or "real"
-
+  libvirt_mode: stub   # stub | real
 neutron:
-  networking_mode: stub  # "stub", "iptables", or "ebpf"
-
+  networking_mode: stub   # stub | iptables | ebpf
 cinder:
-  storage_mode: local  # "local", "rbd", "s3", or hybrid like "local,rbd"
-
+  storage_mode: local     # stub | local | rbd | s3
 glance:
-  storage_mode: local  # "local", "rbd", "s3", or hybrid like "local,s3"
+  storage_mode: local     # stub | local | rbd | s3
 ```
 
-**For complete configuration guide, see [docs/CONFIGURATION.md](docs/CONFIGURATION.md)**
+Environment overrides: `O3K_DB_URL`, `O3K_JWT_SECRET`, `O3K_ENV`.
+
+Full reference: [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
 
 ## Development
+
+```bash
+make build          # Build binary → bin/o3k
+make test           # Run unit tests
+make dev            # Hot-reload development server
+make lint           # golangci-lint
+./test/quick_test.sh  # Integration tests (requires running O3K)
+```
 
 ### Project Structure
 
 ```
-o3k/
-├── cmd/o3k/                     # Main binary entry point
-├── internal/                    # Private packages
-│   ├── keystone/               # Identity service (61 endpoints)
-│   ├── nova/                   # Compute service (72 endpoints)
-│   ├── neutron/                # Network service (98 endpoints)
-│   ├── cinder/                 # Block storage (73 endpoints)
-│   ├── glance/                 # Image service (38 endpoints)
-│   ├── database/               # DB models and migrations
-│   ├── scheduler/              # Task worker, reconciler
-│   ├── tunnel/                 # gRPC agent tunnel, executor
-│   ├── middleware/             # Auth, logging, CORS, recovery
-│   └── common/                 # Shared utilities
-├── pkg/                         # Public/reusable packages
-│   ├── hypervisor/             # libvirt abstraction (real + stub modes)
-│   ├── networking/             # netlink, VXLAN, security groups
-│   └── storage/                # Storage backends (RBD, S3, local)
-├── proto/                       # gRPC protocol definitions
-├── migrations/                  # SQL migrations (62 files)
-├── test/contract/              # Contract tests (gophercloud SDK)
-├── test/*.sh                   # Integration tests (20+ bash scripts)
-├── config/                     # Configuration files (YAML)
-├── docs/                       # Documentation
-└── deployments/                # Docker Compose and deployment configs
+cmd/o3k/              Main binary
+internal/
+├── keystone/         Identity service
+├── nova/             Compute service
+├── neutron/          Network service
+├── cinder/           Block storage
+├── glance/           Image service
+├── database/         DB models, migrations
+├── scheduler/        Task queue, reconciler
+├── tunnel/           gRPC agent tunnel
+├── middleware/       Auth, logging, CORS
+└── common/           Shared utilities
+pkg/
+├── hypervisor/       libvirt abstraction
+├── networking/       netlink, VXLAN, iptables
+└── storage/          RBD, S3, local backends
+migrations/           62 SQL migration files
+test/                 Contract + integration tests
+deployments/          Docker Compose configs
+docs/                 Documentation
 ```
 
-### Development Workflow
+## Documentation
 
-```bash
-# Install development tools
-make install-tools
-
-# Run with hot reload
-make dev
-
-# Run tests
-make test
-
-# Run contract tests
-./test/quick_test.sh
-
-# Format code
-make fmt
-
-# Lint code
-make lint
-```
+| Topic | Guide |
+|-------|-------|
+| Getting started | [Deployment Guide](docs/DEPLOYMENT_GUIDE.md) |
+| Architecture | [Architecture](docs/ARCHITECTURE.md) |
+| Configuration | [Configuration](docs/CONFIGURATION.md) |
+| Operations | [Operations](docs/OPERATIONS.md) |
+| Networking | [Networking Modes](docs/NETWORKING_MODES.md) |
+| Storage | [Storage Modes](docs/STORAGE_MODES.md) |
+| Scaling | [Production Scaling](docs/SCALING.md) |
+| API | [API Reference](docs/API.md) |
+| Contributing | [Contributing](docs/CONTRIBUTING.md) |
+| Troubleshooting | [Troubleshooting](docs/TROUBLESHOOTING.md) |
 
 ## Default Credentials
 
-The seed data creates:
+| Field | Value |
+|-------|-------|
+| User | `admin` |
+| Password | `secret` |
+| Project | `default` |
+| Domain | `Default` |
 
-- **User:** `admin`
-- **Password:** `secret`
-- **Project:** `default`
+**Change `jwt_secret` and `admin_password` in any non-local deployment.**
 
-**⚠️ Change these in production!**
+## Roadmap
 
-## 📊 Project Status
+See [docs/ROADMAP.md](docs/ROADMAP.md) for the full gap-closure plan.
 
-### API Coverage: 104% (342/330 endpoints) ✅ EXCEEDS BASELINE
+**Priority order:**
+1. Security fixes (RBAC, auth bypasses, timeouts)
+2. Response schema completeness (make clients stop crashing)
+3. Query filter implementation (make list endpoints usable)
+4. State machine validation (prevent data corruption)
+5. Missing critical endpoints (server actions, volume types, image import)
+6. Enhanced authentication (SPEC-002)
+7. Modular architecture (SPEC-001)
 
-| Service | Endpoints | Coverage | Status |
-|---------|-----------|----------|--------|
-| Keystone (Identity) | 61 | 100%+ | ✅ Production Ready |
-| Nova (Compute) | 72 | 100%+ | ✅ Production Ready |
-| Neutron (Network) | 98 | 100%+ | ✅ Production Ready |
-| Cinder (Block Storage) | 73 | 100%+ | ✅ Production Ready |
-| Glance (Image) | 38 | 100%+ | ✅ Production Ready |
-| **TOTAL** | **342** | **104%** | ✅ **Production Ready** |
+## License
 
-**Priority Status**:
-- ✅ **HIGH Priority**: 100% complete (all critical production features)
-- ✅ **MEDIUM Priority**: 100% complete (all important management features)
-- ⏳ **LOW Priority**: Optional only (enterprise SSO, DVR - <5% demand)
-
-**See [docs/API_COVERAGE_REPORT.md](docs/API_COVERAGE_REPORT.md) for detailed coverage analysis.**
-
-### Testing & Validation
-
-- ✅ **Contract Tests**: **157/191 passing (82%)** - Using gophercloud SDK (OpenStack Go client)
-  - Nova: 77/82 (94%) - Core compute operations validated
-  - Neutron: 49/58 (84%) - Networking highly compatible
-  - Glance: 27/29 (93%) - Image service fully functional
-  - Cinder: 4/22 (18%) - Basic volumes work, groups need implementation
-  - Full report: [CONTRACT_TESTS_FINAL_REPORT.md](CONTRACT_TESTS_FINAL_REPORT.md)
-- ✅ **TDD Methodology**: All endpoints developed test-first (RED → GREEN → REFACTOR)
-- ✅ **20+ Integration Tests**: Bash scripts with OpenStack CLI validation
-- ✅ **Schema Validation**: OpenStack API spec compliance
-- ✅ **Horizon Testing**: Full dashboard compatibility verified
-- ✅ **Client Compatibility**: OpenStack CLI, Terraform, gophercloud, python-openstackclient
-- 🚀 **CI/CD Strategy**: Comprehensive E2E and automation plan - [E2E_CI_TESTING_STRATEGY.md](E2E_CI_TESTING_STRATEGY.md)
-
-### Current Capabilities
-
-**✅ Fully Implemented (342 endpoints):**
-- Complete server lifecycle management (create, start, stop, reboot, delete, resize, rebuild)
-- All server actions (migrate, evacuate, rescue, snapshot, backup, password reset)
-- Full networking (L3 routing, floating IPs, port forwarding, security groups, QoS)
-- Multi-backend storage (local, Ceph RBD, S3) with automatic failover
-- Volume operations (snapshots, backups, transfers, cloning, volume groups)
-- Image management (upload, download, sharing, import workflow, metadefs)
-- Multi-tenancy (domains, projects, users, groups, RBAC)
-- Console access (VNC, SPICE, Serial, RDP)
-- Tenant usage reporting and availability zones
-- Service catalog management and credential management
-- Performance optimization (pagination, indexes, <3s queries)
-
-**⏳ Optional Work (not implemented by design):**
-- Keystone Federation/SAML (~10 endpoints) - Enterprise SSO, <5% demand
-- Neutron DVR/Advanced (~8 endpoints) - Large cloud provider features
-- Nova Microversions (variable) - Incremental enhancements, add on-demand
-
-**Strategic Decision**: O3K exceeds the OpenStack baseline. Remaining features are enterprise-only with <5% demand, better implemented on-request based on user feedback.
-
-### Performance Characteristics
-
-**Stub Mode Benchmarks:**
-- Token Creation: ~5ms
-- Server List: ~10ms (100 servers)
-- Network Create: ~8ms
-- Volume Create: ~6ms
-
-**Real Mode Benchmarks:**
-- VM Creation: ~2-5s (depends on backend)
-- Volume Attach: ~1-2s
-- Network Setup: ~500ms
-- Floating IP Associate: ~200ms
-
-**Scalability:**
-- Tested with 1000+ concurrent connections
-- 10,000+ resources per project
-- Sub-second response times maintained
-
-### Roadmap
-
-**Completed:**
-- ✅ v0.6.0: All 5 core services, 342 endpoints, code quality overhaul
-- ✅ v0.7.0: compat-check CLI, DB DI migration, gRPC tunnel skeleton, mTLS
-- ✅ v0.8.0: Task queue, worker, executor, reconciler, blocking dispatch, agent stats
-
-**Current Focus (v0.9.0):**
-- Behavioral fidelity (error codes, pagination matching real OpenStack)
-- Image prefetch (download images to agent before VM create)
-- Agent-side real networking (netlink calls for NET_* tasks)
-
-**Future:**
-- [ ] Live migration (requires shared storage)
-- [ ] eBPF security groups (kernel-space packet filtering)
-- [ ] Additional services (Barbican, Designate, Octavia) — on demand
-
-**Philosophy**: Ship what users need. The compat-check tool validates Terraform compatibility. The server/agent architecture makes multi-node real. Everything else is on-demand.
-
-## 🤝 Contributing
-
-Contributions welcome! See `docs/CONTRIBUTING.md` for guidelines.
-
-**Current focus areas (v0.6.x stability phase):**
-- Bug fixes and error handling improvements
-- Performance monitoring and optimization
-- Documentation and tutorials
-- Real-world deployment validation
-- Community feedback integration
-
-**Future expansion areas (on-demand):**
-- Optional enterprise features (Federation/SAML, DVR) — if user demand exists
-- Additional services (Barbican, Designate, Octavia) — based on requests
-- eBPF security groups
-
-## 📚 Additional Documentation
-
-**📖 Complete Documentation Index**: **[docs/INDEX.md](docs/INDEX.md)** - Full table of contents with learning paths and categorized guides.
-
-### Getting Started
-- **[Quick Start](docs/QUICKSTART.md)** - Get running in 5 minutes
-- **[Installation Guide](docs/INSTALLATION.md)** - Complete setup instructions
-- **[Quick Reference](docs/QUICK_REFERENCE.md)** - Command cheat sheet
-
-### Deployment Guides
-- **[Unified Deployment](docs/UNIFIED_DEPLOYMENT.md)** - O3K + Horizon in one command
-- **[Single-Node Deployment](docs/SINGLE_NODE_DEPLOYMENT.md)** ⭐ NEW - Real KVM on one host (demos/POC)
-- **[Production Scaling](docs/SCALING.md)** ⭐ NEW - Multi-node HA cluster (3-node to 10+)
-- **[Docker Deployment](docs/DOCKER_DEPLOYMENT.md)** - Container-specific guide
-- **[Multi-Architecture](docs/MULTIARCH.md)** - ARM64 and AMD64 support
-
-### Dashboard Integration
-- **[Horizon Integration](docs/HORIZON_INTEGRATION.md)** - Integration overview (100% compatible)
-- **[Horizon Deployment](docs/HORIZON_DEPLOYMENT.md)** - Deploy Horizon separately
-- **[Horizon Setup](docs/HORIZON_SETUP.md)** - Configuration and troubleshooting
-- **[Elektra Analysis](docs/ELEKTRA_INTEGRATION_ANALYSIS.md)** ⭐ NEW - SAP Elektra (not compatible)
-
-### Configuration & Operations
-- **[Configuration Guide](docs/CONFIGURATION.md)** - All configuration options
-- **[Operations Guide](docs/OPERATIONS.md)** - Day-to-day management
-- **[Storage Modes](docs/STORAGE_MODES.md)** - Local, Ceph RBD, S3, hybrid
-- **[Networking Modes](docs/NETWORKING_MODES.md)** - Stub, iptables, eBPF
-- **[S3 Configuration](docs/S3_CONFIGURATION.md)** - AWS S3 and MinIO setup
-- **[Troubleshooting](docs/TROUBLESHOOTING.md)** - Common issues and solutions
-
-### Development & API
-- **[Architecture](docs/ARCHITECTURE.md)** - System design and components
-- **[API Coverage Report](docs/API_COVERAGE_REPORT.md)** - Complete 104% coverage analysis
-- **[What's Left?](docs/WHATS_LEFT.md)** - Optional enterprise features overview
-- **[API Reference](docs/API.md)** - OpenStack API compatibility details
-- **[Contributing](docs/CONTRIBUTING.md)** - Development guidelines
-
-### Advanced Topics
-- **[VXLAN Implementation](docs/VXLAN_IMPLEMENTATION.md)** - Multi-node overlay networking
-- **[L3 Router Implementation](docs/L3_ROUTER_IMPLEMENTATION.md)** - Routing and floating IPs
-- **[Real Libvirt Mode](docs/REAL_LIBVIRT_MODE.md)** - KVM integration details
-- **[eBPF Status](docs/EBPF_STATUS.md)** - eBPF security groups (experimental)
-
-### Testing & Validation
-- **[Contract Tests](test/contract/README.md)** - 157/191 passing (82%) using gophercloud SDK
-  - Full results: [CONTRACT_TESTS_FINAL_REPORT.md](CONTRACT_TESTS_FINAL_REPORT.md)
-- **[Integration Tests](test/)** - 20+ bash scripts for workflow validation
-- **[E2E & CI Strategy](E2E_CI_TESTING_STRATEGY.md)** - Comprehensive testing and automation plan
-
-**For complete documentation index with learning paths, see [docs/INDEX.md](docs/INDEX.md)**
-
-## 📝 License
-
-Apache License 2.0 - See [LICENSE](LICENSE)
-
-## 🙏 Credits
-
-**Project**: O3K - OpenStack 3 Kubernetes-style
-**Inspired by**: K3s (Lightweight Kubernetes)
-**Language**: Go 1.26+
-**Repository**: github.com/cobaltcore-dev/o3k
-
----
-
-**Version**: v0.8.0 | **Coverage**: 342/330 endpoints (104%) | **Terraform**: Compatible
-**Binary**: ~35MB | **Tests**: 14 packages passing | **PostgreSQL**: 17
-**Updated**: May 2026
+Apache License 2.0

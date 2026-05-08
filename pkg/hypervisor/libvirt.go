@@ -36,11 +36,11 @@ type VMManager struct {
 
 // stubVM represents a simulated VM in stub mode
 type stubVM struct {
-	uuid      string
-	xml       string
-	state     VMState
+	uuid       string
+	xml        string
+	state      VMState
 	powerState int
-	createdAt time.Time
+	createdAt  time.Time
 }
 
 // NewVMManager creates a new VM manager
@@ -109,6 +109,9 @@ func (m *VMManager) createVMStub(xml string) (string, error) {
 
 // createVMReal creates a real VM via libvirt
 func (m *VMManager) createVMReal(ctx context.Context, xml string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if m.conn == nil {
 		return "", fmt.Errorf("not connected to libvirt")
 	}
@@ -156,6 +159,9 @@ func (m *VMManager) deleteVMStub(vmUUID string) error {
 
 // deleteVMReal deletes a real VM via libvirt
 func (m *VMManager) deleteVMReal(ctx context.Context, vmUUID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if m.conn == nil {
 		return fmt.Errorf("not connected to libvirt")
 	}
@@ -219,6 +225,9 @@ func (m *VMManager) rebootVMStub(vmUUID string) error {
 
 // rebootVMReal reboots a real VM via libvirt
 func (m *VMManager) rebootVMReal(ctx context.Context, vmUUID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if m.conn == nil {
 		return fmt.Errorf("not connected to libvirt")
 	}
@@ -265,6 +274,9 @@ func (m *VMManager) stopVMStub(vmUUID string) error {
 
 // stopVMReal stops a real VM via libvirt
 func (m *VMManager) stopVMReal(ctx context.Context, vmUUID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if m.conn == nil {
 		return fmt.Errorf("not connected to libvirt")
 	}
@@ -311,6 +323,9 @@ func (m *VMManager) startVMStub(vmUUID string) error {
 
 // startVMReal starts a real VM via libvirt
 func (m *VMManager) startVMReal(ctx context.Context, vmUUID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if m.conn == nil {
 		return fmt.Errorf("not connected to libvirt")
 	}
@@ -355,6 +370,9 @@ func (m *VMManager) getVMStateStub(vmUUID string) (string, int, error) {
 
 // getVMStateReal returns real VM state via libvirt
 func (m *VMManager) getVMStateReal(ctx context.Context, vmUUID string) (string, int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if m.conn == nil {
 		return string(VMStateNoState), 0, fmt.Errorf("not connected to libvirt")
 	}
@@ -402,6 +420,9 @@ func (m *VMManager) attachDeviceStub(vmUUID, deviceXML string) error {
 
 // attachDeviceReal attaches a device to a real VM via libvirt
 func (m *VMManager) attachDeviceReal(ctx context.Context, vmUUID, deviceXML string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if m.conn == nil {
 		return fmt.Errorf("not connected to libvirt")
 	}
@@ -448,6 +469,9 @@ func (m *VMManager) detachDeviceStub(vmUUID, deviceXML string) error {
 
 // detachDeviceReal detaches a device from a real VM via libvirt
 func (m *VMManager) detachDeviceReal(ctx context.Context, vmUUID, deviceXML string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if m.conn == nil {
 		return fmt.Errorf("not connected to libvirt")
 	}
@@ -496,6 +520,9 @@ func (m *VMManager) suspendVMStub(vmUUID string) error {
 
 // suspendVMReal suspends a real VM via libvirt
 func (m *VMManager) suspendVMReal(ctx context.Context, vmUUID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if m.conn == nil {
 		return fmt.Errorf("not connected to libvirt")
 	}
@@ -543,6 +570,9 @@ func (m *VMManager) resumeVMStub(vmUUID string) error {
 
 // resumeVMReal resumes a real VM via libvirt
 func (m *VMManager) resumeVMReal(ctx context.Context, vmUUID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if m.conn == nil {
 		return fmt.Errorf("not connected to libvirt")
 	}

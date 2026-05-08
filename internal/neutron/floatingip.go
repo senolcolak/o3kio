@@ -4,17 +4,18 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/cobaltcore-dev/o3k/internal/common"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
-	"github.com/cobaltcore-dev/o3k/internal/common"
 )
 
 // CreateFloatingIPRequest represents a floating IP creation request
@@ -142,7 +143,7 @@ func (svc *Service) ListFloatingIPs(c *gin.Context) {
 	resp := gin.H{"floatingips": floatingIPs}
 	if len(floatingIPs) > limit {
 		floatingIPs = floatingIPs[:limit]
-		lastID := floatingIPs[limit-1]["id"].(string)
+		lastID, _ := floatingIPs[limit-1]["id"].(string)
 		resp = gin.H{
 			"floatingips":       floatingIPs,
 			"floatingips_links": []gin.H{{"rel": "next", "href": fmt.Sprintf("?marker=%s&limit=%d", lastID, limit)}},
@@ -170,7 +171,7 @@ func (svc *Service) CreateFloatingIP(c *gin.Context) {
 		req.FloatingIP.FloatingNetworkID,
 	).Scan(&subnetCIDR)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		// No subnet exists - use default external IP pool (RFC 5737 TEST-NET-1)
 		subnetCIDR = "192.0.2.0/24"
 	} else if err != nil {
@@ -333,7 +334,7 @@ func (svc *Service) GetFloatingIP(c *gin.Context) {
 	`, floatingIPID, projectID).Scan(&fip.ID, &fip.ProjectID, &fip.FloatingNetworkID, &fip.FloatingIPAddress,
 		&fixedIP, &portID, &routerID, &fip.Status, &description, &fip.CreatedAt, &fip.UpdatedAt)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("floating IP"))
 		return
 	}
@@ -401,7 +402,7 @@ func (svc *Service) UpdateFloatingIP(c *gin.Context) {
 		floatingIPID, projectID,
 	).Scan(&currentFloatingIP, &currentFixedIP, &currentPortID, &currentRouterID)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("floating IP"))
 		return
 	}
@@ -450,16 +451,16 @@ func (svc *Service) UpdateFloatingIP(c *gin.Context) {
 					common.SendError(c, common.NewBadRequestError("port_id must be a string or null"))
 					return
 				}
-			// Associate with new port
-			var networkID string
-			svc.activeDB().QueryRow(c.Request.Context(),
-				"SELECT network_id FROM ports WHERE id = $1",
-				newPortID,
-			).Scan(&networkID)
+				// Associate with new port
+				var networkID string
+				svc.activeDB().QueryRow(c.Request.Context(),
+					"SELECT network_id FROM ports WHERE id = $1",
+					newPortID,
+				).Scan(&networkID)
 
-			// Find router
-			var routerID string
-			err = svc.activeDB().QueryRow(c.Request.Context(), `
+				// Find router
+				var routerID string
+				err = svc.activeDB().QueryRow(c.Request.Context(), `
 				SELECT DISTINCT r.id
 				FROM routers r
 				JOIN router_interfaces ri ON ri.router_id = r.id
@@ -468,10 +469,10 @@ func (svc *Service) UpdateFloatingIP(c *gin.Context) {
 				LIMIT 1
 			`, networkID).Scan(&routerID)
 
-			if err != nil {
-				common.SendError(c, common.NewBadRequestError("no router with external gateway found for this network"))
-				return
-			}
+				if err != nil {
+					common.SendError(c, common.NewBadRequestError("no router with external gateway found for this network"))
+					return
+				}
 
 				// Get fixed IP
 				var fixedIP string
@@ -577,7 +578,7 @@ func (svc *Service) DeleteFloatingIP(c *gin.Context) {
 		floatingIPID, projectID,
 	).Scan(&floatingIP, &fixedIP, &portID, &routerID)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("floating IP"))
 		return
 	}

@@ -2,6 +2,7 @@ package metadata
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -20,14 +21,12 @@ type Service struct {
 	// For testing, it runs on localhost:8775
 	bindAddr string
 	db       database.DBIF
-	testMode bool
 }
 
 // NewService creates a new metadata service
-func NewService(bindAddr string, testMode bool) *Service {
+func NewService(bindAddr string) *Service {
 	return &Service{
 		bindAddr: bindAddr,
-		testMode: testMode,
 	}
 }
 
@@ -36,7 +35,6 @@ func NewServiceWithDB(db database.DBIF, bindAddr string) *Service {
 	return &Service{
 		bindAddr: bindAddr,
 		db:       db,
-		testMode: true,
 	}
 }
 
@@ -76,16 +74,9 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 	r.GET("/", svc.ListVersions)
 }
 
-// instanceFromRequest looks up the instance for the current request.
-// In test mode, the X-Instance-ID header is accepted directly.
-// In production, the source IP is used to look up the port's device_id.
+// instanceFromRequest looks up the instance for the current request
+// using the source IP to find the port's device_id.
 func (svc *Service) instanceFromRequest(c *gin.Context) (string, error) {
-	if svc.testMode {
-		if instanceID := c.GetHeader("X-Instance-ID"); instanceID != "" {
-			return instanceID, nil
-		}
-	}
-
 	clientIP := c.ClientIP()
 	var instanceID string
 	err := svc.activeDB().QueryRow(c.Request.Context(),
@@ -114,7 +105,7 @@ func (svc *Service) GetMetaDataJSON(c *gin.Context) {
 		WHERE id = $1
 	`, instanceID).Scan(&uuid, &name, &hostname, &projectID, &userID)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("instance"))
 		return
 	}
@@ -195,7 +186,7 @@ func (svc *Service) GetUserData(c *gin.Context) {
 		WHERE instance_id = $1
 	`, instanceID).Scan(&userData)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		// No user-data is not an error, just return empty
 		c.String(http.StatusOK, "")
 		return

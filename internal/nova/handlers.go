@@ -4,9 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -309,7 +311,7 @@ func (svc *Service) CreateServer(c *gin.Context) {
 	).Scan(&flavor.ID, &flavor.Name, &flavor.VCPUs, &flavor.RAMMB, &flavor.DiskGB)
 	middleware.LogDatabaseQuery(c, "SELECT flavor", time.Since(queryStart), err)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		logger.Warn().Str("flavor_ref", req.Server.FlavorRef).Msg("Flavor not found")
 		middleware.LogOperationEnd(c, "create", "server", req.Server.Name, time.Since(start), err)
 		common.SendError(c, common.NewNotFoundError("flavor"))
@@ -620,28 +622,70 @@ func (svc *Service) ListServers(c *gin.Context) {
 	}
 	limit = common.CapLimit(limit)
 
-	// OpenStack uses marker-based pagination (keyset pagination).
-	// OFFSET-based skips rows under concurrent inserts.
-	markerParam := c.Query("marker")
-	var rows pgx.Rows
-	var queryErr error
+	// Build dynamic WHERE clause with parameterized args.
+	args := []interface{}{}
+	argIdx := 1
 
-	if markerParam != "" {
-		// Marker-based: get rows AFTER the marker by created_at DESC, id DESC
-		rows, queryErr = svc.activeDB().Query(c.Request.Context(),
-			`SELECT id, name FROM instances
-			 WHERE project_id = $1
-			   AND (created_at, id) < (SELECT created_at, id FROM instances WHERE id = $2)
-			 ORDER BY created_at DESC, id DESC
-			 LIMIT $3`,
-			projectID, markerParam, limit,
-		)
-	} else {
-		rows, queryErr = svc.activeDB().Query(c.Request.Context(),
-			"SELECT id, name FROM instances WHERE project_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2",
-			projectID, limit,
-		)
+	baseQuery := `SELECT id, name FROM instances WHERE 1=1`
+
+	// Project filter — omitted only when admin requests all_tenants=true.
+	if c.Query("all_tenants") != "true" || !isAdminContext(c) {
+		baseQuery += fmt.Sprintf(" AND project_id = $%d", argIdx)
+		args = append(args, projectID)
+		argIdx++
 	}
+
+	// Marker-based keyset pagination.
+	markerParam := c.Query("marker")
+	if markerParam != "" {
+		baseQuery += fmt.Sprintf(
+			" AND (created_at, id) < (SELECT created_at, id FROM instances WHERE id = $%d)",
+			argIdx,
+		)
+		args = append(args, markerParam)
+		argIdx++
+	}
+
+	// Status filter.
+	if status := c.Query("status"); status != "" {
+		baseQuery += fmt.Sprintf(" AND UPPER(status) = UPPER($%d)", argIdx)
+		args = append(args, status)
+		argIdx++
+	}
+
+	// Name filter (case-insensitive partial match).
+	if name := c.Query("name"); name != "" {
+		baseQuery += fmt.Sprintf(" AND name ILIKE $%d", argIdx)
+		args = append(args, "%"+name+"%")
+		argIdx++
+	}
+
+	// Image filter.
+	if image := c.Query("image"); image != "" {
+		baseQuery += fmt.Sprintf(" AND image_id = $%d", argIdx)
+		args = append(args, image)
+		argIdx++
+	}
+
+	// Flavor filter.
+	if flavor := c.Query("flavor"); flavor != "" {
+		baseQuery += fmt.Sprintf(" AND flavor_id = $%d", argIdx)
+		args = append(args, flavor)
+		argIdx++
+	}
+
+	// Changes-since filter.
+	if changesSince := c.Query("changes-since"); changesSince != "" {
+		baseQuery += fmt.Sprintf(" AND updated_at >= $%d", argIdx)
+		args = append(args, changesSince)
+		argIdx++
+	}
+
+	baseQuery += " ORDER BY created_at DESC, id DESC"
+	baseQuery += fmt.Sprintf(" LIMIT $%d", argIdx)
+	args = append(args, limit)
+
+	rows, queryErr := svc.activeDB().Query(c.Request.Context(), baseQuery, args...)
 	if queryErr != nil {
 		log.Error().Err(queryErr).Str("operation", "list_servers").Msg("database error")
 		common.SendError(c, common.NewInternalServerError("failed to list servers"))
@@ -691,30 +735,74 @@ func (svc *Service) ListServersDetail(c *gin.Context) {
 	}
 	limit = common.CapLimit(limit)
 
-	// Marker-based pagination (keyset pagination, no OFFSET)
-	var markerCondition string
-	var queryArgs []interface{}
-	queryArgs = append(queryArgs, projectID)
-	argIdx := 2
+	// Build dynamic WHERE clause with parameterized args.
+	queryArgs := []interface{}{}
+	argIdx := 1
 
+	baseQuery := `
+		SELECT i.id, i.name, i.status, i.power_state, i.project_id, i.user_id,
+		       i.flavor_id, i.image_id, i.created_at, i.updated_at, i.launched_at,
+		       f.vcpus, f.ram_mb, f.disk_gb, f.name as flavor_name, i.host, i.locked
+		FROM instances i
+		LEFT JOIN flavors f ON i.flavor_id = f.id
+		WHERE 1=1`
+
+	// Project filter — omitted only when admin requests all_tenants=true.
+	if c.Query("all_tenants") != "true" || !isAdminContext(c) {
+		baseQuery += fmt.Sprintf(" AND i.project_id = $%d", argIdx)
+		queryArgs = append(queryArgs, projectID)
+		argIdx++
+	}
+
+	// Marker-based keyset pagination.
 	if marker := c.Query("marker"); marker != "" {
-		markerCondition = fmt.Sprintf(" AND (i.created_at, i.id::text) < (SELECT created_at, id::text FROM instances WHERE id = $%d AND project_id = $1)", argIdx)
+		baseQuery += fmt.Sprintf(
+			" AND (i.created_at, i.id::text) < (SELECT created_at, id::text FROM instances WHERE id = $%d)",
+			argIdx,
+		)
 		queryArgs = append(queryArgs, marker)
 		argIdx++
 	}
 
+	// Status filter.
+	if status := c.Query("status"); status != "" {
+		baseQuery += fmt.Sprintf(" AND UPPER(i.status) = UPPER($%d)", argIdx)
+		queryArgs = append(queryArgs, status)
+		argIdx++
+	}
+
+	// Name filter (case-insensitive partial match).
+	if name := c.Query("name"); name != "" {
+		baseQuery += fmt.Sprintf(" AND i.name ILIKE $%d", argIdx)
+		queryArgs = append(queryArgs, "%"+name+"%")
+		argIdx++
+	}
+
+	// Image filter.
+	if image := c.Query("image"); image != "" {
+		baseQuery += fmt.Sprintf(" AND i.image_id = $%d", argIdx)
+		queryArgs = append(queryArgs, image)
+		argIdx++
+	}
+
+	// Flavor filter.
+	if flavor := c.Query("flavor"); flavor != "" {
+		baseQuery += fmt.Sprintf(" AND i.flavor_id = $%d", argIdx)
+		queryArgs = append(queryArgs, flavor)
+		argIdx++
+	}
+
+	// Changes-since filter.
+	if changesSince := c.Query("changes-since"); changesSince != "" {
+		baseQuery += fmt.Sprintf(" AND i.updated_at >= $%d", argIdx)
+		queryArgs = append(queryArgs, changesSince)
+		argIdx++
+	}
+
+	baseQuery += fmt.Sprintf(" ORDER BY i.created_at DESC LIMIT $%d", argIdx)
 	queryArgs = append(queryArgs, limit)
 
-	rows, err := svc.activeDB().Query(c.Request.Context(), fmt.Sprintf(`
-		SELECT i.id, i.name, i.status, i.power_state, i.project_id, i.user_id,
-		       i.flavor_id, i.image_id, i.created_at, i.updated_at, i.launched_at,
-		       f.vcpus, f.ram_mb, f.disk_gb, f.name as flavor_name, i.host
-		FROM instances i
-		LEFT JOIN flavors f ON i.flavor_id = f.id
-		WHERE i.project_id = $1%s
-		ORDER BY i.created_at DESC
-		LIMIT $%d
-	`, markerCondition, argIdx), queryArgs...)
+	rows, err := svc.activeDB().Query(c.Request.Context(), baseQuery, queryArgs...)
 
 	if err != nil {
 		log.Error().Err(err).Str("operation", "list_servers_detail").Msg("database error")
@@ -731,10 +819,11 @@ func (svc *Service) ListServersDetail(c *gin.Context) {
 		var createdAt, updatedAt time.Time
 		var launchedAt *time.Time
 		var host sql.NullString
+		var locked bool
 
 		if err := rows.Scan(&id, &name, &status, &powerState, &projectID, &userID,
 			&flavorID, &imageID, &createdAt, &updatedAt, &launchedAt,
-			&vcpus, &ramMB, &diskGB, &flavorName, &host); err != nil {
+			&vcpus, &ramMB, &diskGB, &flavorName, &host, &locked); err != nil {
 			log.Warn().Err(err).Msg("failed to scan server detail row")
 			continue
 		}
@@ -768,8 +857,14 @@ func (svc *Service) ListServersDetail(c *gin.Context) {
 			vmState = "deleted"
 		}
 
+		// progress: 25 for BUILD, 0 otherwise
+		progress := 0
+		if status == "BUILD" || status == "BUILDING" {
+			progress = 25
+		}
+
 		hostStr := host.String // empty string if NULL
-		servers = append(servers, gin.H{
+		entry := gin.H{
 			"id":                                  id,
 			"name":                                name,
 			"status":                              status,
@@ -796,13 +891,30 @@ func (svc *Service) ListServersDetail(c *gin.Context) {
 				{"rel": "bookmark", "href": fmt.Sprintf("/servers/%s", id)},
 			},
 			"flavor": gin.H{
-				"id":    flavorID,
-				"vcpus": vcpus,
-				"ram":   ramMB,
-				"disk":  diskGB,
+				"id":            flavorID,
+				"vcpus":         vcpus,
+				"ram":           ramMB,
+				"disk":          diskGB,
+				"ephemeral":     0,
+				"swap":          0,
+				"original_name": flavorName,
 			},
-			"image": gin.H{"id": imageIDStr},
-		})
+			"image":        gin.H{"id": imageIDStr},
+			"config_drive": "",
+			"progress":     progress,
+			"locked":       locked,
+			"description":  nil,
+			"tags":         []string{},
+			"key_name":     nil,
+		}
+		if status == "ERROR" {
+			entry["fault"] = gin.H{
+				"code":    500,
+				"message": "Server in error state",
+				"created": createdAt.Format(time.RFC3339),
+			}
+		}
+		servers = append(servers, entry)
 	}
 
 	if servers == nil {
@@ -905,18 +1017,24 @@ func (svc *Service) GetServer(c *gin.Context) {
 	var createdAt, updatedAt time.Time
 	var launchedAt *time.Time
 	var host sql.NullString
+	var locked bool
+	var vcpus, ramMB, diskGB int
+	var flavorName sql.NullString
 
 	// Try to find by ID first, then by name
 	// Use separate conditions to avoid type mismatch when id is UUID and param might be a name
 	err := svc.activeDB().QueryRow(c.Request.Context(), `
-		SELECT id, name, status, power_state, project_id, user_id, flavor_id, image_id, created_at, updated_at, host, launched_at
-		FROM instances
-		WHERE project_id = $2 AND (
-			(id::text = $1) OR (name = $1)
+		SELECT i.id, i.name, i.status, i.power_state, i.project_id, i.user_id,
+		       i.flavor_id, i.image_id, i.created_at, i.updated_at, i.host, i.launched_at,
+		       i.locked, COALESCE(f.vcpus, 0), COALESCE(f.ram_mb, 0), COALESCE(f.disk_gb, 0), f.name
+		FROM instances i
+		LEFT JOIN flavors f ON i.flavor_id = f.id
+		WHERE i.project_id = $2 AND (
+			(i.id::text = $1) OR (i.name = $1)
 		)
-	`, instanceID, projectID).Scan(&id, &name, &status, &powerState, &projID, &userID, &flavorID, &imageID, &createdAt, &updatedAt, &host, &launchedAt)
+	`, instanceID, projectID).Scan(&id, &name, &status, &powerState, &projID, &userID, &flavorID, &imageID, &createdAt, &updatedAt, &host, &launchedAt, &locked, &vcpus, &ramMB, &diskGB, &flavorName)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("instance"))
 		return
 	}
@@ -954,6 +1072,12 @@ func (svc *Service) GetServer(c *gin.Context) {
 		getLaunchedAt = createdAt.Format(time.RFC3339)
 	}
 
+	// progress: 25 for BUILD, 0 otherwise
+	getProgress := 0
+	if status == "BUILD" || status == "BUILDING" {
+		getProgress = 25
+	}
+
 	// Build response with nullable fields
 	hostStr := host.String // empty string if NULL
 	response := gin.H{
@@ -974,16 +1098,41 @@ func (svc *Service) GetServer(c *gin.Context) {
 		"OS-DCF:diskConfig":                   "AUTO",
 		"OS-SRV-USG:launched_at":              getLaunchedAt,
 		"OS-SRV-USG:terminated_at":            nil,
+		"config_drive":                        "",
+		"progress":                            getProgress,
+		"locked":                              locked,
+		"description":                         nil,
+		"tags":                                []string{},
+		"key_name":                            nil,
 	}
 
 	if userID != nil {
 		response["user_id"] = userID
 	}
 	if flavorID != nil {
-		response["flavor"] = gin.H{"id": flavorID}
+		fn := ""
+		if flavorName.Valid {
+			fn = flavorName.String
+		}
+		response["flavor"] = gin.H{
+			"id":            flavorID,
+			"vcpus":         vcpus,
+			"ram":           ramMB,
+			"disk":          diskGB,
+			"ephemeral":     0,
+			"swap":          0,
+			"original_name": fn,
+		}
 	}
 	if imageID != nil {
 		response["image"] = gin.H{"id": imageID}
+	}
+	if status == "ERROR" {
+		response["fault"] = gin.H{
+			"code":    500,
+			"message": "Server in error state",
+			"created": createdAt.Format(time.RFC3339),
+		}
 	}
 	response["security_groups"] = svc.getServerSecurityGroups(c.Request.Context(), id)
 	response["OS-EXT-SRV-ATTR:root_device_name"] = "/dev/vda"
@@ -1006,20 +1155,32 @@ func (svc *Service) DeleteServer(c *gin.Context) {
 
 	middleware.LogOperationStart(c, "delete", "server", instanceID)
 
-	// Get libvirt domain ID and owner (support lookup by ID or name)
+	// Get libvirt domain ID, status, and owner (support lookup by ID or name)
 	var libvirtDomainID string
 	var instanceUserID sql.NullString
+	var instanceStatus string
 	queryStart := time.Now()
 	err := svc.activeDB().QueryRow(c.Request.Context(),
-		"SELECT libvirt_domain_id, user_id FROM instances WHERE project_id = $2 AND ((id::text = $1) OR (name = $1))",
+		"SELECT libvirt_domain_id, user_id, status FROM instances WHERE project_id = $2 AND ((id::text = $1) OR (name = $1))",
 		instanceID, projectID,
-	).Scan(&libvirtDomainID, &instanceUserID)
+	).Scan(&libvirtDomainID, &instanceUserID, &instanceStatus)
 	middleware.LogDatabaseQuery(c, "SELECT libvirt_domain_id", time.Since(queryStart), err)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		logger.Warn().Str("instance_id", instanceID).Msg("Instance not found")
 		middleware.LogOperationEnd(c, "delete", "server", instanceID, time.Since(start), err)
 		common.SendError(c, common.NewNotFoundError("instance"))
+		return
+	}
+
+	// Reject delete while instance is in BUILD state (use forceDelete action instead)
+	if instanceStatus == "BUILD" || instanceStatus == "BUILDING" {
+		c.JSON(http.StatusConflict, gin.H{
+			"conflictingRequest": gin.H{
+				"message": "Cannot 'delete' instance " + instanceID + " while it is in vm_state building",
+				"code":    409,
+			},
+		})
 		return
 	}
 
@@ -1228,14 +1389,15 @@ func (svc *Service) ServerAction(c *gin.Context) {
 		return
 	}
 
-	// Get libvirt domain ID for remaining actions (support lookup by ID or name)
+	// Get libvirt domain ID and status for remaining actions (support lookup by ID or name)
 	var libvirtDomainID interface{}
+	var instanceStatus string
 	err := svc.activeDB().QueryRow(c.Request.Context(),
-		"SELECT libvirt_domain_id FROM instances WHERE project_id = $2 AND ((id::text = $1) OR (name = $1))",
+		"SELECT libvirt_domain_id, status FROM instances WHERE project_id = $2 AND ((id::text = $1) OR (name = $1))",
 		instanceID, projectID,
-	).Scan(&libvirtDomainID)
+	).Scan(&libvirtDomainID, &instanceStatus)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		log.Warn().Str("instance_id", instanceID).Msg("Instance not found in ServerAction")
 		common.SendError(c, common.NewNotFoundError("instance"))
 		return
@@ -1281,10 +1443,28 @@ func (svc *Service) ServerAction(c *gin.Context) {
 					"ACTIVE", time.Now(), instanceID, projectID)
 			}()
 		} else if _, ok := req["os-stop"]; ok {
+			if instanceStatus != "ACTIVE" {
+				c.JSON(http.StatusConflict, gin.H{
+					"conflictingRequest": gin.H{
+						"message": "Cannot 'stop' instance " + instanceID + " while it is in vm_state " + strings.ToLower(instanceStatus),
+						"code":    409,
+					},
+				})
+				return
+			}
 			svc.activeDB().Exec(c.Request.Context(),
 				"UPDATE instances SET status = $1, power_state = $2, updated_at = $3 WHERE (id::text = $4 OR name = $4) AND project_id = $5",
 				"SHUTOFF", 4, time.Now(), instanceID, projectID)
 		} else if _, ok := req["os-start"]; ok {
+			if instanceStatus != "SHUTOFF" {
+				c.JSON(http.StatusConflict, gin.H{
+					"conflictingRequest": gin.H{
+						"message": "Cannot 'start' instance " + instanceID + " while it is in vm_state " + strings.ToLower(instanceStatus),
+						"code":    409,
+					},
+				})
+				return
+			}
 			svc.activeDB().Exec(c.Request.Context(),
 				"UPDATE instances SET status = $1, power_state = $2, updated_at = $3 WHERE (id::text = $4 OR name = $4) AND project_id = $5",
 				"ACTIVE", 1, time.Now(), instanceID, projectID)
@@ -1307,12 +1487,30 @@ func (svc *Service) ServerAction(c *gin.Context) {
 			return
 		}
 	} else if _, ok := req["os-stop"]; ok {
+		if instanceStatus != "ACTIVE" {
+			c.JSON(http.StatusConflict, gin.H{
+				"conflictingRequest": gin.H{
+					"message": "Cannot 'stop' instance " + instanceID + " while it is in vm_state " + strings.ToLower(instanceStatus),
+					"code":    409,
+				},
+			})
+			return
+		}
 		if err := svc.vmManager.StopVM(ctx, libvirtDomainStr); err != nil {
 			log.Error().Err(err).Str("operation", "stop_vm").Msg("libvirt error")
 			common.SendError(c, common.NewInternalServerError("failed to stop server"))
 			return
 		}
 	} else if _, ok := req["os-start"]; ok {
+		if instanceStatus != "SHUTOFF" {
+			c.JSON(http.StatusConflict, gin.H{
+				"conflictingRequest": gin.H{
+					"message": "Cannot 'start' instance " + instanceID + " while it is in vm_state " + strings.ToLower(instanceStatus),
+					"code":    409,
+				},
+			})
+			return
+		}
 		if err := svc.vmManager.StartVM(ctx, libvirtDomainStr); err != nil {
 			log.Error().Err(err).Str("operation", "start_vm").Msg("libvirt error")
 			common.SendError(c, common.NewInternalServerError("failed to start server"))
@@ -1470,7 +1668,7 @@ func (svc *Service) GetFlavor(c *gin.Context) {
 		flavorID,
 	).Scan(&id, &name, &vcpus, &ramMB, &diskGB, &isPublic)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("flavor"))
 		return
 	}

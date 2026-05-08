@@ -2,6 +2,7 @@ package cinder
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -47,11 +48,11 @@ func (svc *Service) CreateVolumeType(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"volume_type": map[string]interface{}{
-			"id":                               typeID,
-			"name":                             req.VolumeType.Name,
-			"description":                      req.VolumeType.Description,
-			"os-volume-type-access:is_public":  isPublic,
-			"extra_specs":                      map[string]string{},
+			"id":                              typeID,
+			"name":                            req.VolumeType.Name,
+			"description":                     req.VolumeType.Description,
+			"os-volume-type-access:is_public": isPublic,
+			"extra_specs":                     map[string]string{},
 		},
 	})
 }
@@ -163,7 +164,7 @@ func (svc *Service) ListVolumeTypeExtraSpecs(c *gin.Context) {
 		typeID,
 	).Scan(&extraSpecs)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("volume type"))
 		return
 	}
@@ -224,7 +225,7 @@ func (svc *Service) GetVolumeTypeExtraSpecKey(c *gin.Context) {
 		typeID,
 	).Scan(&extraSpecs)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("volume type"))
 		return
 	}
@@ -267,7 +268,7 @@ func (svc *Service) UpdateVolumeTypeExtraSpecKey(c *gin.Context) {
 		typeID,
 	).Scan(&extraSpecs)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("volume type"))
 		return
 	}
@@ -317,7 +318,7 @@ func (svc *Service) DeleteVolumeTypeExtraSpecKey(c *gin.Context) {
 		typeID,
 	).Scan(&extraSpecs)
 
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("volume type"))
 		return
 	}

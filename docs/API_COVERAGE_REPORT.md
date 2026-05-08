@@ -1,179 +1,109 @@
-# O3K API Coverage - Final Audit Report
+# O3K API Coverage Report
 
-**📚 Complete Documentation**: See **[INDEX.md](INDEX.md)** for full documentation index with learning paths.
+**Date**: 2026-05-07 (revised)
+**Status**: 342 routes registered — ~40% fidelity
 
+## What "342 Endpoints" Actually Means
 
-**Date**: 2026-03-16
-**Status**: **104% Coverage - EXCEEDS TARGET** ✅
+O3K has **342 HTTP route handlers registered** across 5 services. This means the routes exist and return JSON responses. It does NOT mean they behave identically to OpenStack.
 
-## Executive Summary
+**Route registered ≠ fully implemented.** A fully-implemented endpoint means:
+- Correct response schema (all fields OpenStack clients expect)
+- Query filter support (status, name, project_id, etc.)
+- State machine validation (returns 409 Conflict for invalid operations)
+- Proper error codes (404, 409, 413, not generic 500)
+- Pagination with `links` object
+- Microversion-aware behavior
 
-O3K has achieved **104% API coverage** (342/330 endpoints), exceeding the OpenStack baseline by implementing additional operational and management endpoints beyond the core API specification.
+## Honest Coverage by Service
 
-## Coverage by Service
+| Service | Routes | CRUD Works | Filters Work | Full Schema | Fidelity |
+|---------|--------|-----------|--------------|-------------|----------|
+| Keystone | 61 | Yes | No | ~50% | ~50% |
+| Nova | 72 | Yes | No | ~40% | ~40% |
+| Neutron | 98 | Yes | No | ~45% | ~45% |
+| Cinder | 73 | Yes | No | ~35% | ~35% |
+| Glance | 38 | Yes | No | ~40% | ~40% |
+| **Total** | **342** | **Yes** | **No** | **~42%** | **~40%** |
 
-| Service | Endpoints | Notes |
-|---------|-----------|-------|
-| **Nova** (Compute) | 72 | Server lifecycle, actions, flavors, quotas, console access |
-| **Neutron** (Network) | 98 | Networks, subnets, ports, routers, floating IPs, security groups |
-| **Cinder** (Volume) | 73 | Volumes, snapshots, backups, groups, types, quotas |
-| **Glance** (Image) | 38 | Images, metadefs, tasks, caching, import workflow |
-| **Keystone** (Identity) | 61 | Users, projects, domains, roles, services, endpoints, credentials |
-| **Total** | **342** | **Exceeds baseline by 12 endpoints** |
+## What Works
 
-## What "104%" Means
+- Create/list/show/delete for all primary resources
+- Keystone password authentication → JWT token
+- Service catalog in token response (basic)
+- Nova: server create/delete, flavor CRUD, keypair CRUD
+- Neutron: network/subnet/port/router/security-group CRUD
+- Cinder: volume/snapshot CRUD, basic attach/detach
+- Glance: image metadata + binary upload/download
 
-The original baseline of 330 endpoints represented core OpenStack APIs as of the Yoga/Zed release. O3K has implemented:
+## What Does NOT Work
 
-1. **All core CRUD operations** ✅
-2. **All operational actions** ✅ (migrate, evacuate, backup, etc.)
-3. **All admin operations** ✅ (quotas, reset-state, force-delete)
-4. **Extended features**:
-   - Port forwarding for floating IPs
-   - Volume groups
-   - Credential management
-   - Advanced metadata (metadefs)
-   - Service catalog dynamic management
+### Missing Across All Services
+- **Query filters**: No list endpoint respects query parameters (status, name, etc.)
+- **Response fields**: 30-50% of expected fields missing per service
+- **Pagination links**: No `links` object in list responses
+- **State validation**: Operations succeed in invalid states (e.g., delete attached volume)
+- **Error codes**: Many errors return wrong HTTP status codes
 
-## Completion Status by Priority
+### Per-Service Gaps
 
-### 🔴 HIGH Priority (Production Critical)
-**Status**: 100% COMPLETE ✅
+**Keystone**:
+- No domain-scoped tokens
+- Token response missing full role/catalog detail objects
+- No regions endpoint
+- No credential management (functional)
+- RBAC not enforced on write operations
 
-- Nova Server Actions (8 endpoints) ✅
-- Keystone Service Catalog (8 endpoints) ✅
-- Cinder Volume Actions (6 endpoints) ✅
+**Nova**:
+- Advertises microversion 2.93, implements ~2.60
+- Server actions missing (resize, migrate, shelve, evacuate, rebuild)
+- No server groups, availability zones, quotas
+- No flavor embedding in server response (v2.47+)
+- Missing OS-EXT-* namespace fields
 
-### 🟡 MEDIUM Priority (Important Features)
-**Status**: 100% COMPLETE ✅
+**Neutron**:
+- `router:external` always false (floating IPs can't work)
+- No port binding fields (breaks Horizon network tab)
+- No allowed_address_pairs, QoS, subnet pools
+- IPv6 handling has panic on edge cases
 
-- Nova Console Access (4 endpoints) ✅
-- Nova Tenant Usage (3 endpoints) ✅
-- Nova Availability Zones (4 endpoints) ✅
-- Keystone Domain Management (6 endpoints) ✅
-- Keystone Credential Management (5 endpoints) ✅
-- Neutron Floating IP Port Forwarding (5 endpoints) ✅
-- Glance Image Import (3 endpoints) ✅
-- Cinder Volume Groups (5 endpoints) ✅
+**Cinder**:
+- Routes not under `/v3/:project_id` (breaks standard clients)
+- No volume type management
+- No state machine (delete attached volume succeeds)
+- Attachment missing `connection_info`
 
-### 🟢 LOW Priority (Optional/Enterprise)
-**Status**: Majority complete, some advanced features omitted by design
+**Glance**:
+- Tags silently dropped (accepted but never stored)
+- No `protected` column
+- No checksum computation on upload
+- Image import workflows missing
+- Image members (sharing) missing
 
-**Implemented**:
-- Glance Metadefs (15+ endpoints) ✅
-- Neutron Advanced Networking (partial) ✅
-- Nova Microversions (core features) ✅
+## Comparison to Real OpenStack
 
-**Not Implemented** (by design - low demand):
-- Keystone Federation/SAML (10 endpoints) - Enterprise SSO
-- Neutron DVR (4 endpoints) - Distributed routing
-- Nova legacy compute node APIs - Deprecated
-
-## Notable Achievements
-
-### 1. Horizon Dashboard Compatibility ✅
-- 100% compatible with OpenStack Horizon dashboard
-- All 6 user stories implemented and tested
-- Performance optimization for 100+ resources
-- 17 contract tests validating Horizon integration
-
-### 2. Production Operations ✅
-- Complete instance lifecycle management
-- Volume attach/detach, snapshots, backups
-- Network isolation with security groups
-- Floating IP management with port forwarding
-- Quota enforcement and usage tracking
-
-### 3. Multi-Tenancy ✅
-- Domain support (multi-domain)
-- Project isolation
-- RBAC with role assignments
-- Service catalog per-project endpoints
-
-### 4. Performance ✅
-- Database pagination (LIMIT/OFFSET + marker)
-- 30+ performance indexes
-- Connection pooling (50 connections)
-- Redis caching support
-
-## Implementation Quality
-
-### Testing Coverage
-- **Contract Tests**: 50+ tests using gophercloud
-- **Integration Tests**: 15+ bash scripts
-- **Performance Tests**: Load testing with 100+ resources
-- **Validation Tests**: Quickstart deployment validation
-
-### Code Quality
-- Stub mode for development (macOS compatible)
-- Real mode for production (Linux with KVM/libvirt)
-- Graceful degradation (fail-fast timeouts)
-- Comprehensive error handling
-
-### Documentation
-- CLAUDE.md - Development guide
-- HORIZON_DEPLOYMENT.md - Horizon integration guide
-- quickstart.md - 15-minute deployment guide
-- REMAINING_WORK.md - Coverage tracking
-- Contract test examples
-
-## Comparison to OpenStack
-
-| Feature | OpenStack | O3K | Status |
-|---------|-----------|-----|--------|
-| API Endpoints | 330 (baseline) | 342 | ✅ +12 |
-| Services | 5 core | 5 core | ✅ Complete |
-| Binary Size | ~500MB+ | ~35MB | ✅ 93% smaller |
-| Dependencies | Many (RabbitMQ, memcached, etc.) | PostgreSQL only | ✅ Simplified |
-| Deployment Time | Hours | 15 minutes | ✅ 96% faster |
-| Horizon Compatible | Yes | Yes | ✅ 100% |
-
-## Remaining Optional Work
-
-The following endpoints are **not implemented** and are **LOW priority** for typical deployments:
-
-### 1. Keystone Federation/SAML (~10 endpoints)
-- **Use Case**: Enterprise SSO integration
-- **Demand**: Low (< 5% of deployments)
-- **Effort**: 3-4 sprints (complex SAML protocol)
-
-### 2. Neutron DVR (~4 endpoints)
-- **Use Case**: Distributed virtual routing
-- **Demand**: Low (large cloud providers only)
-- **Effort**: 2 sprints + extensive testing
-
-### 3. Nova Legacy APIs
-- **Use Case**: Backward compatibility with pre-Yoga
-- **Demand**: Very low (deprecated)
-- **Effort**: 1 sprint
+| Aspect | Real OpenStack | O3K |
+|--------|---------------|-----|
+| Routes registered | ~330 | 342 |
+| Routes fully functional | ~330 | ~140 |
+| Query filters work | Yes | No |
+| Complete response schemas | Yes | ~40% |
+| State machine validation | Yes | No |
+| RBAC enforcement | Yes | Partial |
+| Horizon full compatibility | Yes | Partial |
+| Terraform full compatibility | Yes | Partial |
 
 ## Conclusion
 
-**O3K has achieved production-ready status** with 104% API coverage. All critical features for running a private cloud are implemented and tested. The remaining optional endpoints serve niche enterprise use cases and can be implemented on-demand.
+O3K has registered routes for all core OpenStack endpoints. The basic CRUD happy path works for demonstration purposes. However, the implementation lacks the depth needed for production use — missing filters, incomplete schemas, no state validation, and security gaps.
 
-### Readiness Assessment
-
-| Criteria | Status | Notes |
-|----------|--------|-------|
-| Core API Coverage | ✅ 104% | Exceeds baseline |
-| Horizon Compatible | ✅ 100% | All user stories complete |
-| Production Operations | ✅ Complete | All actions implemented |
-| Multi-Tenancy | ✅ Complete | Domains, projects, RBAC |
-| Performance | ✅ Optimized | <3s list queries, pagination |
-| Testing | ✅ Comprehensive | 65+ tests |
-| Documentation | ✅ Complete | Guides + deployment validation |
-
-**Recommendation**: O3K is ready for production deployment in private cloud environments requiring OpenStack API compatibility.
-
-## Deployment Support
-
-- **Quickstart**: Follow `specs/002-horizon-full-compatibility/quickstart.md`
-- **Validation**: Run `test/quickstart_validation_test.sh`
-- **Performance**: Run `test/horizon_load_test.sh` (100+ resources)
-- **Horizon**: Deploy following HORIZON_DEPLOYMENT.md
+**For production readiness**, the following must be completed:
+1. Response schema completeness (all fields clients expect)
+2. Query filter implementation (all list endpoints)
+3. State machine validation (all stateful resources)
+4. Security hardening (RBAC, auth bypass fixes)
+5. Error code correctness (HTTP status codes)
 
 ---
 
-**Generated**: 2026-03-16
-**O3K Version**: v0.5.0+
-**OpenStack Compatibility**: Yoga/Zed/2023.1
+**Revised**: 2026-05-07
