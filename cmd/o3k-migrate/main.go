@@ -164,7 +164,7 @@ func handleForce(dbURL, migrationsPath string) {
 	fmt.Printf("⚠️  WARNING: Forcing version to %d without running migrations.\n", version)
 	fmt.Print("This should only be used to fix dirty state. Continue? (yes/no): ")
 	var response string
-	fmt.Scanln(&response)
+	_, _ = fmt.Scanln(&response)
 	if response != "yes" {
 		fmt.Println("Force cancelled")
 		return

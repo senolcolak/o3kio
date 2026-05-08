@@ -50,7 +50,7 @@ func (svc *Service) ListAggregates(c *gin.Context) {
 
 		var metadataMap map[string]interface{}
 		if len(metadata) > 0 {
-			json.Unmarshal(metadata, &metadataMap)
+			_ = json.Unmarshal(metadata, &metadataMap)
 		}
 		if metadataMap == nil {
 			metadataMap = make(map[string]interface{})

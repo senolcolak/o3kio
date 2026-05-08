@@ -278,7 +278,7 @@ func (svc *Service) CreateVolume(c *gin.Context) {
 		}
 		ctx, cancel := context.WithTimeout(svc.ctx, 5*time.Second)
 		defer cancel()
-		svc.activeDB().Exec(ctx,
+		_, _ = svc.activeDB().Exec(ctx,
 			"UPDATE volumes SET status = $1, updated_at = $2 WHERE id = $3",
 			"available", time.Now(), volumeID)
 	}()

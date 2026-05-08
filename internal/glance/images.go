@@ -682,7 +682,7 @@ func (svc *Service) UploadImageData(c *gin.Context) {
 	checksum := hex.EncodeToString(h.Sum(nil))
 
 	// Update status to active, set size and checksum
-	svc.activeDB().Exec(c.Request.Context(),
+	_, _ = svc.activeDB().Exec(c.Request.Context(),
 		"UPDATE images SET status = $1, size_bytes = $2, checksum = $3, updated_at = $4 WHERE id = $5",
 		"active", size, checksum, time.Now(), imageID)
 

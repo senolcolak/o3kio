@@ -2450,7 +2450,7 @@ func (svc *Service) ForceDeleteInstanceAction(c *gin.Context) {
 		if domainStr != "" {
 			ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 			defer cancel()
-			svc.vmManager.DeleteVM(ctx, domainStr)
+			_ = svc.vmManager.DeleteVM(ctx, domainStr)
 		}
 	}
 

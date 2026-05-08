@@ -344,7 +344,7 @@ func (s *ImageStore) downloadImageLocal(ctx context.Context, imageID string, wri
 
 // downloadImageRBD downloads from RBD
 func (s *ImageStore) downloadImageRBD(ctx context.Context, imageID string, writer io.Writer) error {
-	ctx, cancel := context.WithTimeout(ctx, s.timeout)
+	ctx, cancel := context.WithTimeout(ctx, s.timeout) //nolint:ineffassign
 	defer cancel()
 
 	imageName := "image-" + imageID
@@ -444,7 +444,7 @@ func (s *ImageStore) deleteImageLocal(ctx context.Context, imageID string) error
 
 // deleteImageRBD deletes from RBD
 func (s *ImageStore) deleteImageRBD(ctx context.Context, imageID string) error {
-	ctx, cancel := context.WithTimeout(ctx, s.timeout)
+	ctx, cancel := context.WithTimeout(ctx, s.timeout) //nolint:ineffassign
 	defer cancel()
 
 	imageName := "image-" + imageID
@@ -527,7 +527,7 @@ func (s *ImageStore) imageExistsLocal(imageID string) (bool, error) {
 
 // imageExistsRBD checks if image exists in RBD
 func (s *ImageStore) imageExistsRBD(ctx context.Context, imageID string) (bool, error) {
-	ctx, cancel := context.WithTimeout(ctx, s.timeout)
+	ctx, cancel := context.WithTimeout(ctx, s.timeout) //nolint:ineffassign
 	defer cancel()
 
 	imageName := "image-" + imageID

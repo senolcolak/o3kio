@@ -316,7 +316,7 @@ func (svc *Service) GetQuota(c *gin.Context) {
 	// Query current usage from database
 	var networksUsed, subnetsUsed, portsUsed, routersUsed, floatingIPsUsed, securityGroupsUsed int
 
-	svc.activeDB().QueryRow(c.Request.Context(),
+	_ = svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT COUNT(*) FROM networks WHERE project_id = $1",
 		projectID,
 	).Scan(&networksUsed)

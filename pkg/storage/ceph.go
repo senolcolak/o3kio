@@ -18,8 +18,10 @@ type CephClient struct {
 	mu       sync.Mutex
 	stubVolumes map[string]*stubVolume // For stub mode
 	localPath   string                 // For local mode
-	conn        interface{} // Ceph RADOS connection (type depends on build tags) //nolint:unused
-	ioctx       interface{} // RADOS IO context for pool (type depends on build tags) //nolint:unused
+	//nolint:unused // used in ceph_rbd.go behind build tags
+	conn  interface{}
+	//nolint:unused // used in ceph_rbd.go behind build tags
+	ioctx interface{}
 }
 
 // stubVolume represents a simulated volume

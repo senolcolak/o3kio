@@ -105,7 +105,7 @@ func (svc *Service) CreateMetadefNamespace(c *gin.Context) {
 				rtName, _ := assocMap["name"].(string)
 				rtPrefix, _ := assocMap["prefix"].(string)
 
-				svc.activeDB().Exec(c.Request.Context(), `
+				_, _ = svc.activeDB().Exec(c.Request.Context(), `
 					INSERT INTO metadef_resource_types (namespace, name, prefix, created_at)
 					VALUES ($1, $2, $3, $4)
 				`, namespace, rtName, rtPrefix, time.Now())

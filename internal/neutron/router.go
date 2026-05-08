@@ -266,7 +266,7 @@ func (svc *Service) GetRouter(c *gin.Context) {
 
 	// Parse external gateway info
 	if gatewayInfo.Valid {
-		json.Unmarshal([]byte(gatewayInfo.String), &r.ExternalGatewayInfo)
+		_ = json.Unmarshal([]byte(gatewayInfo.String), &r.ExternalGatewayInfo)
 	}
 
 	c.JSON(http.StatusOK, gin.H{

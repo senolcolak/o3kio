@@ -240,7 +240,7 @@ func (svc *Service) CreateFloatingIP(c *gin.Context) {
 
 		// Get router ID from port's network
 		var networkID string
-		svc.activeDB().QueryRow(c.Request.Context(),
+		_ = svc.activeDB().QueryRow(c.Request.Context(),
 			"SELECT network_id FROM ports WHERE id = $1",
 			req.FloatingIP.PortID,
 		).Scan(&networkID)
@@ -453,7 +453,7 @@ func (svc *Service) UpdateFloatingIP(c *gin.Context) {
 				}
 				// Associate with new port
 				var networkID string
-				svc.activeDB().QueryRow(c.Request.Context(),
+				_ = svc.activeDB().QueryRow(c.Request.Context(),
 					"SELECT network_id FROM ports WHERE id = $1",
 					newPortID,
 				).Scan(&networkID)
