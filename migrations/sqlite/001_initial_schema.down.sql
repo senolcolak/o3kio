@@ -1,0 +1,27 @@
+DROP INDEX IF EXISTS idx_role_assignments_user_project;
+DROP INDEX IF EXISTS idx_images_visibility;
+DROP INDEX IF EXISTS idx_images_project_id;
+DROP INDEX IF EXISTS idx_volumes_attached_to;
+DROP INDEX IF EXISTS idx_volumes_project_id;
+DROP INDEX IF EXISTS idx_ports_device_id;
+DROP INDEX IF EXISTS idx_ports_network_id;
+DROP INDEX IF EXISTS idx_networks_project_id;
+DROP INDEX IF EXISTS idx_instances_status;
+DROP INDEX IF EXISTS idx_instances_project_id;
+
+DROP TABLE IF EXISTS images;
+DROP TABLE IF EXISTS snapshots;
+DROP TABLE IF EXISTS volume_types;
+DROP TABLE IF EXISTS volumes;
+DROP TABLE IF EXISTS security_group_rules;
+DROP TABLE IF EXISTS security_groups;
+DROP TABLE IF EXISTS ports;
+DROP TABLE IF EXISTS subnets;
+DROP TABLE IF EXISTS networks;
+DROP TABLE IF EXISTS keypairs;
+DROP TABLE IF EXISTS instances;
+DROP TABLE IF EXISTS flavors;
+DROP TABLE IF EXISTS role_assignments;
+DROP TABLE IF EXISTS roles;
+DROP TABLE IF EXISTS projects;
+DROP TABLE IF EXISTS users;

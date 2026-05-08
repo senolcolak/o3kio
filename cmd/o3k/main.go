@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -110,17 +111,40 @@ func runServer(args []string) {
 		poolConfig.HealthCheckPeriod = 1 * time.Minute
 	}
 
-	if err := database.Connect(ctx, cfg.Database.URL, poolConfig); err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
+	// Determine datastore: explicit Datastore field takes priority over URL.
+	datastore := cfg.Database.Datastore
+	if datastore == "" {
+		datastore = cfg.Database.URL
+	}
+
+	if strings.HasPrefix(datastore, "sqlite://") || strings.HasPrefix(datastore, "sqlite:") {
+		dbPath := strings.TrimPrefix(strings.TrimPrefix(datastore, "sqlite://"), "sqlite:")
+		if dbPath == "" {
+			dbPath = "/var/lib/o3k/db/state.db"
+		}
+		if err := os.MkdirAll(filepath.Dir(dbPath), 0750); err != nil {
+			log.Fatalf("Failed to create database directory: %v", err)
+		}
+		if err := database.ConnectSQLite(ctx, dbPath); err != nil {
+			log.Fatalf("Failed to connect to SQLite: %v", err)
+		}
+		log.Printf("Database: SQLite at %s", dbPath)
+	} else {
+		if err := database.Connect(ctx, datastore, poolConfig); err != nil {
+			log.Fatalf("Failed to connect to database: %v", err)
+		}
+		log.Printf("Database: PostgreSQL (pool: max=%d, min=%d)", poolConfig.MaxConns, poolConfig.MinConns)
 	}
 	defer database.Close()
 
-	log.Printf("Database connection established (pool: max=%d, min=%d)", poolConfig.MaxConns, poolConfig.MinConns)
-
-	// Run migrations
-	log.Println("Running database migrations...")
-	if err := database.MigrateUp(cfg.Database.URL, *migrationsPath); err != nil {
-		log.Fatalf("Failed to run migrations: %v", err)
+	// Run migrations (PostgreSQL only — SQLite manages its own schema)
+	if database.BackendType() == "postgres" {
+		log.Println("Running database migrations...")
+		if err := database.MigrateUp(datastore, *migrationsPath); err != nil {
+			log.Fatalf("Failed to run migrations: %v", err)
+		}
+	} else {
+		log.Println("SQLite mode: skipping PostgreSQL migrations")
 	}
 
 	// Start TunnelHub gRPC server if configured

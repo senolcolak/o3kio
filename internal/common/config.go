@@ -35,6 +35,7 @@ type ServerConfig struct {
 
 type DatabaseConfig struct {
 	URL               string        `yaml:"url"`
+	Datastore         string        `yaml:"datastore"`          // "sqlite:///path/to/db" or "postgres://..." — overrides URL if set
 	MaxConnections    int           `yaml:"max_connections"`
 	MinConnections    int           `yaml:"min_connections"`
 	MaxConnLifetime   time.Duration `yaml:"max_conn_lifetime"`
@@ -180,10 +181,14 @@ func LoadConfig(path string) (*Config, error) {
 
 	// Expand environment variable references in database URL
 	cfg.Database.URL = expandEnvWithDefault(cfg.Database.URL)
+	cfg.Database.Datastore = expandEnvWithDefault(cfg.Database.Datastore)
 
 	// Environment variable overrides
 	if dbURL := os.Getenv("O3K_DB_URL"); dbURL != "" {
 		cfg.Database.URL = dbURL
+	}
+	if ds := os.Getenv("O3K_DATASTORE"); ds != "" {
+		cfg.Database.Datastore = ds
 	}
 	if jwtSecret := os.Getenv("O3K_JWT_SECRET"); jwtSecret != "" {
 		cfg.Keystone.JWTSecret = jwtSecret

@@ -1,5 +1,8 @@
 database:
+  # PostgreSQL (default for multi-node):
   url: "${DATABASE_URL:postgres://lightstack:changeme@localhost/lightstack?sslmode=disable}"
+  # Or use SQLite for single-node (zero external deps):
+  # datastore: "sqlite:///var/lib/o3k/db/state.db"
   max_connections: 50  # Increased from 20 for higher concurrency
   min_connections: 2   # Keep minimal warm connections
   max_conn_lifetime: 1h
