@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"flag"
 	"fmt"
 	"log"
@@ -448,18 +449,99 @@ func runServer(args []string) {
 
 func runAgent(args []string) {
 	fs := flag.NewFlagSet("agent", flag.ExitOnError)
-	serverAddr := fs.String("server", "", "o3k server address (required)")
-	tokenFile := fs.String("token-file", "", "path to join token file")
-	nodeIDFile := fs.String("node-id-file", "/var/lib/o3k/agent/node-id", "path to persist node UUID")
+	serverAddr := fs.String("server", "", "o3k server address (host:port, required)")
+	token := fs.String("token", "", "join token (from server's agent-token file)")
+	tokenFile := fs.String("token-file", "", "path to file containing join token")
+	nodeIDFile := fs.String("node-id-file", "", "path to persist node UUID (default: {data-dir}/agent/node-id)")
+	mode := fs.String("mode", "stub", "compute mode: stub or real")
 	_ = fs.Parse(args)
 
 	if *serverAddr == "" {
-		fmt.Fprintln(os.Stderr, "ERROR: --server is required for agent mode")
+		fmt.Fprintln(os.Stderr, "ERROR: --server is required")
+		fmt.Fprintln(os.Stderr, "Usage: o3k agent --server <host:port> --token <join-token>")
 		os.Exit(1)
 	}
-	fmt.Printf("o3k agent starting — connecting to %s (node-id-file: %s, token-file: %s)\n",
-		*serverAddr, *nodeIDFile, *tokenFile)
-	select {}
+
+	// Resolve token.
+	joinToken := *token
+	if joinToken == "" && *tokenFile != "" {
+		data, err := os.ReadFile(*tokenFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: cannot read token file: %v\n", err)
+			os.Exit(1)
+		}
+		joinToken = strings.TrimSpace(string(data))
+	}
+	if joinToken == "" {
+		fmt.Fprintln(os.Stderr, "ERROR: --token or --token-file is required")
+		os.Exit(1)
+	}
+
+	// Resolve node ID (generated once, then persisted).
+	dataDir := server.DataDir()
+	agentDir := filepath.Join(dataDir, "agent")
+	if err := os.MkdirAll(agentDir, 0750); err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: cannot create agent dir: %v\n", err)
+		os.Exit(1)
+	}
+	nodeIDPath := *nodeIDFile
+	if nodeIDPath == "" {
+		nodeIDPath = filepath.Join(agentDir, "node-id")
+	}
+	nodeID := loadOrGenerateNodeID(nodeIDPath)
+
+	// The hub validates via VerifyTokenHash(secret, nodeID, hash), so we must
+	// send GenerateTokenHash(joinToken, nodeID) as the tokenHash.
+	tokenHash := tunnel.GenerateTokenHash(joinToken, nodeID)
+
+	fmt.Println("═══════════════════════════════════════════")
+	fmt.Println("  O3K Agent")
+	fmt.Println("═══════════════════════════════════════════")
+	fmt.Printf("  Server:  %s\n", *serverAddr)
+	fmt.Printf("  Node ID: %s\n", nodeID)
+	fmt.Printf("  Mode:    %s\n", *mode)
+	fmt.Println("═══════════════════════════════════════════")
+
+	client := tunnel.NewAgentClientWithExecutor(*serverAddr, nodeID, tokenHash, *mode)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		fmt.Println("\nShutting down agent...")
+		cancel()
+	}()
+
+	if err := client.Connect(ctx); err != nil && ctx.Err() == nil {
+		fmt.Fprintf(os.Stderr, "Agent connection failed: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func loadOrGenerateNodeID(path string) string {
+	data, err := os.ReadFile(path)
+	if err == nil && len(data) > 0 {
+		return strings.TrimSpace(string(data))
+	}
+	id := uuid()
+	_ = os.WriteFile(path, []byte(id+"\n"), 0600)
+	return id
+}
+
+// uuid generates a new random UUID v4 string using crypto/rand.
+func uuid() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback: hex-encode a timestamp + random bytes via crypto/rand is
+		// already imported; if it fails we have bigger problems.
+		panic(fmt.Sprintf("uuid: crypto/rand unavailable: %v", err))
+	}
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant bits
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
 func runTokenCmd(args []string) {
