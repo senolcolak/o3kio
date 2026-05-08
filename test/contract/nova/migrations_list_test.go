@@ -184,7 +184,10 @@ func getTestServerID(t *testing.T, client *gophercloud.ServiceClient) string {
 	url := client.ServiceURL("servers", "detail")
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Set("X-Auth-Token", client.TokenID)
-	resp, _ := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)

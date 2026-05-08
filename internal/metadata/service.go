@@ -11,7 +11,6 @@ import (
 	"github.com/cobaltcore-dev/o3k/internal/common"
 	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 )
 
@@ -105,7 +104,7 @@ func (svc *Service) GetMetaDataJSON(c *gin.Context) {
 		WHERE id = $1
 	`, instanceID).Scan(&uuid, &name, &hostname, &projectID, &userID)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("instance"))
 		return
 	}
@@ -186,7 +185,7 @@ func (svc *Service) GetUserData(c *gin.Context) {
 		WHERE instance_id = $1
 	`, instanceID).Scan(&userData)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		// No user-data is not an error, just return empty
 		c.String(http.StatusOK, "")
 		return

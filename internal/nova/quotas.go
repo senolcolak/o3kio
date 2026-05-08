@@ -6,10 +6,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 
 	"github.com/cobaltcore-dev/o3k/internal/common"
+	"github.com/cobaltcore-dev/o3k/internal/database"
 )
 
 // UpdateQuotaRequest represents a quota update request
@@ -227,7 +227,7 @@ func (svc *Service) CheckQuota(c *gin.Context, resource string, requestedAmount 
 		SELECT hard_limit FROM quotas WHERE project_id = $1 AND resource = $2
 	`, projectID, resource).Scan(&limit)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		// No quota set, use defaults
 		defaults := map[string]int{
 			"instances":            10,

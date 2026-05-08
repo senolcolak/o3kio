@@ -56,14 +56,16 @@ func TestTrunkBasicCRUD(t *testing.T) {
 	// LIST
 	req, _ = http.NewRequest("GET", client.ServiceURL("trunks"), nil)
 	req.Header.Set("X-Auth-Token", client.TokenID)
-	resp, _ = http.DefaultClient.Do(req)
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	// GET
 	req, _ = http.NewRequest("GET", client.ServiceURL("trunks", trunkID), nil)
 	req.Header.Set("X-Auth-Token", client.TokenID)
-	resp, _ = http.DefaultClient.Do(req)
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -77,14 +79,16 @@ func TestTrunkBasicCRUD(t *testing.T) {
 	req, _ = http.NewRequest("PUT", client.ServiceURL("trunks", trunkID), bytes.NewReader(body))
 	req.Header.Set("X-Auth-Token", client.TokenID)
 	req.Header.Set("Content-Type", "application/json")
-	resp, _ = http.DefaultClient.Do(req)
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	// DELETE
 	req, _ = http.NewRequest("DELETE", client.ServiceURL("trunks", trunkID), nil)
 	req.Header.Set("X-Auth-Token", client.TokenID)
-	resp, _ = http.DefaultClient.Do(req)
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusNoContent, resp.StatusCode)
 
@@ -111,7 +115,10 @@ func TestTrunkSubports(t *testing.T) {
 	req, _ := http.NewRequest("POST", client.ServiceURL("trunks"), bytes.NewReader(body))
 	req.Header.Set("X-Auth-Token", client.TokenID)
 	req.Header.Set("Content-Type", "application/json")
-	resp, _ := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
@@ -135,7 +142,10 @@ func TestTrunkSubports(t *testing.T) {
 	req, _ = http.NewRequest("PUT", client.ServiceURL("trunks", trunkID, "add_subports"), bytes.NewReader(body))
 	req.Header.Set("X-Auth-Token", client.TokenID)
 	req.Header.Set("Content-Type", "application/json")
-	resp, _ = http.DefaultClient.Do(req)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 

@@ -17,7 +17,6 @@ import (
 	"github.com/cobaltcore-dev/o3k/pkg/networking"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 )
 
@@ -317,7 +316,7 @@ func (svc *Service) GetQuota(c *gin.Context) {
 	// Query current usage from database
 	var networksUsed, subnetsUsed, portsUsed, routersUsed, floatingIPsUsed, securityGroupsUsed int
 
-	svc.activeDB().QueryRow(c.Request.Context(),
+	_ = svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT COUNT(*) FROM networks WHERE project_id = $1",
 		projectID,
 	).Scan(&networksUsed)
@@ -679,7 +678,7 @@ func (svc *Service) GetNetwork(c *gin.Context) {
 		LIMIT 1
 	`, networkID, projectID).Scan(&id, &name, &ownerProjectID, &adminStateUp, &status, &shared, &mtu, &networkType, &isExternal, &createdAt, &updatedAt)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("network"))
 		return
 	}
@@ -707,7 +706,7 @@ func (svc *Service) GetNetwork(c *gin.Context) {
 
 	// Store in cache (30min TTL per config)
 	if svc.cache != nil {
-		svc.cache.Set(ctx, "network:"+id, network, 30*time.Minute)
+		_ = svc.cache.Set(ctx, "network:"+id, network, 30*time.Minute)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"network": network})
@@ -725,7 +724,7 @@ func (svc *Service) DeleteNetwork(c *gin.Context) {
 		"SELECT project_id FROM networks WHERE (id::text = $1 OR name = $1) AND (project_id = $2 OR shared = true)",
 		networkID, projectID,
 	).Scan(&networkProjectID)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("network"))
 		return
 	}
@@ -755,7 +754,7 @@ func (svc *Service) DeleteNetwork(c *gin.Context) {
 	nsName := svc.nsManager.GetNamespaceName(projectID)
 
 	// Delete bridge
-	svc.brManager.DeleteBridge(bridgeName, true, nsName)
+	_ = svc.brManager.DeleteBridge(bridgeName, true, nsName)
 
 	// Delete from database
 	_, err = svc.activeDB().Exec(ctx,
@@ -770,8 +769,8 @@ func (svc *Service) DeleteNetwork(c *gin.Context) {
 
 	// Invalidate cache
 	if svc.cache != nil {
-		svc.cache.Delete(ctx, "network:"+networkID)
-		svc.cache.DeletePattern(ctx, "networks:*")
+		_ = svc.cache.Delete(ctx, "network:"+networkID)
+		_ = svc.cache.DeletePattern(ctx, "networks:*")
 	}
 
 	c.Status(http.StatusNoContent)
@@ -918,7 +917,7 @@ func (svc *Service) CreateSubnet(c *gin.Context) {
 			LeaseTime:      "24h",
 		}
 
-		go svc.dhcpManager.StartDHCP(dhcpConfig, nsName)
+		go func() { _ = svc.dhcpManager.StartDHCP(dhcpConfig, nsName) }()
 	}
 
 	// Calculate allocation pools (entire subnet minus gateway)
@@ -1081,7 +1080,7 @@ func (svc *Service) GetSubnet(c *gin.Context) {
 		WHERE s.id = $1 AND (s.project_id = $2 OR n.shared = true)
 	`, subnetID, projectID).Scan(&id, &name, &networkID, &cidr, &gatewayIP, &ipVersion, &enableDHCP, &dnsNameservers, &createdAt, &updatedAt)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("subnet"))
 		return
 	}
@@ -1122,7 +1121,7 @@ func (svc *Service) DeleteSubnet(c *gin.Context) {
 
 	if err == nil {
 		// Stop DHCP server
-		svc.dhcpManager.StopDHCP(networkID)
+		_ = svc.dhcpManager.StopDHCP(networkID)
 	}
 
 	// Delete from database
@@ -1161,7 +1160,7 @@ func (svc *Service) UpdateSubnet(c *gin.Context) {
 		subnetID, projectID,
 	).Scan(&currentName)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("subnet"))
 		return
 	}

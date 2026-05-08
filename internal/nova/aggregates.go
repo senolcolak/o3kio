@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/cobaltcore-dev/o3k/internal/common"
+	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 )
 
@@ -50,7 +50,7 @@ func (svc *Service) ListAggregates(c *gin.Context) {
 
 		var metadataMap map[string]interface{}
 		if len(metadata) > 0 {
-			json.Unmarshal(metadata, &metadataMap)
+			_ = json.Unmarshal(metadata, &metadataMap)
 		}
 		if metadataMap == nil {
 			metadataMap = make(map[string]interface{})
@@ -141,7 +141,7 @@ func (svc *Service) GetAggregate(c *gin.Context) {
 		WHERE uuid = $1
 	`, aggregateID).Scan(&name, &availabilityZone, &metadata, &hosts, &createdAt, &updatedAt)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("aggregate"))
 		return
 	}
@@ -310,7 +310,7 @@ func (svc *Service) AddHostToAggregate(c *gin.Context, aggregateID string, actio
 		aggregateID,
 	).Scan(&hosts)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("aggregate"))
 		return
 	}
@@ -366,7 +366,7 @@ func (svc *Service) RemoveHostFromAggregate(c *gin.Context, aggregateID string, 
 		aggregateID,
 	).Scan(&hosts)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("aggregate"))
 		return
 	}

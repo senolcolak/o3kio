@@ -4,9 +4,6 @@ import (
 	"context"
 	"strings"
 	"sync"
-
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // MockDB is a test double for DBIF. Use NewMockDB() to create one,
@@ -43,49 +40,70 @@ func (m *MockDB) ExecCalled(prefix string) bool {
 }
 
 // Exec implements DBIF.
-func (m *MockDB) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+func (m *MockDB) Exec(ctx context.Context, sql string, args ...any) (Result, error) {
 	m.mu.Lock()
 	m.execCalls = append(m.execCalls, sql)
 	for prefix, err := range m.execRules {
 		if strings.Contains(sql, prefix) {
 			m.mu.Unlock()
-			return pgconn.CommandTag{}, err
+			return &mockResult{}, err
 		}
 	}
 	m.mu.Unlock()
-	return pgconn.NewCommandTag("OK"), nil
+	return &mockResult{rows: 1}, nil
 }
 
-// QueryRow implements DBIF. Returns a row that always returns pgx.ErrNoRows on Scan.
-func (m *MockDB) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
-	return &mockRow{err: pgx.ErrNoRows}
+// QueryRow implements DBIF. Returns a row that always returns ErrNoRows on Scan.
+func (m *MockDB) QueryRow(ctx context.Context, sql string, args ...any) Row {
+	return &mockRow{err: ErrNoRows}
 }
 
 // Query implements DBIF. Returns an empty result set.
-func (m *MockDB) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+func (m *MockDB) Query(ctx context.Context, sql string, args ...any) (Rows, error) {
 	return &mockRows{}, nil
 }
 
-// BeginTx implements DBIF. Returns nil — tests that need transaction behaviour
-// should stub this separately.
-func (m *MockDB) BeginTx(ctx context.Context, opts pgx.TxOptions) (pgx.Tx, error) {
-	return nil, nil
+// BeginTx implements DBIF. Returns a no-op transaction.
+func (m *MockDB) BeginTx(ctx context.Context, opts TxOptions) (Tx, error) {
+	return &mockTx{db: m}, nil
 }
 
-// mockRow implements pgx.Row.
+// mockResult implements Result.
+type mockResult struct {
+	rows int64
+}
+
+func (r *mockResult) RowsAffected() int64 { return r.rows }
+
+// mockRow implements Row.
 type mockRow struct{ err error }
 
 func (r *mockRow) Scan(dest ...any) error { return r.err }
 
-// mockRows implements pgx.Rows.
+// mockRows implements Rows.
 type mockRows struct{}
 
-func (r *mockRows) Close()                                       {}
-func (r *mockRows) Err() error                                   { return nil }
-func (r *mockRows) CommandTag() pgconn.CommandTag                { return pgconn.CommandTag{} }
-func (r *mockRows) FieldDescriptions() []pgconn.FieldDescription { return nil }
-func (r *mockRows) Next() bool                                   { return false }
-func (r *mockRows) Scan(dest ...any) error                       { return nil }
-func (r *mockRows) Values() ([]any, error)                       { return nil, nil }
-func (r *mockRows) RawValues() [][]byte                          { return nil }
-func (r *mockRows) Conn() *pgx.Conn                              { return nil }
+func (r *mockRows) Next() bool            { return false }
+func (r *mockRows) Scan(dest ...any) error { return nil }
+func (r *mockRows) Close()                {}
+func (r *mockRows) Err() error            { return nil }
+
+// mockTx implements Tx by delegating reads/writes back to the owning MockDB.
+type mockTx struct {
+	db *MockDB
+}
+
+func (t *mockTx) Exec(ctx context.Context, sql string, args ...any) (Result, error) {
+	return t.db.Exec(ctx, sql, args...)
+}
+
+func (t *mockTx) QueryRow(ctx context.Context, sql string, args ...any) Row {
+	return t.db.QueryRow(ctx, sql, args...)
+}
+
+func (t *mockTx) Query(ctx context.Context, sql string, args ...any) (Rows, error) {
+	return t.db.Query(ctx, sql, args...)
+}
+
+func (t *mockTx) Commit(ctx context.Context) error   { return nil }
+func (t *mockTx) Rollback(ctx context.Context) error { return nil }

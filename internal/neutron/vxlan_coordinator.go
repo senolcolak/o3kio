@@ -180,7 +180,7 @@ func (vc *VXLANCoordinator) syncPorts(ctx context.Context) {
 
 		if !nodeActive {
 			// Remote node is down, remove FDB entry
-			vc.vxlanManager.RemoveFDBEntry(networkID, macAddress)
+			_ = vc.vxlanManager.RemoveFDBEntry(networkID, macAddress)
 			continue
 		}
 

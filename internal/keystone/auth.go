@@ -19,7 +19,6 @@ import (
 	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/cobaltcore-dev/o3k/pkg/cache"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -131,7 +130,6 @@ func (s *ScopeField) UnmarshalJSON(data []byte) error {
 	}
 
 	// Otherwise unmarshal as object
-	type scopeAlias ScopeField
 	var temp struct {
 		Project *struct {
 			Name   string `json:"name"`
@@ -226,7 +224,7 @@ func (s *AuthService) AuthenticatePassword(ctx context.Context, req *AuthRequest
 		domainName,
 	).Scan(&domainID)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		return nil, "", common.NewUnauthorizedError("invalid domain")
 	}
 	if err != nil {
@@ -240,7 +238,7 @@ func (s *AuthService) AuthenticatePassword(ctx context.Context, req *AuthRequest
 		username, domainID,
 	).Scan(&user.ID, &user.Name, &user.PasswordHash, &user.Enabled, &user.DomainID)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		return nil, "", common.NewUnauthorizedError("invalid credentials")
 	}
 	if err != nil {
@@ -282,7 +280,7 @@ func (s *AuthService) AuthenticatePassword(ctx context.Context, req *AuthRequest
 		err := s.activeDB().QueryRow(ctx, query, params...).Scan(
 			&proj.ID, &proj.Name, &proj.Description, &proj.Enabled, &proj.DomainID,
 		)
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, "", common.NewUnauthorizedError("project not found")
 		}
 		if err != nil {
@@ -436,7 +434,7 @@ func (s *AuthService) AuthenticateToken(ctx context.Context, req *AuthRequest) (
 		claims.UserID,
 	).Scan(&user.ID, &user.Name, &user.PasswordHash, &user.Enabled, &user.DomainID)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		return nil, "", common.NewUnauthorizedError("user not found")
 	}
 	if err != nil {
@@ -475,7 +473,7 @@ func (s *AuthService) AuthenticateToken(ctx context.Context, req *AuthRequest) (
 		err := s.activeDB().QueryRow(ctx, query, params...).Scan(
 			&proj.ID, &proj.Name, &proj.Description, &proj.Enabled, &proj.DomainID,
 		)
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			return nil, "", common.NewUnauthorizedError("project not found")
 		}
 		if err != nil {
@@ -636,7 +634,7 @@ func (s *AuthService) AuthenticateApplicationCredential(ctx context.Context, req
 		WHERE id = $1
 	`, credID).Scan(&userID, &projectID, &secretHash, &name, &expiresAt, &unrestricted, &legacyAuth, &accessRulesJSON)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		return nil, "", false, common.NewUnauthorizedError("invalid application credential")
 	}
 	if err != nil {
@@ -684,7 +682,7 @@ func (s *AuthService) AuthenticateApplicationCredential(ctx context.Context, req
 		"SELECT id, name, password_hash, enabled, domain_id FROM users WHERE id = $1",
 		userID,
 	).Scan(&user.ID, &user.Name, &user.PasswordHash, &user.Enabled, &user.DomainID)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		return nil, "", false, common.NewUnauthorizedError("user not found for application credential")
 	}
 	if err != nil {
@@ -909,8 +907,10 @@ func (s *AuthService) IsTokenRevoked(tokenString string) bool {
 	// Found in DB — check if already expired
 	if time.Now().After(expiresAt) {
 		// Token expired anyway, clean it up from DB asynchronously
-		go db.Exec(context.Background(),
-			"DELETE FROM revoked_tokens WHERE token_hash = $1", hash)
+		go func() {
+			_, _ = db.Exec(context.Background(),
+				"DELETE FROM revoked_tokens WHERE token_hash = $1", hash)
+		}()
 		return false
 	}
 
@@ -932,7 +932,7 @@ func (s *AuthService) CleanExpiredRevocations() {
 
 	// Also clean expired entries from the database
 	if db := s.activeDB(); db != nil {
-		db.Exec(context.Background(),
+		_, _ = db.Exec(context.Background(),
 			"DELETE FROM revoked_tokens WHERE expires_at < $1", now)
 	}
 }
@@ -1050,7 +1050,7 @@ func (s *AuthService) BuildServiceCatalog(projectID string, cacheInstance *cache
 
 	// Store in cache (24h TTL per config)
 	if cacheInstance != nil {
-		cacheInstance.Set(ctx, "service_catalog:"+projectID, catalog, 24*time.Hour)
+		_ = cacheInstance.Set(ctx, "service_catalog:"+projectID, catalog, 24*time.Hour)
 	}
 
 	return catalog

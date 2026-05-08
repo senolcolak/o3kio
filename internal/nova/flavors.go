@@ -69,7 +69,7 @@ func (svc *Service) CreateFlavor(c *gin.Context) {
 
 	// Invalidate flavors list cache
 	if svc.cache != nil {
-		svc.cache.DeletePattern(ctx, "flavors:*")
+		_ = svc.cache.DeletePattern(ctx, "flavors:*")
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -111,8 +111,8 @@ func (svc *Service) DeleteFlavor(c *gin.Context) {
 
 	// Invalidate cache
 	if svc.cache != nil {
-		svc.cache.Delete(ctx, "flavor:"+flavorID)
-		svc.cache.DeletePattern(ctx, "flavors:*")
+		_ = svc.cache.Delete(ctx, "flavor:"+flavorID)
+		_ = svc.cache.DeletePattern(ctx, "flavors:*")
 	}
 
 	c.Status(http.StatusNoContent)

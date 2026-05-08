@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/cobaltcore-dev/o3k/internal/common"
+	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 )
 
@@ -47,7 +47,7 @@ func (svc *Service) UpdateServer(c *gin.Context) {
 		&currentFlavorID, &currentImageID, &createdAt, &updatedAt,
 	)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("instance"))
 		return
 	}

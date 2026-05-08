@@ -8,7 +8,7 @@ import (
 	"github.com/cobaltcore-dev/o3k/internal/common"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/rs/zerolog/log"
 )
 
@@ -197,7 +197,7 @@ func (svc *Service) DeleteQuotaSet(c *gin.Context) {
 	_, err := svc.activeDB().Exec(c.Request.Context(),
 		"DELETE FROM cinder_quotas WHERE project_id = $1",
 		targetProjectID)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	if err != nil && !errors.Is(err, database.ErrNoRows) {
 		log.Error().Err(err).Str("operation", "delete_quota_set").Msg("failed to reset quotas")
 		common.SendError(c, common.NewInternalServerError("failed to reset quotas"))
 		return

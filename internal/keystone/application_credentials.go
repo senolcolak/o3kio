@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/cobaltcore-dev/o3k/internal/common"
+	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -249,7 +249,7 @@ func (svc *Service) CreateApplicationCredential(c *gin.Context) {
 		if !ok || roleID == "" {
 			continue
 		}
-		svc.activeDB().Exec(ctx, `
+		_, _ = svc.activeDB().Exec(ctx, `
 			INSERT INTO application_credential_roles (application_credential_id, role_id)
 			VALUES ($1, $2)
 		`, credID, roleID)
@@ -322,7 +322,7 @@ func (svc *Service) GetApplicationCredential(c *gin.Context) {
 		WHERE id = $1 AND user_id = $2
 	`, credID, userID).Scan(&id, &userIDVal, &projectID, &name, &description, &expiresAt, &unrestricted, &accessRulesJSON)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("application credential"))
 		return
 	}
@@ -443,7 +443,7 @@ func (svc *Service) GetApplicationCredentialByID(c *gin.Context) {
 		WHERE id = $1
 	`, credID).Scan(&id, &userID, &projectID, &name, &description, &expiresAt, &unrestricted, &accessRulesJSON)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("application credential"))
 		return
 	}

@@ -30,7 +30,10 @@ func TestCinderCreateVolumeTransfer_Contract(t *testing.T) {
 	createVolReq.Header.Set("X-Auth-Token", client.TokenID)
 	createVolReq.Header.Set("Content-Type", "application/json")
 
-	createVolResp, _ := http.DefaultClient.Do(createVolReq)
+	createVolResp, err := http.DefaultClient.Do(createVolReq)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer createVolResp.Body.Close()
 
 	createVolRespBody, _ := io.ReadAll(createVolResp.Body)
@@ -114,7 +117,10 @@ func TestCinderListVolumeTransfers_Contract(t *testing.T) {
 	createVolReq.Header.Set("X-Auth-Token", client.TokenID)
 	createVolReq.Header.Set("Content-Type", "application/json")
 
-	createVolResp, _ := http.DefaultClient.Do(createVolReq)
+	createVolResp, err := http.DefaultClient.Do(createVolReq)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer createVolResp.Body.Close()
 
 	createVolRespBody, _ := io.ReadAll(createVolResp.Body)
@@ -189,7 +195,10 @@ func TestCinderGetVolumeTransfer_Contract(t *testing.T) {
 	createVolReq.Header.Set("X-Auth-Token", client.TokenID)
 	createVolReq.Header.Set("Content-Type", "application/json")
 
-	createVolResp, _ := http.DefaultClient.Do(createVolReq)
+	createVolResp, err := http.DefaultClient.Do(createVolReq)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer createVolResp.Body.Close()
 
 	createVolRespBody, _ := io.ReadAll(createVolResp.Body)
@@ -221,7 +230,10 @@ func TestCinderGetVolumeTransfer_Contract(t *testing.T) {
 	createReq, _ := http.NewRequest("POST", createURL, bytes.NewReader(transferBody))
 	createReq.Header.Set("X-Auth-Token", client.TokenID)
 	createReq.Header.Set("Content-Type", "application/json")
-	createResp, _ := http.DefaultClient.Do(createReq)
+	createResp, err := http.DefaultClient.Do(createReq)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer createResp.Body.Close()
 
 	createBody, _ := io.ReadAll(createResp.Body)
@@ -278,7 +290,10 @@ func TestCinderDeleteVolumeTransfer_Contract(t *testing.T) {
 	createVolReq.Header.Set("X-Auth-Token", client.TokenID)
 	createVolReq.Header.Set("Content-Type", "application/json")
 
-	createVolResp, _ := http.DefaultClient.Do(createVolReq)
+	createVolResp, err := http.DefaultClient.Do(createVolReq)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer createVolResp.Body.Close()
 
 	createVolRespBody, _ := io.ReadAll(createVolResp.Body)
@@ -310,7 +325,10 @@ func TestCinderDeleteVolumeTransfer_Contract(t *testing.T) {
 	createReq, _ := http.NewRequest("POST", createURL, bytes.NewReader(transferBody))
 	createReq.Header.Set("X-Auth-Token", client.TokenID)
 	createReq.Header.Set("Content-Type", "application/json")
-	createResp, _ := http.DefaultClient.Do(createReq)
+	createResp, err := http.DefaultClient.Do(createReq)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer createResp.Body.Close()
 
 	createBody, _ := io.ReadAll(createResp.Body)
@@ -352,7 +370,10 @@ func TestCinderAcceptVolumeTransfer_Contract(t *testing.T) {
 	createVolReq.Header.Set("X-Auth-Token", client.TokenID)
 	createVolReq.Header.Set("Content-Type", "application/json")
 
-	createVolResp, _ := http.DefaultClient.Do(createVolReq)
+	createVolResp, err := http.DefaultClient.Do(createVolReq)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer createVolResp.Body.Close()
 
 	createVolRespBody, _ := io.ReadAll(createVolResp.Body)
@@ -384,7 +405,10 @@ func TestCinderAcceptVolumeTransfer_Contract(t *testing.T) {
 	createReq, _ := http.NewRequest("POST", createURL, bytes.NewReader(transferBody))
 	createReq.Header.Set("X-Auth-Token", client.TokenID)
 	createReq.Header.Set("Content-Type", "application/json")
-	createResp, _ := http.DefaultClient.Do(createReq)
+	createResp, err := http.DefaultClient.Do(createReq)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer createResp.Body.Close()
 
 	createBody, _ := io.ReadAll(createResp.Body)

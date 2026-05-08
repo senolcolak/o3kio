@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/cobaltcore-dev/o3k/internal/database"
-	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 )
 
@@ -67,7 +66,7 @@ func (w *Worker) processOne(ctx context.Context) {
 // subsequent UPDATEs are atomic.  Both rows are locked with FOR UPDATE SKIP
 // LOCKED so concurrent workers never pick the same pair.
 func (w *Worker) claimTask(ctx context.Context) (taskID, agentID, taskType string, payload []byte, timeoutSec, reqVcpu int, reqRam, reqDisk int64, resourceID string, retries int, err error) {
-	tx, err := w.db.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := w.db.BeginTx(ctx, database.TxOptions{})
 	if err != nil {
 		return
 	}
@@ -94,7 +93,7 @@ func (w *Worker) claimTask(ctx context.Context) (taskID, agentID, taskType strin
 
 	err = row.Scan(&taskID, &taskType, &payload, &timeoutSec, &reqVcpu, &reqRam, &reqDisk, &resourceID, &retries)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			err = nil
 		}
 		return
@@ -113,7 +112,7 @@ func (w *Worker) claimTask(ctx context.Context) (taskID, agentID, taskType strin
 
 	err = agentRow.Scan(&agentID)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			err = nil
 			taskID = ""
 		}

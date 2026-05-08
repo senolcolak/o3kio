@@ -13,7 +13,6 @@ import (
 	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 )
 
@@ -44,7 +43,7 @@ func (svc *Service) AttachInterface(c *gin.Context) {
 		instanceID, projectID,
 	).Scan(&libvirtDomainID, &status)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("instance"))
 		return
 	}
@@ -66,7 +65,7 @@ func (svc *Service) AttachInterface(c *gin.Context) {
 			portID, projectID,
 		).Scan(&networkID, &fixedIPsJSON, &macAddress, &deviceID)
 
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			common.SendError(c, common.NewNotFoundError("port"))
 			return
 		}
@@ -106,7 +105,7 @@ func (svc *Service) AttachInterface(c *gin.Context) {
 			networkID,
 		).Scan(&cidr)
 
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			common.SendError(c, common.NewBadRequestError("network has no subnet"))
 			return
 		}
@@ -207,7 +206,7 @@ func (svc *Service) DetachInterface(c *gin.Context) {
 		portID,
 	).Scan(&attachedInstanceID)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("port"))
 		return
 	}
@@ -350,7 +349,7 @@ func allocateNextIP(ctx context.Context, db database.DBIF, networkID, cidr strin
 		networkID,
 	).Scan(&fixedIPsJSON)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		// First allocation: use base+10
 		return base.String(), nil
 	}

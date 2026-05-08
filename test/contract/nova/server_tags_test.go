@@ -127,7 +127,10 @@ func TestNovaAddServerTag_Contract(t *testing.T) {
 	// Verify tag was added
 	listReq, _ := http.NewRequest("GET", client.ServiceURL("servers", server.ID, "tags"), nil)
 	listReq.Header.Set("X-Auth-Token", client.TokenID)
-	listResp, _ := http.DefaultClient.Do(listReq)
+	listResp, err := http.DefaultClient.Do(listReq)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer listResp.Body.Close()
 
 	listRespBody, _ := io.ReadAll(listResp.Body)
@@ -216,7 +219,10 @@ func TestNovaDeleteAllServerTags_Contract(t *testing.T) {
 	// Verify all tags removed
 	listReq, _ := http.NewRequest("GET", client.ServiceURL("servers", server.ID, "tags"), nil)
 	listReq.Header.Set("X-Auth-Token", client.TokenID)
-	listResp, _ := http.DefaultClient.Do(listReq)
+	listResp, err := http.DefaultClient.Do(listReq)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer listResp.Body.Close()
 
 	listRespBody, _ := io.ReadAll(listResp.Body)

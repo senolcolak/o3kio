@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5"
+	"github.com/cobaltcore-dev/o3k/internal/database"
 )
 
 // StageImageData stages image data before import
@@ -22,7 +22,7 @@ func (svc *Service) StageImageData(c *gin.Context) {
 		imageID, projectID,
 	).Scan(&status)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		c.JSON(http.StatusNotFound, gin.H{"message": "Image not found"})
 		return
 	}
@@ -94,7 +94,7 @@ func (svc *Service) ImportImage(c *gin.Context) {
 		imageID, projectID,
 	).Scan(&status)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		c.JSON(http.StatusNotFound, gin.H{"message": "Image not found"})
 		return
 	}

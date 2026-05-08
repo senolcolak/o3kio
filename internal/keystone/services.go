@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/cobaltcore-dev/o3k/internal/common"
+	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 )
 
@@ -124,7 +124,7 @@ func (svc *Service) GetService(c *gin.Context) {
 		WHERE id = $1
 	`, serviceID).Scan(&id, &svcType, &name, &description, &enabled)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("service"))
 		return
 	}
@@ -240,7 +240,7 @@ func (svc *Service) UpdateService(c *gin.Context) {
 	)
 
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			common.SendError(c, common.NewNotFoundError("service"))
 			return
 		}

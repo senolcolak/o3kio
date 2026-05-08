@@ -17,7 +17,6 @@ import (
 	"github.com/cobaltcore-dev/o3k/pkg/storage"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 )
 
@@ -458,7 +457,7 @@ func (svc *Service) GetImage(c *gin.Context) {
 		LIMIT 1
 	`, imageID, projectID).Scan(&id, &name, &status, &visibility, &sizeBytes, &diskFormat, &containerFormat, &minDisk, &minRAM, &checksum, &createdAt, &updatedAt, &imageOwner)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("image"))
 		return
 	}
@@ -524,7 +523,7 @@ func (svc *Service) GetImage(c *gin.Context) {
 
 	// Store in cache (1h TTL per config)
 	if svc.cache != nil {
-		svc.cache.Set(ctx, "image:"+projectID+":"+id, image, 1*time.Hour)
+		_ = svc.cache.Set(ctx, "image:"+projectID+":"+id, image, 1*time.Hour)
 	}
 
 	c.JSON(http.StatusOK, image)
@@ -580,8 +579,8 @@ func (svc *Service) DeleteImage(c *gin.Context) {
 
 	// Invalidate cache
 	if svc.cache != nil {
-		svc.cache.Delete(ctx, "image:"+projectID+":"+imageID)
-		svc.cache.DeletePattern(ctx, "images:*")
+		_ = svc.cache.Delete(ctx, "image:"+projectID+":"+imageID)
+		_ = svc.cache.DeletePattern(ctx, "images:*")
 	}
 
 	c.Status(http.StatusNoContent)
@@ -651,7 +650,7 @@ func (svc *Service) UploadImageData(c *gin.Context) {
 		imageID, projectID,
 	).Scan(&status)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("image"))
 		return
 	}
@@ -662,7 +661,7 @@ func (svc *Service) UploadImageData(c *gin.Context) {
 	}
 
 	// Update status to saving
-	svc.activeDB().Exec(c.Request.Context(),
+	_, _ = svc.activeDB().Exec(c.Request.Context(),
 		"UPDATE images SET status = $1, updated_at = $2 WHERE id = $3",
 		"saving", time.Now(), imageID)
 
@@ -672,7 +671,7 @@ func (svc *Service) UploadImageData(c *gin.Context) {
 	limitedBody := io.LimitReader(io.TeeReader(c.Request.Body, h), maxImageUpload)
 	size, err := svc.imageStore.UploadImage(c.Request.Context(), imageID, limitedBody)
 	if err != nil {
-		svc.activeDB().Exec(c.Request.Context(),
+		_, _ = svc.activeDB().Exec(c.Request.Context(),
 			"UPDATE images SET status = $1 WHERE id = $2",
 			"queued", imageID)
 		log.Error().Err(err).Str("operation", "upload_image").Str("image_id", imageID).Msg("failed to upload image to storage")
@@ -683,7 +682,7 @@ func (svc *Service) UploadImageData(c *gin.Context) {
 	checksum := hex.EncodeToString(h.Sum(nil))
 
 	// Update status to active, set size and checksum
-	svc.activeDB().Exec(c.Request.Context(),
+	_, _ = svc.activeDB().Exec(c.Request.Context(),
 		"UPDATE images SET status = $1, size_bytes = $2, checksum = $3, updated_at = $4 WHERE id = $5",
 		"active", size, checksum, time.Now(), imageID)
 
@@ -703,7 +702,7 @@ func (svc *Service) DownloadImageData(c *gin.Context) {
 		imageID, projectID,
 	).Scan(&status, &sizeBytes)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("image"))
 		return
 	}
@@ -784,7 +783,7 @@ func (svc *Service) CreateImageMember(c *gin.Context) {
 		imageID,
 	).Scan(&ownerID)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("image"))
 		return
 	}
@@ -835,7 +834,7 @@ func (svc *Service) ListImageMembers(c *gin.Context) {
 		imageID,
 	).Scan(&ownerID)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("image"))
 		return
 	}
@@ -913,7 +912,7 @@ func (svc *Service) GetImageMember(c *gin.Context) {
 		imageID,
 	).Scan(&ownerID)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("image"))
 		return
 	}
@@ -937,7 +936,7 @@ func (svc *Service) GetImageMember(c *gin.Context) {
 		WHERE image_id = $1 AND member_id = $2
 	`, imageID, memberID).Scan(&status, &createdAt, &updatedAt)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("member"))
 		return
 	}
@@ -984,7 +983,7 @@ func (svc *Service) UpdateImageMember(c *gin.Context) {
 		imageID,
 	).Scan(&ownerID)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("image"))
 		return
 	}
@@ -1062,7 +1061,7 @@ func (svc *Service) DeleteImageMember(c *gin.Context) {
 		imageID,
 	).Scan(&ownerID)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("image"))
 		return
 	}
@@ -1105,7 +1104,7 @@ func (svc *Service) AddImageTag(c *gin.Context) {
 		imageID,
 	).Scan(&ownerID)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("image"))
 		return
 	}
@@ -1150,7 +1149,7 @@ func (svc *Service) DeleteImageTag(c *gin.Context) {
 		imageID,
 	).Scan(&ownerID)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("image"))
 		return
 	}
@@ -1192,7 +1191,7 @@ func (svc *Service) DeactivateImage(c *gin.Context) {
 		imageID,
 	).Scan(&ownerID)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("image"))
 		return
 	}
@@ -1234,7 +1233,7 @@ func (svc *Service) ReactivateImage(c *gin.Context) {
 		imageID,
 	).Scan(&ownerID)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("image"))
 		return
 	}

@@ -178,7 +178,7 @@ func TestPortForwardingValidation_Contract(t *testing.T) {
 	createOpts["port_forwarding"].(map[string]interface{})["external_port"] = 8080
 
 	// First create should succeed
-	resp, err = client.Post(
+	_, err = client.Post(
 		client.ServiceURL("floatingips", floatingIP.ID, "port_forwardings"),
 		createOpts,
 		nil,

@@ -13,10 +13,10 @@ import (
 	"time"
 
 	"github.com/cobaltcore-dev/o3k/internal/common"
+	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/cobaltcore-dev/o3k/pkg/networking"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 )
 
@@ -58,7 +58,7 @@ func (svc *Service) CreatePort(c *gin.Context) {
 		req.Port.NetworkID, projectID,
 	).Scan(&networkID)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("network"))
 		return
 	}
@@ -357,7 +357,7 @@ func (svc *Service) ListPorts(c *gin.Context) {
 	var ports []gin.H
 	for _, pr := range portRows {
 		var fixedIPs []map[string]interface{}
-		json.Unmarshal(pr.fixedIPsJSON, &fixedIPs)
+		_ = json.Unmarshal(pr.fixedIPsJSON, &fixedIPs)
 
 		var allowedAddrPairs []map[string]interface{}
 		if err := json.Unmarshal(pr.allowedAddrPairJSON, &allowedAddrPairs); err != nil || allowedAddrPairs == nil {
@@ -433,7 +433,7 @@ func (svc *Service) GetPort(c *gin.Context) {
 		WHERE p.id = $1 AND (p.project_id = $2 OR n.shared = true)
 	`, portID, projectID).Scan(&id, &name, &networkID, &deviceID, &deviceOwner, &macAddress, &adminStateUp, &status, &fixedIPsJSON, &allowedAddrPairJSON, &createdAt, &updatedAt)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("port"))
 		return
 	}
@@ -444,7 +444,7 @@ func (svc *Service) GetPort(c *gin.Context) {
 	}
 
 	var fixedIPs []map[string]interface{}
-	json.Unmarshal(fixedIPsJSON, &fixedIPs)
+	_ = json.Unmarshal(fixedIPsJSON, &fixedIPs)
 
 	var allowedAddrPairs []map[string]interface{}
 	if err := json.Unmarshal(allowedAddrPairJSON, &allowedAddrPairs); err != nil || allowedAddrPairs == nil {
@@ -524,13 +524,13 @@ func (svc *Service) DeletePort(c *gin.Context) {
 
 		if macAddress != "" {
 			if mac, err := net.ParseMAC(macAddress); err == nil {
-				svc.sgManager.RemoveSecurityGroupFromPort(portID, mac)
+				_ = svc.sgManager.RemoveSecurityGroupFromPort(portID, mac)
 			}
 		}
 	}
 
 	// Delete TAP device
-	svc.tapManager.DeleteTAPDevice(tapName, true, nsName)
+	_ = svc.tapManager.DeleteTAPDevice(tapName, true, nsName)
 
 	// Remove FDB entry if VXLAN is enabled
 	if svc.vxlanCoordinator != nil {
@@ -634,18 +634,6 @@ func (svc *Service) UpdatePort(c *gin.Context) {
 	svc.GetPort(c)
 }
 
-// allocateIP allocates an IP from a CIDR range (legacy fallback for stub mode)
-func allocateIP(cidr string) string {
-	_, ipNet, err := net.ParseCIDR(cidr)
-	if err != nil {
-		return ""
-	}
-
-	// Start at .10 and increment to find a free one
-	ip := incrementIP(ipNet.IP, 10)
-	return ip.String()
-}
-
 // allocateIPFromSubnet allocates a unique IP from a subnet using a serializable
 // transaction with SELECT FOR UPDATE to prevent TOCTOU races under concurrency.
 func (svc *Service) allocateIPFromSubnet(ctx context.Context, subnetID, cidr string) (string, error) {
@@ -654,13 +642,13 @@ func (svc *Service) allocateIPFromSubnet(ctx context.Context, subnetID, cidr str
 		return "", fmt.Errorf("invalid CIDR: %w", err)
 	}
 
-	tx, err := svc.activeDB().BeginTx(ctx, pgx.TxOptions{
-		IsoLevel: pgx.Serializable,
+	tx, err := svc.activeDB().BeginTx(ctx, database.TxOptions{
+		IsoLevel: "serializable",
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Lock and fetch allocated IPs only for ports that have a fixed IP in this subnet.
 	// Using a JSONB containment text check narrows the FOR UPDATE lock scope so we
@@ -982,7 +970,7 @@ func (svc *Service) GetSecurityGroup(c *gin.Context) {
 		WHERE id = $1 AND project_id = $2
 	`, sgID, projectID).Scan(&id, &name, &description, &createdAt, &updatedAt)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("security group"))
 		return
 	}
@@ -1015,7 +1003,7 @@ func (svc *Service) DeleteSecurityGroup(c *gin.Context) {
 
 	// Delete iptables chain
 	if svc.sgManager != nil {
-		svc.sgManager.DeleteSecurityGroupChain(sgID)
+		_ = svc.sgManager.DeleteSecurityGroupChain(sgID)
 	}
 
 	// Delete from database
@@ -1055,7 +1043,7 @@ func (svc *Service) UpdateSecurityGroup(c *gin.Context) {
 		sgID, projectID,
 	).Scan(&currentName, &currentDesc)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("security group"))
 		return
 	}
@@ -1312,7 +1300,7 @@ func (svc *Service) DeleteSecurityGroupRule(c *gin.Context) {
 			RemoteGroupID:  remoteGroup.String,
 		}
 
-		svc.sgManager.RemoveRule(sgID, rule)
+		_ = svc.sgManager.RemoveRule(sgID, rule)
 	}
 
 	// Delete from database (with ownership check)
@@ -1351,7 +1339,7 @@ func (svc *Service) AllocatePortForInstance(ctx context.Context, networkID, proj
 		networkID, projectID,
 	).Scan(&netID)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		return nil, fmt.Errorf("network %s not found", networkID)
 	}
 	if err != nil {

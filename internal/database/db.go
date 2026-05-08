@@ -61,7 +61,7 @@ func Connect(ctx context.Context, connString string, poolConfig *PoolConfig) err
 		return fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	DB = p
+	DB = NewPgxAdapter(p)
 	pool = p
 	return nil
 }
@@ -77,10 +77,31 @@ func ConnectSimple(ctx context.Context, connString string, maxConns int) error {
 	})
 }
 
-// Close closes the database connection pool
+// ConnectSQLite opens a SQLite database at dbPath and sets DB.
+func ConnectSQLite(ctx context.Context, dbPath string) error {
+	adapter, err := NewSQLiteAdapter(dbPath)
+	if err != nil {
+		return fmt.Errorf("connect sqlite: %w", err)
+	}
+	DB = adapter
+	return nil
+}
+
+// BackendType returns "sqlite" or "postgres" based on the active DB connection.
+func BackendType() string {
+	if _, ok := DB.(*SQLiteAdapter); ok {
+		return "sqlite"
+	}
+	return "postgres"
+}
+
+// Close closes the database connection pool (postgres) or SQLite file.
 func Close() {
 	if pool != nil {
 		pool.Close()
+	}
+	if a, ok := DB.(*SQLiteAdapter); ok {
+		a.Close()
 	}
 }
 

@@ -119,7 +119,10 @@ func TestNovaGetServerGroup_Contract(t *testing.T) {
 	createReq, _ := http.NewRequest("POST", client.Endpoint+"os-server-groups", bytes.NewReader(groupBody))
 	createReq.Header.Set("X-Auth-Token", client.TokenID)
 	createReq.Header.Set("Content-Type", "application/json")
-	createResp, _ := http.DefaultClient.Do(createReq)
+	createResp, err := http.DefaultClient.Do(createReq)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer createResp.Body.Close()
 
 	createBody, _ := io.ReadAll(createResp.Body)
@@ -175,7 +178,10 @@ func TestNovaDeleteServerGroup_Contract(t *testing.T) {
 	createReq, _ := http.NewRequest("POST", client.Endpoint+"os-server-groups", bytes.NewReader(groupBody))
 	createReq.Header.Set("X-Auth-Token", client.TokenID)
 	createReq.Header.Set("Content-Type", "application/json")
-	createResp, _ := http.DefaultClient.Do(createReq)
+	createResp, err := http.DefaultClient.Do(createReq)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer createResp.Body.Close()
 
 	createBody, _ := io.ReadAll(createResp.Body)

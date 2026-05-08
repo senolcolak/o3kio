@@ -129,9 +129,14 @@ logging:
 }
 
 func TestLoadConfigMissingFile(t *testing.T) {
-	_, err := LoadConfig("/nonexistent/config.yaml")
-	if err == nil {
-		t.Error("Expected error for missing config file, got nil")
+	// A missing config file is the zero-config case — LoadConfig returns
+	// an empty Config with no error so the caller can apply bootstrap defaults.
+	cfg, err := LoadConfig("/nonexistent/config.yaml")
+	if err != nil {
+		t.Errorf("Expected nil error for missing config file (zero-config mode), got: %v", err)
+	}
+	if cfg == nil {
+		t.Error("Expected non-nil Config for missing config file")
 	}
 }
 

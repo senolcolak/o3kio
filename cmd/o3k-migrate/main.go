@@ -22,7 +22,7 @@ func main() {
 	// Parse common flags
 	configPath := flag.String("config", "config/o3k.yaml", "Path to configuration file")
 	migrationsPath := flag.String("migrations", "migrations", "Path to migrations directory")
-	flag.CommandLine.Parse(os.Args[2:])
+	_ = flag.CommandLine.Parse(os.Args[2:])
 
 	// Load configuration
 	cfg, err := common.LoadConfig(*configPath)
@@ -92,7 +92,7 @@ func handleUp(dbURL, migrationsPath string) {
 func handleDown(dbURL, migrationsPath string) {
 	fmt.Print("⚠️  Are you sure you want to roll back one migration? (yes/no): ")
 	var response string
-	fmt.Scanln(&response)
+	_, _ = fmt.Scanln(&response)
 	if response != "yes" {
 		fmt.Println("Rollback cancelled")
 		return
@@ -109,7 +109,7 @@ func handleReset(dbURL, migrationsPath string) {
 	fmt.Print("⚠️  WARNING: This will DROP ALL TABLES and re-run all migrations.\n")
 	fmt.Print("Are you absolutely sure? Type 'RESET' to confirm: ")
 	var response string
-	fmt.Scanln(&response)
+	_, _ = fmt.Scanln(&response)
 	if response != "RESET" {
 		fmt.Println("Reset cancelled")
 		return
@@ -136,7 +136,7 @@ func handleGoto(dbURL, migrationsPath string) {
 
 	fmt.Printf("⚠️  Migrating to version %d. Continue? (yes/no): ", targetVersion)
 	var response string
-	fmt.Scanln(&response)
+	_, _ = fmt.Scanln(&response)
 	if response != "yes" {
 		fmt.Println("Migration cancelled")
 		return
@@ -164,7 +164,7 @@ func handleForce(dbURL, migrationsPath string) {
 	fmt.Printf("⚠️  WARNING: Forcing version to %d without running migrations.\n", version)
 	fmt.Print("This should only be used to fix dirty state. Continue? (yes/no): ")
 	var response string
-	fmt.Scanln(&response)
+	_, _ = fmt.Scanln(&response)
 	if response != "yes" {
 		fmt.Println("Force cancelled")
 		return

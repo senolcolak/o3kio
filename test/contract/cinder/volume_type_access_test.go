@@ -31,7 +31,8 @@ func TestCinderVolumeTypeAccessCRUD(t *testing.T) {
 	req, _ := http.NewRequest("POST", url, bytes.NewReader(body))
 	req.Header.Set("X-Auth-Token", client.TokenID)
 	req.Header.Set("Content-Type", "application/json")
-	resp, _ := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
@@ -44,10 +45,11 @@ func TestCinderVolumeTypeAccessCRUD(t *testing.T) {
 
 	// TEST 1: List volume type access (should be empty initially)
 	url = client.ServiceURL("types", typeID, "os-volume-type-access")
-	req, err := http.NewRequest("GET", url, nil)
+	req, err = http.NewRequest("GET", url, nil)
 	require.NoError(t, err)
 	req.Header.Set("X-Auth-Token", client.TokenID)
-	resp, _ = http.DefaultClient.Do(req)
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -63,7 +65,8 @@ func TestCinderVolumeTypeAccessCRUD(t *testing.T) {
 	req, _ = http.NewRequest("POST", url, bytes.NewReader(body))
 	req.Header.Set("X-Auth-Token", client.TokenID)
 	req.Header.Set("Content-Type", "application/json")
-	resp, _ = http.DefaultClient.Do(req)
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusAccepted, resp.StatusCode)
 
@@ -71,7 +74,8 @@ func TestCinderVolumeTypeAccessCRUD(t *testing.T) {
 	url = client.ServiceURL("types", typeID, "os-volume-type-access")
 	req, _ = http.NewRequest("GET", url, nil)
 	req.Header.Set("X-Auth-Token", client.TokenID)
-	resp, _ = http.DefaultClient.Do(req)
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
 	defer resp.Body.Close()
 
 	respBody, _ = io.ReadAll(resp.Body)
@@ -100,7 +104,8 @@ func TestCinderVolumeTypeAccessCRUD(t *testing.T) {
 	req, _ = http.NewRequest("POST", url, bytes.NewReader(body))
 	req.Header.Set("X-Auth-Token", client.TokenID)
 	req.Header.Set("Content-Type", "application/json")
-	resp, _ = http.DefaultClient.Do(req)
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusAccepted, resp.StatusCode)
 
@@ -108,7 +113,8 @@ func TestCinderVolumeTypeAccessCRUD(t *testing.T) {
 	url = client.ServiceURL("types", typeID, "os-volume-type-access")
 	req, _ = http.NewRequest("GET", url, nil)
 	req.Header.Set("X-Auth-Token", client.TokenID)
-	resp, _ = http.DefaultClient.Do(req)
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
 	defer resp.Body.Close()
 
 	respBody, _ = io.ReadAll(resp.Body)
@@ -135,7 +141,10 @@ func getProjectIDFromToken(t *testing.T, client *gophercloud.ServiceClient) stri
 	// Get projects from keystone
 	req, _ := http.NewRequest("GET", "http://localhost:35357/v3/projects", nil)
 	req.Header.Set("X-Auth-Token", client.TokenID)
-	resp, _ := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)

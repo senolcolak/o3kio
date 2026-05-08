@@ -3,19 +3,14 @@ package database
 import (
 	"context"
 	"fmt"
-
-	"github.com/jackc/pgx/v5"
 )
 
 // WithTx executes fn within a database transaction.
 // If fn returns an error, the transaction is rolled back. Otherwise committed.
-func WithTx(ctx context.Context, fn func(tx pgx.Tx) error) error {
-	tx, err := DB.BeginTx(ctx, pgx.TxOptions{})
+func WithTx(ctx context.Context, fn func(tx Tx) error) error {
+	tx, err := DB.BeginTx(ctx, TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
-	}
-	if tx == nil {
-		return fmt.Errorf("begin transaction: got nil tx")
 	}
 	if err := fn(tx); err != nil {
 		if rbErr := tx.Rollback(ctx); rbErr != nil {

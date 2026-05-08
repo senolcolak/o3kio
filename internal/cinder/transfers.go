@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/cobaltcore-dev/o3k/internal/common"
+	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 )
 
@@ -37,7 +37,7 @@ func (svc *Service) CreateVolumeTransfer(c *gin.Context) {
 		req.Transfer.VolumeID, projectID,
 	).Scan(&volumeStatus)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("volume"))
 		return
 	}
@@ -55,7 +55,7 @@ func (svc *Service) CreateVolumeTransfer(c *gin.Context) {
 
 	// Generate auth key
 	authKeyBytes := make([]byte, 16)
-	rand.Read(authKeyBytes)
+	_, _ = rand.Read(authKeyBytes)
 	authKey := hex.EncodeToString(authKeyBytes)
 
 	transferID := uuid.New().String()
@@ -147,7 +147,7 @@ func (svc *Service) GetVolumeTransfer(c *gin.Context) {
 		WHERE id = $1 AND source_project_id = $2 AND accepted = false
 	`, transferID, projectID).Scan(&volumeID, &name, &createdAt)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("transfer"))
 		return
 	}
@@ -217,7 +217,7 @@ func (svc *Service) AcceptVolumeTransfer(c *gin.Context) {
 		WHERE id = $1 AND accepted = false
 	`, transferID).Scan(&volumeID, &name, &storedAuthKey, &sourceProjectID)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("transfer"))
 		return
 	}
@@ -234,7 +234,7 @@ func (svc *Service) AcceptVolumeTransfer(c *gin.Context) {
 	}
 
 	// Transfer volume ownership atomically
-	tx, err := svc.activeDB().BeginTx(c.Request.Context(), pgx.TxOptions{})
+	tx, err := svc.activeDB().BeginTx(c.Request.Context(), database.TxOptions{})
 	if err != nil {
 		log.Error().Err(err).Str("operation", "accept_transfer").Msg("failed to begin transaction")
 		common.SendError(c, common.NewInternalServerError("failed to accept transfer"))

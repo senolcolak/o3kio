@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"github.com/cobaltcore-dev/o3k/internal/common"
+	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/cobaltcore-dev/o3k/pkg/hypervisor"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 )
 
@@ -50,7 +50,7 @@ func (svc *Service) AttachVolume(c *gin.Context) {
 		instanceID, projectID,
 	).Scan(&libvirtDomainID)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("instance"))
 		return
 	}
@@ -184,7 +184,7 @@ func (svc *Service) DetachVolume(c *gin.Context) {
 		instanceID, projectID,
 	).Scan(&libvirtDomainID)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("instance"))
 		return
 	}
@@ -196,7 +196,7 @@ func (svc *Service) DetachVolume(c *gin.Context) {
 		volumeID, instanceID,
 	).Scan(&attachmentID, &device)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("volume attachment"))
 		return
 	}

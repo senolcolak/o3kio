@@ -105,7 +105,7 @@ func (svc *Service) CreateMetadefNamespace(c *gin.Context) {
 				rtName, _ := assocMap["name"].(string)
 				rtPrefix, _ := assocMap["prefix"].(string)
 
-				svc.activeDB().Exec(c.Request.Context(), `
+				_, _ = svc.activeDB().Exec(c.Request.Context(), `
 					INSERT INTO metadef_resource_types (namespace, name, prefix, created_at)
 					VALUES ($1, $2, $3, $4)
 				`, namespace, rtName, rtPrefix, time.Now())
@@ -183,7 +183,9 @@ func (svc *Service) GetMetadefNamespace(c *gin.Context) {
 		for rows.Next() {
 			var name string
 			var prefix *string
-			rows.Scan(&name, &prefix)
+			if err := rows.Scan(&name, &prefix); err != nil {
+				continue
+			}
 
 			rt := map[string]interface{}{
 				"name": name,

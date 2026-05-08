@@ -8,7 +8,7 @@ import (
 	"github.com/cobaltcore-dev/o3k/internal/common"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/rs/zerolog/log"
 )
 
@@ -129,7 +129,7 @@ func (svc *Service) GetQosSpec(c *gin.Context) {
 		WHERE id = $1 AND project_id = $2
 	`, qosID, projectID).Scan(&name, &consumer, &specs, &createdAt)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("QoS spec"))
 		return
 	}
@@ -170,7 +170,7 @@ func (svc *Service) UpdateQosSpec(c *gin.Context) {
 		qosID, projectID,
 	).Scan(&currentSpecs)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("QoS spec"))
 		return
 	}

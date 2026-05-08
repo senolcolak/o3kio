@@ -11,8 +11,6 @@ import (
 
 	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func newFakeGinContext(params map[string]string) *gin.Context {
@@ -158,12 +156,12 @@ type deleteImageQueryRowDB struct {
 	protected      bool
 }
 
-func (d *deleteImageQueryRowDB) QueryRow(_ context.Context, sql string, args ...any) pgx.Row {
+func (d *deleteImageQueryRowDB) QueryRow(_ context.Context, sql string, args ...any) database.Row {
 	if strings.Contains(sql, "FROM images") {
 		nullStr := sql_NullString(d.ownerProjectID)
 		return &scanRow{values: []any{nullStr, d.protected}}
 	}
-	return &scanRow{err: pgx.ErrNoRows}
+	return &scanRow{err: database.ErrNoRows}
 }
 
 // sql_NullString is a local helper to avoid importing database/sql in test helper.
@@ -207,13 +205,13 @@ func (r *scanRow) Scan(dest ...any) error {
 var _ database.DBIF = (*deleteImageQueryRowDB)(nil)
 
 // Exec, Query, BeginTx delegate to embedded MockDB.
-func (d *deleteImageQueryRowDB) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+func (d *deleteImageQueryRowDB) Exec(ctx context.Context, sql string, args ...any) (database.Result, error) {
 	return d.MockDB.Exec(ctx, sql, args...)
 }
-func (d *deleteImageQueryRowDB) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+func (d *deleteImageQueryRowDB) Query(ctx context.Context, sql string, args ...any) (database.Rows, error) {
 	return d.MockDB.Query(ctx, sql, args...)
 }
-func (d *deleteImageQueryRowDB) BeginTx(ctx context.Context, opts pgx.TxOptions) (pgx.Tx, error) {
+func (d *deleteImageQueryRowDB) BeginTx(ctx context.Context, opts database.TxOptions) (database.Tx, error) {
 	return d.MockDB.BeginTx(ctx, opts)
 }
 

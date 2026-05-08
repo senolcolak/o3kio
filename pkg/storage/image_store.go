@@ -68,7 +68,7 @@ func NewImageStore(mode, cephPool, cephConf, s3Bucket, s3Region, s3Endpoint stri
 
 	// Initialize S3 client if needed
 	if mode == "s3" || containsMode(mode, "s3") {
-		store.initS3Client()
+		_ = store.initS3Client()
 	}
 
 	return store
@@ -177,7 +177,7 @@ func (s *ImageStore) uploadImageStub(imageID string, reader io.Reader) (int64, e
 
 // uploadImageLocal uploads image to local storage
 func (s *ImageStore) uploadImageLocal(ctx context.Context, imageID string, reader io.Reader) (int64, error) {
-	ctx, cancel := context.WithTimeout(ctx, s.timeout)
+	_, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 
 	imagePath := filepath.Join(s.localPath, "image-"+imageID+".raw")
@@ -201,7 +201,7 @@ func (s *ImageStore) uploadImageLocal(ctx context.Context, imageID string, reade
 
 // uploadImageRBD uploads image to RBD
 func (s *ImageStore) uploadImageRBD(ctx context.Context, imageID string, reader io.Reader) (int64, error) {
-	ctx, cancel := context.WithTimeout(ctx, s.timeout)
+	_, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 
 	imageName := "image-" + imageID
@@ -327,7 +327,7 @@ func (s *ImageStore) downloadImageStub(imageID string, writer io.Writer) error {
 
 // downloadImageLocal downloads from local storage
 func (s *ImageStore) downloadImageLocal(ctx context.Context, imageID string, writer io.Writer) error {
-	ctx, cancel := context.WithTimeout(ctx, s.timeout)
+	_, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 
 	imagePath := filepath.Join(s.localPath, "image-"+imageID+".raw")
@@ -344,7 +344,7 @@ func (s *ImageStore) downloadImageLocal(ctx context.Context, imageID string, wri
 
 // downloadImageRBD downloads from RBD
 func (s *ImageStore) downloadImageRBD(ctx context.Context, imageID string, writer io.Writer) error {
-	ctx, cancel := context.WithTimeout(ctx, s.timeout)
+	ctx, cancel := context.WithTimeout(ctx, s.timeout) //nolint:ineffassign
 	defer cancel()
 
 	imageName := "image-" + imageID
@@ -444,7 +444,7 @@ func (s *ImageStore) deleteImageLocal(ctx context.Context, imageID string) error
 
 // deleteImageRBD deletes from RBD
 func (s *ImageStore) deleteImageRBD(ctx context.Context, imageID string) error {
-	ctx, cancel := context.WithTimeout(ctx, s.timeout)
+	ctx, cancel := context.WithTimeout(ctx, s.timeout) //nolint:ineffassign
 	defer cancel()
 
 	imageName := "image-" + imageID
@@ -527,7 +527,7 @@ func (s *ImageStore) imageExistsLocal(imageID string) (bool, error) {
 
 // imageExistsRBD checks if image exists in RBD
 func (s *ImageStore) imageExistsRBD(ctx context.Context, imageID string) (bool, error) {
-	ctx, cancel := context.WithTimeout(ctx, s.timeout)
+	ctx, cancel := context.WithTimeout(ctx, s.timeout) //nolint:ineffassign
 	defer cancel()
 
 	imageName := "image-" + imageID

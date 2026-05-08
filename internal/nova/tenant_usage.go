@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/cobaltcore-dev/o3k/internal/common"
+	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 )
 
@@ -35,7 +35,6 @@ func (svc *Service) buildServerUsages(ctx context.Context, projectID, startParam
 		if t, err := time.Parse("2006-01-02T15:04:05.000000", stopParam); err == nil {
 			query += fmt.Sprintf(" AND i.created_at <= $%d", argIdx)
 			args = append(args, t)
-			argIdx++
 		}
 	}
 
@@ -98,7 +97,7 @@ func (svc *Service) ListTenantUsage(c *gin.Context) {
 	stopParam := c.Query("end")
 
 	var (
-		rows pgx.Rows
+		rows database.Rows
 		err  error
 	)
 

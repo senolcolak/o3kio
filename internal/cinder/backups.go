@@ -9,7 +9,7 @@ import (
 	"github.com/cobaltcore-dev/o3k/internal/common"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/rs/zerolog/log"
 )
 
@@ -102,7 +102,7 @@ func (svc *Service) CreateBackup(c *gin.Context) {
 		req.Backup.VolumeID, projectID,
 	).Scan(&volumeSize)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("volume"))
 		return
 	}
@@ -161,7 +161,7 @@ func (svc *Service) GetBackup(c *gin.Context) {
 		WHERE id = $1 AND project_id = $2
 	`, backupID, projectID).Scan(&volumeID, &name, &description, &status, &sizeGB, &createdAt, &updatedAt)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("backup"))
 		return
 	}
@@ -234,17 +234,14 @@ func (svc *Service) RestoreBackup(c *gin.Context) {
 	}
 
 	// Get backup details
-	var (
-		originalVolumeID string
-		sizeGB           int
-	)
+	var sizeGB int
 
 	err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT volume_id, size_gb FROM volume_backups WHERE id = $1 AND project_id = $2",
 		backupID, projectID,
-	).Scan(&originalVolumeID, &sizeGB)
+	).Scan(new(string), &sizeGB)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("backup"))
 		return
 	}
@@ -255,7 +252,7 @@ func (svc *Service) RestoreBackup(c *gin.Context) {
 	}
 
 	// If volume_id specified, restore to existing volume
-	restoredVolumeID := originalVolumeID
+	var restoredVolumeID string
 	if requestedVolumeID != nil {
 		restoredVolumeID = *requestedVolumeID
 

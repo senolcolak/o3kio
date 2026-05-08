@@ -13,7 +13,6 @@ import (
 	"github.com/cobaltcore-dev/o3k/pkg/cache"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 )
 
@@ -196,7 +195,7 @@ func (svc *Service) AuthenticateToken(c *gin.Context) {
 	var req AuthRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		// Log parse error with request body
-		c.Error(fmt.Errorf("auth parse failed: %v, body: %s", err, string(bodyBytes)))
+		_ = c.Error(fmt.Errorf("auth parse failed: %v, body: %s", err, string(bodyBytes)))
 		common.SendError(c, common.NewBadRequestError("invalid request body: "+err.Error()))
 		return
 	}
@@ -445,7 +444,7 @@ func (svc *Service) ListUsers(c *gin.Context) {
 	requestingUserID := c.GetString("user_id")
 
 	ctx := c.Request.Context()
-	var rows pgx.Rows
+	var rows database.Rows
 	var err error
 
 	if isAdmin == true {
@@ -550,7 +549,7 @@ func (svc *Service) ListProjects(c *gin.Context) {
 	userID := c.GetString("user_id")
 	ctx := c.Request.Context()
 
-	var rows pgx.Rows
+	var rows database.Rows
 	var err error
 
 	if isAdmin {
@@ -1152,7 +1151,6 @@ func (svc *Service) ListRoleAssignments(c *gin.Context) {
 	if roleID != "" {
 		query += fmt.Sprintf(" AND ra.role_id = $%d", argIdx)
 		args = append(args, roleID)
-		argIdx++
 	}
 
 	rows, err := svc.activeDB().Query(c.Request.Context(), query, args...)
@@ -1365,7 +1363,6 @@ func (svc *Service) UpdateUser(c *gin.Context) {
 		}
 		updates = append(updates, "password_hash = $"+fmt.Sprint(argIndex))
 		args = append(args, string(hashedBytes))
-		argIndex++
 	}
 
 	if len(updates) == 0 {

@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -24,6 +26,7 @@ import (
 	"github.com/cobaltcore-dev/o3k/internal/nova"
 	"github.com/cobaltcore-dev/o3k/internal/placement"
 	"github.com/cobaltcore-dev/o3k/internal/scheduler"
+	"github.com/cobaltcore-dev/o3k/internal/server"
 	"github.com/cobaltcore-dev/o3k/internal/tunnel"
 	"github.com/cobaltcore-dev/o3k/pkg/cache"
 	"github.com/cobaltcore-dev/o3k/pkg/networking"
@@ -33,17 +36,10 @@ import (
 // isSubcommand reports whether s is a recognised o3k subcommand.
 func isSubcommand(s string) bool {
 	switch s {
-	case "server", "agent", "token":
+	case "server", "agent", "token", "migrate-datastore":
 		return true
 	}
 	return false
-}
-
-func schemeFromRequest(c *gin.Context) string {
-	if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
-		return "https"
-	}
-	return "http"
 }
 
 func main() {
@@ -55,6 +51,8 @@ func main() {
 			runAgent(os.Args[2:])
 		case "token":
 			runTokenCmd(os.Args[2:])
+		case "migrate-datastore":
+			runMigrateDatastore(os.Args[2:])
 		}
 		return
 	}
@@ -69,10 +67,51 @@ func runServer(args []string) {
 	migrationsPath := fs.String("migrations", "migrations", "Path to migrations directory")
 	_ = fs.Parse(args)
 
-	// Load configuration
+	// Load configuration (file not found = zero-config mode, returns empty Config).
 	cfg, err := common.LoadConfig(*configPath)
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
+	}
+
+	// Zero-config mode: if no database URL or datastore is configured, bootstrap
+	// with embedded SQLite and auto-generate secrets.
+	var bootstrapResult *server.BootstrapResult
+	datastore := cfg.Database.Datastore
+	if datastore == "" {
+		datastore = cfg.Database.URL
+	}
+	if datastore == "" {
+		var bsErr error
+		bootstrapResult, bsErr = server.Bootstrap()
+		if bsErr != nil {
+			log.Fatalf("Bootstrap failed: %v", bsErr)
+		}
+		datastore = "sqlite://" + bootstrapResult.DBPath
+
+		// Use the bootstrap-generated JWT secret when config has none.
+		if cfg.Keystone.JWTSecret == "" {
+			cfg.Keystone.JWTSecret = bootstrapResult.JWTSecret
+		}
+
+		fmt.Println("═══════════════════════════════════════════")
+		fmt.Println("  O3K — OpenStack in a single binary")
+		fmt.Println("═══════════════════════════════════════════")
+		fmt.Printf("  Data:     %s\n", bootstrapResult.DataDir)
+		fmt.Printf("  Database: SQLite (embedded)\n")
+		fmt.Printf("  API:      http://localhost:35357/v3\n")
+		fmt.Printf("  User:     admin\n")
+		fmt.Printf("  Password: %s\n", bootstrapResult.AdminPassword)
+		fmt.Println("───────────────────────────────────────────")
+		fmt.Printf("  Join agents: o3k agent --server http://<this-ip>:6443 --token %s\n", bootstrapResult.AgentToken)
+		fmt.Println("═══════════════════════════════════════════")
+	}
+
+	// Validate JWT secret now that bootstrap may have set it.
+	if cfg.Keystone.JWTSecret == "" || cfg.Keystone.JWTSecret == "change-me-in-production" {
+		env := os.Getenv("O3K_ENV")
+		if env != "development" && env != "test" {
+			log.Fatalf("FATAL: JWT secret is not set. Set O3K_JWT_SECRET or use O3K_ENV=development for dev mode.")
+		}
 	}
 
 	// Initialize structured logging
@@ -110,17 +149,50 @@ func runServer(args []string) {
 		poolConfig.HealthCheckPeriod = 1 * time.Minute
 	}
 
-	if err := database.Connect(ctx, cfg.Database.URL, poolConfig); err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
+	// Determine datastore: explicit Datastore field takes priority over URL.
+	// (Already set to the bootstrap SQLite path when running in zero-config mode.)
+	if datastore == "" {
+		datastore = cfg.Database.Datastore
+		if datastore == "" {
+			datastore = cfg.Database.URL
+		}
+	}
+
+	if strings.HasPrefix(datastore, "sqlite://") || strings.HasPrefix(datastore, "sqlite:") {
+		dbPath := strings.TrimPrefix(strings.TrimPrefix(datastore, "sqlite://"), "sqlite:")
+		if dbPath == "" {
+			dbPath = "/var/lib/o3k/db/state.db"
+		}
+		if err := os.MkdirAll(filepath.Dir(dbPath), 0750); err != nil {
+			log.Fatalf("Failed to create database directory: %v", err)
+		}
+		if err := database.ConnectSQLite(ctx, dbPath); err != nil {
+			log.Fatalf("Failed to connect to SQLite: %v", err)
+		}
+		log.Printf("Database: SQLite at %s", dbPath)
+	} else {
+		if err := database.Connect(ctx, datastore, poolConfig); err != nil {
+			log.Fatalf("Failed to connect to database: %v", err)
+		}
+		log.Printf("Database: PostgreSQL (pool: max=%d, min=%d)", poolConfig.MaxConns, poolConfig.MinConns)
 	}
 	defer database.Close()
 
-	log.Printf("Database connection established (pool: max=%d, min=%d)", poolConfig.MaxConns, poolConfig.MinConns)
+	// Run migrations (PostgreSQL only — SQLite manages its own schema)
+	if database.BackendType() == "postgres" {
+		log.Println("Running database migrations...")
+		if err := database.MigrateUp(datastore, *migrationsPath); err != nil {
+			log.Fatalf("Failed to run migrations: %v", err)
+		}
+	} else {
+		log.Println("SQLite mode: skipping PostgreSQL migrations")
+	}
 
-	// Run migrations
-	log.Println("Running database migrations...")
-	if err := database.MigrateUp(cfg.Database.URL, *migrationsPath); err != nil {
-		log.Fatalf("Failed to run migrations: %v", err)
+	// Seed defaults when running in zero-config (bootstrap) mode.
+	if bootstrapResult != nil {
+		if err := server.SeedDefaults(ctx, database.DB, bootstrapResult.AdminPassword); err != nil {
+			log.Printf("WARNING: seed defaults: %v", err)
+		}
 	}
 
 	// Start TunnelHub gRPC server if configured
@@ -372,18 +444,99 @@ func runServer(args []string) {
 
 func runAgent(args []string) {
 	fs := flag.NewFlagSet("agent", flag.ExitOnError)
-	serverAddr := fs.String("server", "", "o3k server address (required)")
-	tokenFile := fs.String("token-file", "", "path to join token file")
-	nodeIDFile := fs.String("node-id-file", "/var/lib/o3k/agent/node-id", "path to persist node UUID")
+	serverAddr := fs.String("server", "", "o3k server address (host:port, required)")
+	token := fs.String("token", "", "join token (from server's agent-token file)")
+	tokenFile := fs.String("token-file", "", "path to file containing join token")
+	nodeIDFile := fs.String("node-id-file", "", "path to persist node UUID (default: {data-dir}/agent/node-id)")
+	mode := fs.String("mode", "stub", "compute mode: stub or real")
 	_ = fs.Parse(args)
 
 	if *serverAddr == "" {
-		fmt.Fprintln(os.Stderr, "ERROR: --server is required for agent mode")
+		fmt.Fprintln(os.Stderr, "ERROR: --server is required")
+		fmt.Fprintln(os.Stderr, "Usage: o3k agent --server <host:port> --token <join-token>")
 		os.Exit(1)
 	}
-	fmt.Printf("o3k agent starting — connecting to %s (node-id-file: %s, token-file: %s)\n",
-		*serverAddr, *nodeIDFile, *tokenFile)
-	select {}
+
+	// Resolve token.
+	joinToken := *token
+	if joinToken == "" && *tokenFile != "" {
+		data, err := os.ReadFile(*tokenFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: cannot read token file: %v\n", err)
+			os.Exit(1)
+		}
+		joinToken = strings.TrimSpace(string(data))
+	}
+	if joinToken == "" {
+		fmt.Fprintln(os.Stderr, "ERROR: --token or --token-file is required")
+		os.Exit(1)
+	}
+
+	// Resolve node ID (generated once, then persisted).
+	dataDir := server.DataDir()
+	agentDir := filepath.Join(dataDir, "agent")
+	if err := os.MkdirAll(agentDir, 0750); err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: cannot create agent dir: %v\n", err)
+		os.Exit(1)
+	}
+	nodeIDPath := *nodeIDFile
+	if nodeIDPath == "" {
+		nodeIDPath = filepath.Join(agentDir, "node-id")
+	}
+	nodeID := loadOrGenerateNodeID(nodeIDPath)
+
+	// The hub validates via VerifyTokenHash(secret, nodeID, hash), so we must
+	// send GenerateTokenHash(joinToken, nodeID) as the tokenHash.
+	tokenHash := tunnel.GenerateTokenHash(joinToken, nodeID)
+
+	fmt.Println("═══════════════════════════════════════════")
+	fmt.Println("  O3K Agent")
+	fmt.Println("═══════════════════════════════════════════")
+	fmt.Printf("  Server:  %s\n", *serverAddr)
+	fmt.Printf("  Node ID: %s\n", nodeID)
+	fmt.Printf("  Mode:    %s\n", *mode)
+	fmt.Println("═══════════════════════════════════════════")
+
+	client := tunnel.NewAgentClientWithExecutor(*serverAddr, nodeID, tokenHash, *mode)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		fmt.Println("\nShutting down agent...")
+		cancel()
+	}()
+
+	if err := client.Connect(ctx); err != nil && ctx.Err() == nil {
+		fmt.Fprintf(os.Stderr, "Agent connection failed: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func loadOrGenerateNodeID(path string) string {
+	data, err := os.ReadFile(path)
+	if err == nil && len(data) > 0 {
+		return strings.TrimSpace(string(data))
+	}
+	id := uuid()
+	_ = os.WriteFile(path, []byte(id+"\n"), 0600)
+	return id
+}
+
+// uuid generates a new random UUID v4 string using crypto/rand.
+func uuid() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback: hex-encode a timestamp + random bytes via crypto/rand is
+		// already imported; if it fails we have bigger problems.
+		panic(fmt.Sprintf("uuid: crypto/rand unavailable: %v", err))
+	}
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant bits
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
 func runTokenCmd(args []string) {

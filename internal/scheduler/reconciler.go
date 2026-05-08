@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/cobaltcore-dev/o3k/internal/database"
-	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 )
 
@@ -47,7 +46,7 @@ func (r *Reconciler) Run(ctx context.Context) {
 }
 
 func (r *Reconciler) reconcileOnce(ctx context.Context) {
-	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := r.db.BeginTx(ctx, database.TxOptions{})
 	if err != nil {
 		return
 	}

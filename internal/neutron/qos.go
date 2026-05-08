@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/cobaltcore-dev/o3k/internal/common"
+	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 )
 
@@ -141,7 +141,7 @@ func (svc *Service) GetQoSPolicy(c *gin.Context) {
 		WHERE id = $1 AND (project_id = $2 OR shared = true)
 	`, policyID, projectID).Scan(&projID, &name, &description, &shared, &createdAt, &updatedAt)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("policy"))
 		return
 	}
@@ -421,7 +421,7 @@ func (svc *Service) GetBandwidthLimitRule(c *gin.Context) {
 		WHERE id = $1 AND qos_policy_id = $2
 	`, ruleID, policyID).Scan(&maxKbps, &maxBurstKbps, &direction, &createdAt, &updatedAt)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("rule"))
 		return
 	}

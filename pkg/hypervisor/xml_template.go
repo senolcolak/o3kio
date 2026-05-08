@@ -233,8 +233,10 @@ func GenerateCloudInitISO(uuid string, config *CloudInitConfig) (string, error) 
 		userDataPath,
 	)
 
-	output, err := cmd.CombinedOutput()
-	if err != nil {
+	var output []byte
+	var err2 error
+	_, err2 = cmd.CombinedOutput()
+	if err2 != nil {
 		// Try mkisofs as fallback (older systems)
 		cmd = exec.Command("mkisofs",
 			"-output", isoPath,
@@ -244,9 +246,9 @@ func GenerateCloudInitISO(uuid string, config *CloudInitConfig) (string, error) 
 			metaDataPath,
 			userDataPath,
 		)
-		output, err = cmd.CombinedOutput()
-		if err != nil {
-			return "", fmt.Errorf("failed to create ISO (genisoimage/mkisofs not available): %w, output: %s", err, output)
+		output, err2 = cmd.CombinedOutput()
+		if err2 != nil {
+			return "", fmt.Errorf("failed to create ISO (genisoimage/mkisofs not available): %w, output: %s", err2, output)
 		}
 	}
 
@@ -307,10 +309,7 @@ func GenerateDiskXML(spec DiskSpec) string {
 	var sb strings.Builder
 
 	// Extract device letter from path (e.g., "/dev/vdb" -> "vdb")
-	device := spec.Device
-	if strings.HasPrefix(device, "/dev/") {
-		device = strings.TrimPrefix(device, "/dev/")
-	}
+	device := strings.TrimPrefix(spec.Device, "/dev/")
 
 	if spec.Type == "network" && spec.Protocol == "rbd" {
 		// RBD network disk

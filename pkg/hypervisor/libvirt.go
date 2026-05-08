@@ -8,6 +8,7 @@ import (
 	"time"
 
 	libvirt "github.com/digitalocean/go-libvirt"
+	"github.com/digitalocean/go-libvirt/socket/dialers"
 	"github.com/google/uuid"
 )
 
@@ -72,7 +73,7 @@ func (m *VMManager) connectLibvirt() error {
 		return fmt.Errorf("failed to dial libvirt socket: %w", err)
 	}
 
-	l := libvirt.New(conn)
+	l := libvirt.NewWithDialer(dialers.NewAlreadyConnected(conn))
 	if err := l.Connect(); err != nil {
 		_ = conn.Close()
 		return fmt.Errorf("failed to connect to libvirt: %w", err)

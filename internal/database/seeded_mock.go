@@ -4,8 +4,6 @@ import (
 	"context"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -34,7 +32,7 @@ func NewSeededMockDB() *SeededMockDB {
 
 // QueryRow overrides MockDB.QueryRow to return seeded rows for the three auth
 // queries Keystone runs during token issuance. Anything else returns ErrNoRows.
-func (s *SeededMockDB) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+func (s *SeededMockDB) QueryRow(ctx context.Context, sql string, args ...any) Row {
 	switch {
 	// Domain lookup: SELECT id FROM domains WHERE name = $1
 	case strings.Contains(sql, "FROM domains") && strings.Contains(sql, "WHERE name"):
@@ -63,19 +61,19 @@ func (s *SeededMockDB) QueryRow(ctx context.Context, sql string, args ...any) pg
 		}}
 	}
 
-	return &mockRow{err: pgx.ErrNoRows}
+	return &mockRow{err: ErrNoRows}
 }
 
 // Query overrides MockDB.Query to return role names for role_assignments queries
 // and empty rows for everything else (triggering hardcoded catalog fallback).
-func (s *SeededMockDB) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+func (s *SeededMockDB) Query(ctx context.Context, sql string, args ...any) (Rows, error) {
 	if strings.Contains(sql, "role_assignments") || strings.Contains(sql, "FROM roles") {
 		return &seededRoles{names: []string{"admin", "member"}, idx: -1}, nil
 	}
 	return &mockRows{}, nil
 }
 
-// seededRow implements pgx.Row, filling Scan destinations from a pre-set value
+// seededRow implements Row, filling Scan destinations from a pre-set value
 // slice in declaration order. Supports *string, *bool, and *int destinations.
 type seededRow struct {
 	values []any
@@ -105,29 +103,20 @@ func (r *seededRow) Scan(dest ...any) error {
 	return nil
 }
 
-// seededRoles implements pgx.Rows and iterates over a fixed list of role name
+// seededRoles implements Rows and iterates over a fixed list of role name
 // strings, each yielded by a single-string Scan call.
 type seededRoles struct {
 	names []string
 	idx   int
 }
 
-func (r *seededRoles) Close()                                       {}
-func (r *seededRoles) Err() error                                   { return nil }
-func (r *seededRoles) CommandTag() pgconn.CommandTag                { return pgconn.CommandTag{} }
-func (r *seededRoles) FieldDescriptions() []pgconn.FieldDescription { return nil }
-func (r *seededRoles) Values() ([]any, error)                       { return nil, nil }
-func (r *seededRoles) RawValues() [][]byte                          { return nil }
-func (r *seededRoles) Conn() *pgx.Conn                              { return nil }
-
-func (r *seededRoles) Next() bool {
-	r.idx++
-	return r.idx < len(r.names)
-}
+func (r *seededRoles) Next() bool { r.idx++; return r.idx < len(r.names) }
+func (r *seededRoles) Close()     {}
+func (r *seededRoles) Err() error { return nil }
 
 func (r *seededRoles) Scan(dest ...any) error {
 	if r.idx < 0 || r.idx >= len(r.names) {
-		return pgx.ErrNoRows
+		return ErrNoRows
 	}
 	if len(dest) > 0 {
 		if dst, ok := dest[0].(*string); ok {

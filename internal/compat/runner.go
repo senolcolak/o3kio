@@ -101,7 +101,7 @@ func StartEmbeddedServer(ctx context.Context) (*EmbeddedServer, error) {
 		Recorder: rec,
 		cleanup:  cleanup,
 	}
-	go es.Server.Serve(listener)
+	go func() { _ = es.Server.Serve(listener) }()
 	return es, nil
 }
 
@@ -112,7 +112,7 @@ func (e *EmbeddedServer) Addr() string {
 
 // Shutdown stops the embedded server.
 func (e *EmbeddedServer) Shutdown(ctx context.Context) {
-	e.Server.Shutdown(ctx)
+	_ = e.Server.Shutdown(ctx)
 	if e.cleanup != nil {
 		e.cleanup()
 	}

@@ -17,7 +17,6 @@ import (
 	"github.com/cobaltcore-dev/o3k/pkg/storage"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 )
 
@@ -262,7 +261,7 @@ func (svc *Service) CreateVolume(c *gin.Context) {
 
 	if err != nil {
 		// Rollback: delete from Ceph
-		svc.cephClient.DeleteVolume(c.Request.Context(), volumeID)
+		_ = svc.cephClient.DeleteVolume(c.Request.Context(), volumeID)
 		log.Error().Err(err).Str("operation", "create_volume_db").Msg("failed to insert volume into database")
 		common.SendError(c, common.NewInternalServerError("failed to create volume"))
 		return
@@ -279,7 +278,7 @@ func (svc *Service) CreateVolume(c *gin.Context) {
 		}
 		ctx, cancel := context.WithTimeout(svc.ctx, 5*time.Second)
 		defer cancel()
-		svc.activeDB().Exec(ctx,
+		_, _ = svc.activeDB().Exec(ctx,
 			"UPDATE volumes SET status = $1, updated_at = $2 WHERE id = $3",
 			"available", time.Now(), volumeID)
 	}()
@@ -669,7 +668,7 @@ func (svc *Service) GetVolume(c *gin.Context) {
 		WHERE project_id = $2 AND ((id::text = $1) OR (name = $1))
 	`, volumeID, projectID).Scan(&id, &name, &size, &status, &bootable, &attachedTo, &createdAt, &updatedAt, &volumeType, &availabilityZone, &encrypted, &description, &userID)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("volume"))
 		return
 	}
@@ -751,7 +750,7 @@ func (svc *Service) DeleteVolume(c *gin.Context) {
 		volumeID, projectID,
 	).Scan(&actualVolumeID, &attachedTo, &volumeUserID)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("volume"))
 		return
 	}
@@ -820,7 +819,7 @@ func (svc *Service) VolumeAction(c *gin.Context) {
 		"SELECT status FROM volumes WHERE id = $1 AND project_id = $2",
 		volumeID, projectID,
 	).Scan(&currentStatus)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("volume"))
 		return
 	}
@@ -983,7 +982,7 @@ func (svc *Service) VolumeAction(c *gin.Context) {
 			newType,
 		).Scan(&typeID)
 
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			// Create new volume type if it doesn't exist
 			typeID = uuid.New().String()
 			_, err = svc.activeDB().Exec(c.Request.Context(),
@@ -1268,7 +1267,7 @@ func (svc *Service) CreateSnapshot(c *gin.Context) {
 		req.Snapshot.VolumeID, projectID,
 	).Scan(&volumeID, &size)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("volume"))
 		return
 	}
@@ -1288,7 +1287,7 @@ func (svc *Service) CreateSnapshot(c *gin.Context) {
 	`, snapshotID, req.Snapshot.Name, volumeID, projectID, size, "creating", now)
 
 	if err != nil {
-		svc.cephClient.DeleteSnapshot(c.Request.Context(), volumeID, snapshotID)
+		_ = svc.cephClient.DeleteSnapshot(c.Request.Context(), volumeID, snapshotID)
 		log.Error().Err(err).Str("operation", "create_snapshot_db").Msg("failed to insert snapshot into database")
 		common.SendError(c, common.NewInternalServerError("failed to create snapshot"))
 		return
@@ -1484,7 +1483,7 @@ func (svc *Service) GetSnapshot(c *gin.Context) {
 		WHERE id = $1 AND project_id = $2
 	`, snapshotID, projectID).Scan(&id, &name, &volumeID, &size, &status, &createdAt)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("snapshot"))
 		return
 	}
@@ -1522,7 +1521,7 @@ func (svc *Service) DeleteSnapshot(c *gin.Context) {
 		snapshotID, projectID,
 	).Scan(&volumeID)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("snapshot"))
 		return
 	}
@@ -1609,7 +1608,7 @@ func (svc *Service) GetVolumeType(c *gin.Context) {
 		WHERE id = $1
 	`, typeID).Scan(&id, &name, &description, &isPublic)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("volume type"))
 		return
 	}
@@ -1659,7 +1658,7 @@ func (svc *Service) UpdateVolume(c *gin.Context) {
 		volumeID, projectID,
 	).Scan(&currentName, &currentDesc, &sizeGB, &status, &bootable, &attachedTo, &existingVolumeType, &createdAt, &updatedAt, &existingAZ, &existingEncrypted)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("volume"))
 		return
 	}
@@ -1743,7 +1742,7 @@ func (svc *Service) UpdateSnapshot(c *gin.Context) {
 		snapshotID, projectID,
 	).Scan(&currentName, &currentDesc, &volumeID, &sizeGB, &status, &createdAt)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("snapshot"))
 		return
 	}
@@ -1856,7 +1855,7 @@ func (svc *Service) SetVolumeMetadata(c *gin.Context) {
 	}
 
 	// Delete existing metadata then insert new metadata atomically
-	if err = database.WithTx(c.Request.Context(), func(tx pgx.Tx) error {
+	if err = database.WithTx(c.Request.Context(), func(tx database.Tx) error {
 		if _, err := tx.Exec(c.Request.Context(),
 			"DELETE FROM volume_metadata WHERE volume_id = $1",
 			volumeID,
@@ -1905,7 +1904,7 @@ func (svc *Service) GetVolumeMetadataKey(c *gin.Context) {
 		volumeID, key,
 	).Scan(&value)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("metadata key"))
 		return
 	}
@@ -2070,7 +2069,7 @@ func (svc *Service) SetSnapshotMetadata(c *gin.Context) {
 	}
 
 	// Delete existing metadata then insert new metadata atomically
-	if err = database.WithTx(c.Request.Context(), func(tx pgx.Tx) error {
+	if err = database.WithTx(c.Request.Context(), func(tx database.Tx) error {
 		if _, err := tx.Exec(c.Request.Context(),
 			"DELETE FROM snapshot_metadata WHERE snapshot_id = $1",
 			snapshotID,
@@ -2119,7 +2118,7 @@ func (svc *Service) GetSnapshotMetadataKey(c *gin.Context) {
 		snapshotID, key,
 	).Scan(&value)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("metadata key"))
 		return
 	}
@@ -2219,12 +2218,12 @@ func (svc *Service) GetLimits(c *gin.Context) {
 	// Query current usage from database
 	var volumesUsed, snapshotsUsed, gigabytesUsed int
 
-	svc.activeDB().QueryRow(c.Request.Context(),
+	_ = svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT COUNT(*), COALESCE(SUM(size_gb), 0) FROM volumes WHERE project_id = $1 AND status != 'deleted'",
 		projectID,
 	).Scan(&volumesUsed, &gigabytesUsed)
 
-	svc.activeDB().QueryRow(c.Request.Context(),
+	_ = svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT COUNT(*) FROM snapshots WHERE project_id = $1 AND status != 'deleted'",
 		projectID,
 	).Scan(&snapshotsUsed)
@@ -2257,12 +2256,12 @@ func (svc *Service) GetLimitsNoProject(c *gin.Context) {
 	// Query current usage from database
 	var volumesUsed, snapshotsUsed, gigabytesUsed int
 
-	svc.activeDB().QueryRow(c.Request.Context(),
+	_ = svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT COUNT(*), COALESCE(SUM(size_gb), 0) FROM volumes WHERE project_id = $1 AND status != 'deleted'",
 		projectID,
 	).Scan(&volumesUsed, &gigabytesUsed)
 
-	svc.activeDB().QueryRow(c.Request.Context(),
+	_ = svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT COUNT(*) FROM snapshots WHERE project_id = $1 AND status != 'deleted'",
 		projectID,
 	).Scan(&snapshotsUsed)

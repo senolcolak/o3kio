@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/cobaltcore-dev/o3k/internal/common"
+	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 )
 
@@ -122,7 +122,7 @@ func (svc *Service) ListRouters(c *gin.Context) {
 
 		// Parse external gateway info
 		if gatewayInfo.Valid {
-			json.Unmarshal([]byte(gatewayInfo.String), &r.ExternalGatewayInfo)
+			_ = json.Unmarshal([]byte(gatewayInfo.String), &r.ExternalGatewayInfo)
 		}
 
 		routers = append(routers, gin.H{
@@ -254,7 +254,7 @@ func (svc *Service) GetRouter(c *gin.Context) {
 	`, routerID, projectID).Scan(&r.ID, &r.Name, &r.ProjectID, &r.AdminStateUp, &r.Status,
 		&gatewayInfo, &r.Distributed, &r.HA, &r.CreatedAt, &r.UpdatedAt)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("router"))
 		return
 	}
@@ -266,7 +266,7 @@ func (svc *Service) GetRouter(c *gin.Context) {
 
 	// Parse external gateway info
 	if gatewayInfo.Valid {
-		json.Unmarshal([]byte(gatewayInfo.String), &r.ExternalGatewayInfo)
+		_ = json.Unmarshal([]byte(gatewayInfo.String), &r.ExternalGatewayInfo)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -362,7 +362,7 @@ func (svc *Service) DeleteRouter(c *gin.Context) {
 		routerID,
 	).Scan(&interfaceCount)
 
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	if err != nil && !errors.Is(err, database.ErrNoRows) {
 		log.Error().Err(err).Str("operation", "delete_router_check").Str("router_id", routerID).Msg("database error")
 		common.SendError(c, common.NewInternalServerError("failed to check router interfaces"))
 		return
@@ -430,7 +430,7 @@ func (svc *Service) AddRouterInterface(c *gin.Context) {
 		req.SubnetID, projectID,
 	).Scan(&subnetID, &networkID, &cidr, &gatewayIP)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("subnet"))
 		return
 	}
@@ -519,7 +519,7 @@ func (svc *Service) RemoveRouterInterface(c *gin.Context) {
 			routerID, req.SubnetID,
 		).Scan(&portID)
 
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, database.ErrNoRows) {
 			common.SendError(c, common.NewNotFoundError("router interface"))
 			return
 		}

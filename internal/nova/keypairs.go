@@ -12,11 +12,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/crypto/ssh"
 
 	"github.com/cobaltcore-dev/o3k/internal/common"
+	"github.com/cobaltcore-dev/o3k/internal/database"
 )
 
 // CreateKeypairRequest represents a keypair creation request
@@ -91,7 +91,7 @@ func (svc *Service) GetKeypair(c *gin.Context) {
 		WHERE user_id = $1 AND name = $2
 	`, userID, keypairName).Scan(&name, &publicKey, &fingerprint, &createdAt)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("keypair"))
 		return
 	}

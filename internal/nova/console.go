@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/cobaltcore-dev/o3k/internal/common"
+	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 )
 
@@ -44,7 +44,7 @@ func (svc *Service) GetRemoteConsole(c *gin.Context) {
 		instanceID, projectID,
 	).Scan(&libvirtDomainID, &vncPort, &vncPassword)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("instance"))
 		return
 	}
@@ -147,7 +147,7 @@ func (svc *Service) getVNCConsoleResponse(c *gin.Context, instanceID, projectID,
 		instanceID, projectID,
 	).Scan(&libvirtDomainID, &vncPort, &vncPassword)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("instance"))
 		return
 	}
@@ -219,7 +219,7 @@ func generateConsoleToken(instanceID string) string {
 // generateVNCPassword creates a random VNC password
 func generateVNCPassword() string {
 	bytes := make([]byte, 8)
-	rand.Read(bytes)
+	_, _ = rand.Read(bytes)
 	return hex.EncodeToString(bytes)
 }
 
@@ -247,7 +247,7 @@ func (svc *Service) GetConsoleOutputAction(c *gin.Context, consoleOutput interfa
 		instanceID, projectID,
 	).Scan(&id)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("instance"))
 		return
 	}
@@ -294,7 +294,7 @@ func (svc *Service) GetSerialConsoleAction(c *gin.Context, serialConsole interfa
 		instanceID, projectID,
 	).Scan(&id)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("instance"))
 		return
 	}
@@ -340,7 +340,7 @@ func (svc *Service) GetSPICEConsoleAction(c *gin.Context, spiceConsole interface
 		instanceID, projectID,
 	).Scan(&id)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("instance"))
 		return
 	}
@@ -386,7 +386,7 @@ func (svc *Service) GetRDPConsoleAction(c *gin.Context, rdpConsole interface{}) 
 		instanceID, projectID,
 	).Scan(&id)
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("instance"))
 		return
 	}
