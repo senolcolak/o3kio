@@ -621,28 +621,70 @@ func (svc *Service) ListServers(c *gin.Context) {
 	}
 	limit = common.CapLimit(limit)
 
-	// OpenStack uses marker-based pagination (keyset pagination).
-	// OFFSET-based skips rows under concurrent inserts.
-	markerParam := c.Query("marker")
-	var rows pgx.Rows
-	var queryErr error
+	// Build dynamic WHERE clause with parameterized args.
+	args := []interface{}{}
+	argIdx := 1
 
-	if markerParam != "" {
-		// Marker-based: get rows AFTER the marker by created_at DESC, id DESC
-		rows, queryErr = svc.activeDB().Query(c.Request.Context(),
-			`SELECT id, name FROM instances
-			 WHERE project_id = $1
-			   AND (created_at, id) < (SELECT created_at, id FROM instances WHERE id = $2)
-			 ORDER BY created_at DESC, id DESC
-			 LIMIT $3`,
-			projectID, markerParam, limit,
-		)
-	} else {
-		rows, queryErr = svc.activeDB().Query(c.Request.Context(),
-			"SELECT id, name FROM instances WHERE project_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2",
-			projectID, limit,
-		)
+	baseQuery := `SELECT id, name FROM instances WHERE 1=1`
+
+	// Project filter — omitted only when admin requests all_tenants=true.
+	if c.Query("all_tenants") != "true" || !isAdminContext(c) {
+		baseQuery += fmt.Sprintf(" AND project_id = $%d", argIdx)
+		args = append(args, projectID)
+		argIdx++
 	}
+
+	// Marker-based keyset pagination.
+	markerParam := c.Query("marker")
+	if markerParam != "" {
+		baseQuery += fmt.Sprintf(
+			" AND (created_at, id) < (SELECT created_at, id FROM instances WHERE id = $%d)",
+			argIdx,
+		)
+		args = append(args, markerParam)
+		argIdx++
+	}
+
+	// Status filter.
+	if status := c.Query("status"); status != "" {
+		baseQuery += fmt.Sprintf(" AND UPPER(status) = UPPER($%d)", argIdx)
+		args = append(args, status)
+		argIdx++
+	}
+
+	// Name filter (case-insensitive partial match).
+	if name := c.Query("name"); name != "" {
+		baseQuery += fmt.Sprintf(" AND name ILIKE $%d", argIdx)
+		args = append(args, "%"+name+"%")
+		argIdx++
+	}
+
+	// Image filter.
+	if image := c.Query("image"); image != "" {
+		baseQuery += fmt.Sprintf(" AND image_id = $%d", argIdx)
+		args = append(args, image)
+		argIdx++
+	}
+
+	// Flavor filter.
+	if flavor := c.Query("flavor"); flavor != "" {
+		baseQuery += fmt.Sprintf(" AND flavor_id = $%d", argIdx)
+		args = append(args, flavor)
+		argIdx++
+	}
+
+	// Changes-since filter.
+	if changesSince := c.Query("changes-since"); changesSince != "" {
+		baseQuery += fmt.Sprintf(" AND updated_at >= $%d", argIdx)
+		args = append(args, changesSince)
+		argIdx++
+	}
+
+	baseQuery += " ORDER BY created_at DESC, id DESC"
+	baseQuery += fmt.Sprintf(" LIMIT $%d", argIdx)
+	args = append(args, limit)
+
+	rows, queryErr := svc.activeDB().Query(c.Request.Context(), baseQuery, args...)
 	if queryErr != nil {
 		log.Error().Err(queryErr).Str("operation", "list_servers").Msg("database error")
 		common.SendError(c, common.NewInternalServerError("failed to list servers"))
@@ -692,30 +734,74 @@ func (svc *Service) ListServersDetail(c *gin.Context) {
 	}
 	limit = common.CapLimit(limit)
 
-	// Marker-based pagination (keyset pagination, no OFFSET)
-	var markerCondition string
-	var queryArgs []interface{}
-	queryArgs = append(queryArgs, projectID)
-	argIdx := 2
+	// Build dynamic WHERE clause with parameterized args.
+	queryArgs := []interface{}{}
+	argIdx := 1
 
-	if marker := c.Query("marker"); marker != "" {
-		markerCondition = fmt.Sprintf(" AND (i.created_at, i.id::text) < (SELECT created_at, id::text FROM instances WHERE id = $%d AND project_id = $1)", argIdx)
-		queryArgs = append(queryArgs, marker)
-		argIdx++
-	}
-
-	queryArgs = append(queryArgs, limit)
-
-	rows, err := svc.activeDB().Query(c.Request.Context(), fmt.Sprintf(`
+	baseQuery := `
 		SELECT i.id, i.name, i.status, i.power_state, i.project_id, i.user_id,
 		       i.flavor_id, i.image_id, i.created_at, i.updated_at, i.launched_at,
 		       f.vcpus, f.ram_mb, f.disk_gb, f.name as flavor_name, i.host, i.locked
 		FROM instances i
 		LEFT JOIN flavors f ON i.flavor_id = f.id
-		WHERE i.project_id = $1%s
-		ORDER BY i.created_at DESC
-		LIMIT $%d
-	`, markerCondition, argIdx), queryArgs...)
+		WHERE 1=1`
+
+	// Project filter — omitted only when admin requests all_tenants=true.
+	if c.Query("all_tenants") != "true" || !isAdminContext(c) {
+		baseQuery += fmt.Sprintf(" AND i.project_id = $%d", argIdx)
+		queryArgs = append(queryArgs, projectID)
+		argIdx++
+	}
+
+	// Marker-based keyset pagination.
+	if marker := c.Query("marker"); marker != "" {
+		baseQuery += fmt.Sprintf(
+			" AND (i.created_at, i.id::text) < (SELECT created_at, id::text FROM instances WHERE id = $%d)",
+			argIdx,
+		)
+		queryArgs = append(queryArgs, marker)
+		argIdx++
+	}
+
+	// Status filter.
+	if status := c.Query("status"); status != "" {
+		baseQuery += fmt.Sprintf(" AND UPPER(i.status) = UPPER($%d)", argIdx)
+		queryArgs = append(queryArgs, status)
+		argIdx++
+	}
+
+	// Name filter (case-insensitive partial match).
+	if name := c.Query("name"); name != "" {
+		baseQuery += fmt.Sprintf(" AND i.name ILIKE $%d", argIdx)
+		queryArgs = append(queryArgs, "%"+name+"%")
+		argIdx++
+	}
+
+	// Image filter.
+	if image := c.Query("image"); image != "" {
+		baseQuery += fmt.Sprintf(" AND i.image_id = $%d", argIdx)
+		queryArgs = append(queryArgs, image)
+		argIdx++
+	}
+
+	// Flavor filter.
+	if flavor := c.Query("flavor"); flavor != "" {
+		baseQuery += fmt.Sprintf(" AND i.flavor_id = $%d", argIdx)
+		queryArgs = append(queryArgs, flavor)
+		argIdx++
+	}
+
+	// Changes-since filter.
+	if changesSince := c.Query("changes-since"); changesSince != "" {
+		baseQuery += fmt.Sprintf(" AND i.updated_at >= $%d", argIdx)
+		queryArgs = append(queryArgs, changesSince)
+		argIdx++
+	}
+
+	baseQuery += fmt.Sprintf(" ORDER BY i.created_at DESC LIMIT $%d", argIdx)
+	queryArgs = append(queryArgs, limit)
+
+	rows, err := svc.activeDB().Query(c.Request.Context(), baseQuery, queryArgs...)
 
 	if err != nil {
 		log.Error().Err(err).Str("operation", "list_servers_detail").Msg("database error")

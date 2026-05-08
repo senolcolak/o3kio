@@ -247,6 +247,18 @@ func (svc *Service) CreateImage(c *gin.Context) {
 	})
 }
 
+// joinConditions joins SQL conditions with AND.
+func joinConditions(conditions []string) string {
+	result := ""
+	for i, c := range conditions {
+		if i > 0 {
+			result += " AND "
+		}
+		result += c
+	}
+	return result
+}
+
 // ListImages lists all images
 func (svc *Service) ListImages(c *gin.Context) {
 	projectID := c.GetString("project_id")
@@ -266,12 +278,33 @@ func (svc *Service) ListImages(c *gin.Context) {
 		}
 	}
 
-	// Marker-based pagination
-	var markerCondition string
+	// Build WHERE clause dynamically
+	var conditions []string
 	var queryArgs []interface{}
-	queryArgs = append(queryArgs, projectID)
-	argIdx := 2
+	argIdx := 1
 
+	// Visibility / base ownership condition
+	if vis := c.Query("visibility"); vis != "" {
+		switch vis {
+		case "public":
+			conditions = append(conditions, "visibility = 'public'")
+		case "private":
+			conditions = append(conditions, fmt.Sprintf("(visibility = 'private' AND project_id = $%d)", argIdx))
+			queryArgs = append(queryArgs, projectID)
+			argIdx++
+		default:
+			// shared, community, or unknown: show what the project can see
+			conditions = append(conditions, fmt.Sprintf("(visibility = 'public' OR project_id = $%d)", argIdx))
+			queryArgs = append(queryArgs, projectID)
+			argIdx++
+		}
+	} else {
+		conditions = append(conditions, fmt.Sprintf("(visibility = 'public' OR project_id = $%d)", argIdx))
+		queryArgs = append(queryArgs, projectID)
+		argIdx++
+	}
+
+	// Marker-based pagination
 	if marker := c.Query("marker"); marker != "" {
 		var markerCreatedAt time.Time
 		err := svc.activeDB().QueryRow(c.Request.Context(),
@@ -279,10 +312,47 @@ func (svc *Service) ListImages(c *gin.Context) {
 			marker, projectID,
 		).Scan(&markerCreatedAt)
 		if err == nil {
-			markerCondition = fmt.Sprintf(" AND created_at < $%d", argIdx)
+			conditions = append(conditions, fmt.Sprintf("created_at < $%d", argIdx))
 			queryArgs = append(queryArgs, markerCreatedAt)
 			argIdx++
 		}
+	}
+
+	// Additional filters
+	if name := c.Query("name"); name != "" {
+		conditions = append(conditions, fmt.Sprintf("name = $%d", argIdx))
+		queryArgs = append(queryArgs, name)
+		argIdx++
+	}
+	if status := c.Query("status"); status != "" {
+		conditions = append(conditions, fmt.Sprintf("status = $%d", argIdx))
+		queryArgs = append(queryArgs, status)
+		argIdx++
+	}
+	if diskFormat := c.Query("disk_format"); diskFormat != "" {
+		conditions = append(conditions, fmt.Sprintf("disk_format = $%d", argIdx))
+		queryArgs = append(queryArgs, diskFormat)
+		argIdx++
+	}
+	if containerFormat := c.Query("container_format"); containerFormat != "" {
+		conditions = append(conditions, fmt.Sprintf("container_format = $%d", argIdx))
+		queryArgs = append(queryArgs, containerFormat)
+		argIdx++
+	}
+	if owner := c.Query("owner"); owner != "" {
+		conditions = append(conditions, fmt.Sprintf("project_id = $%d", argIdx))
+		queryArgs = append(queryArgs, owner)
+		argIdx++
+	}
+	if tag := c.Query("tag"); tag != "" {
+		conditions = append(conditions, fmt.Sprintf("id IN (SELECT image_id FROM image_tags WHERE tag = $%d)", argIdx))
+		queryArgs = append(queryArgs, tag)
+		argIdx++
+	}
+
+	whereClause := ""
+	if len(conditions) > 0 {
+		whereClause = "WHERE " + joinConditions(conditions)
 	}
 
 	queryArgs = append(queryArgs, limit, offset)
@@ -290,10 +360,10 @@ func (svc *Service) ListImages(c *gin.Context) {
 	rows, err := svc.activeDB().Query(c.Request.Context(), fmt.Sprintf(`
 		SELECT id, name, status, visibility, size_bytes, disk_format, container_format, min_disk_gb, min_ram_mb, created_at, updated_at, COALESCE(project_id, '')
 		FROM images
-		WHERE (visibility = 'public' OR project_id = $1)%s
+		%s
 		ORDER BY created_at DESC
 		LIMIT $%d OFFSET $%d
-	`, markerCondition, argIdx, argIdx+1), queryArgs...)
+	`, whereClause, argIdx, argIdx+1), queryArgs...)
 
 	if err != nil {
 		log.Error().Err(err).Str("operation", "list_images").Msg("failed to query images")

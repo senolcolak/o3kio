@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cobaltcore-dev/o3k/internal/common"
@@ -531,14 +532,39 @@ func (svc *Service) ListNetworks(c *gin.Context) {
 	}
 	limit = common.CapLimit(limit)
 
-	// Marker-based pagination using (created_at, id) for deterministic ordering.
-	var markerCondition string
-	var queryArgs []interface{}
-	queryArgs = append(queryArgs, projectID)
+	// Build dynamic WHERE clause (project visibility is always first condition).
+	conditions := []string{"(n.project_id = $1 OR n.shared = true)"}
+	queryArgs := []interface{}{projectID}
 	argIdx := 2
 
+	if name := c.Query("name"); name != "" {
+		conditions = append(conditions, fmt.Sprintf("n.name = $%d", argIdx))
+		queryArgs = append(queryArgs, name)
+		argIdx++
+	}
+	if status := c.Query("status"); status != "" {
+		conditions = append(conditions, fmt.Sprintf("n.status = $%d", argIdx))
+		queryArgs = append(queryArgs, status)
+		argIdx++
+	}
+	if v := c.Query("admin_state_up"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			conditions = append(conditions, fmt.Sprintf("n.admin_state_up = $%d", argIdx))
+			queryArgs = append(queryArgs, b)
+			argIdx++
+		}
+	}
+	if v := c.Query("shared"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			conditions = append(conditions, fmt.Sprintf("n.shared = $%d", argIdx))
+			queryArgs = append(queryArgs, b)
+			argIdx++
+		}
+	}
+
+	// Marker-based pagination using (created_at, id) for deterministic ordering.
 	if marker := c.Query("marker"); marker != "" {
-		markerCondition = fmt.Sprintf(` AND (n.created_at, n.id) > (SELECT created_at, id FROM networks WHERE id = $%d)`, argIdx)
+		conditions = append(conditions, fmt.Sprintf(`(n.created_at, n.id) > (SELECT created_at, id FROM networks WHERE id = $%d)`, argIdx))
 		queryArgs = append(queryArgs, marker)
 		argIdx++
 	}
@@ -548,10 +574,10 @@ func (svc *Service) ListNetworks(c *gin.Context) {
 	rows, err := svc.activeDB().Query(c.Request.Context(), fmt.Sprintf(`
 		SELECT n.id, n.name, n.project_id, n.admin_state_up, n.status, n.shared, n.mtu, n.network_type, n.created_at, n.updated_at
 		FROM networks n
-		WHERE (n.project_id = $1 OR n.shared = true)%s
+		WHERE %s
 		ORDER BY n.created_at ASC, n.id ASC
 		LIMIT $%d
-	`, markerCondition, argIdx), queryArgs...)
+	`, strings.Join(conditions, " AND "), argIdx), queryArgs...)
 
 	if err != nil {
 		log.Error().Err(err).Str("operation", "list_networks").Msg("database error")
@@ -914,14 +940,37 @@ func (svc *Service) ListSubnets(c *gin.Context) {
 	}
 	limit = common.CapLimit(limit)
 
-	// Marker-based pagination using (created_at, id) for deterministic ordering.
-	var markerCondition string
-	var queryArgs []interface{}
-	queryArgs = append(queryArgs, projectID)
+	// Build dynamic WHERE clause.
+	conditions := []string{"(s.project_id = $1 OR n.shared = true)"}
+	queryArgs := []interface{}{projectID}
 	argIdx := 2
 
+	if v := c.Query("network_id"); v != "" {
+		conditions = append(conditions, fmt.Sprintf("s.network_id = $%d", argIdx))
+		queryArgs = append(queryArgs, v)
+		argIdx++
+	}
+	if v := c.Query("name"); v != "" {
+		conditions = append(conditions, fmt.Sprintf("s.name = $%d", argIdx))
+		queryArgs = append(queryArgs, v)
+		argIdx++
+	}
+	if v := c.Query("cidr"); v != "" {
+		conditions = append(conditions, fmt.Sprintf("s.cidr = $%d", argIdx))
+		queryArgs = append(queryArgs, v)
+		argIdx++
+	}
+	if v := c.Query("ip_version"); v != "" {
+		if ipv, err := strconv.Atoi(v); err == nil && (ipv == 4 || ipv == 6) {
+			conditions = append(conditions, fmt.Sprintf("s.ip_version = $%d", argIdx))
+			queryArgs = append(queryArgs, ipv)
+			argIdx++
+		}
+	}
+
+	// Marker-based pagination using (created_at, id) for deterministic ordering.
 	if marker := c.Query("marker"); marker != "" {
-		markerCondition = fmt.Sprintf(` AND (s.created_at, s.id) > (SELECT created_at, id FROM subnets WHERE id = $%d)`, argIdx)
+		conditions = append(conditions, fmt.Sprintf(`(s.created_at, s.id) > (SELECT created_at, id FROM subnets WHERE id = $%d)`, argIdx))
 		queryArgs = append(queryArgs, marker)
 		argIdx++
 	}
@@ -932,10 +981,10 @@ func (svc *Service) ListSubnets(c *gin.Context) {
 		SELECT s.id, s.name, s.network_id, s.cidr, s.gateway_ip, s.ip_version, s.enable_dhcp, s.dns_nameservers, s.created_at, s.updated_at
 		FROM subnets s
 		JOIN networks n ON s.network_id = n.id
-		WHERE (s.project_id = $1 OR n.shared = true)%s
+		WHERE %s
 		ORDER BY s.created_at ASC, s.id ASC
 		LIMIT $%d
-	`, markerCondition, argIdx), queryArgs...)
+	`, strings.Join(conditions, " AND "), argIdx), queryArgs...)
 
 	if err != nil {
 		log.Error().Err(err).Str("operation", "list_subnets").Msg("database error")

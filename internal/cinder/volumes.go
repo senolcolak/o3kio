@@ -304,6 +304,61 @@ func (svc *Service) CreateVolume(c *gin.Context) {
 	})
 }
 
+// joinConditions joins SQL conditions with AND.
+func joinConditions(conditions []string) string {
+	result := ""
+	for i, c := range conditions {
+		if i > 0 {
+			result += " AND "
+		}
+		result += c
+	}
+	return result
+}
+
+// buildVolumeFilterConditions returns extra WHERE conditions and args for volume list filters.
+// queryArgs must already contain the project_id (or be empty for all_tenants admin queries).
+// argIdx is the next placeholder index to use. Returns updated conditions, args, and argIdx.
+func buildVolumeFilterConditions(c *gin.Context, queryArgs []interface{}, argIdx int) ([]string, []interface{}, int) {
+	var extra []string
+
+	if status := c.Query("status"); status != "" {
+		extra = append(extra, fmt.Sprintf("status = $%d", argIdx))
+		queryArgs = append(queryArgs, status)
+		argIdx++
+	}
+	if name := c.Query("name"); name != "" {
+		extra = append(extra, fmt.Sprintf("name = $%d", argIdx))
+		queryArgs = append(queryArgs, name)
+		argIdx++
+	}
+	if bootable := c.Query("bootable"); bootable != "" {
+		boolVal := bootable == "true"
+		extra = append(extra, fmt.Sprintf("bootable = $%d", argIdx))
+		queryArgs = append(queryArgs, boolVal)
+		argIdx++
+	}
+	if az := c.Query("availability_zone"); az != "" {
+		extra = append(extra, fmt.Sprintf("availability_zone = $%d", argIdx))
+		queryArgs = append(queryArgs, az)
+		argIdx++
+	}
+
+	return extra, queryArgs, argIdx
+}
+
+// isAdminRequest returns true when the caller has the admin role.
+func isAdminRequest(c *gin.Context) bool {
+	roles, _ := c.Get("roles")
+	roleList, _ := roles.([]string)
+	for _, r := range roleList {
+		if r == "admin" {
+			return true
+		}
+	}
+	return false
+}
+
 // ListVolumes lists all volumes (brief)
 func (svc *Service) ListVolumes(c *gin.Context) {
 	// Try to get project_id from URL param first, then from token context
@@ -327,23 +382,43 @@ func (svc *Service) ListVolumes(c *gin.Context) {
 		}
 	}
 
-	// Marker-based pagination
-	var markerCondition string
+	// Base WHERE: project scope (admin + all_tenants bypasses project filter)
+	var conditions []string
 	var queryArgs []interface{}
-	queryArgs = append(queryArgs, projectID)
-	argIdx := 2
+	argIdx := 1
 
+	allTenants := c.Query("all_tenants") == "true" && isAdminRequest(c)
+	if !allTenants {
+		conditions = append(conditions, fmt.Sprintf("project_id = $%d", argIdx))
+		queryArgs = append(queryArgs, projectID)
+		argIdx++
+	}
+
+	// Marker-based pagination
 	if marker := c.Query("marker"); marker != "" {
 		var markerCreatedAt time.Time
-		err := svc.activeDB().QueryRow(c.Request.Context(),
-			"SELECT created_at FROM volumes WHERE id = $1 AND project_id = $2",
-			marker, projectID,
-		).Scan(&markerCreatedAt)
+		markerQuery := "SELECT created_at FROM volumes WHERE id = $1"
+		markerArgs := []interface{}{marker}
+		if !allTenants {
+			markerQuery += " AND project_id = $2"
+			markerArgs = append(markerArgs, projectID)
+		}
+		err := svc.activeDB().QueryRow(c.Request.Context(), markerQuery, markerArgs...).Scan(&markerCreatedAt)
 		if err == nil {
-			markerCondition = fmt.Sprintf(" AND created_at < $%d", argIdx)
+			conditions = append(conditions, fmt.Sprintf("created_at < $%d", argIdx))
 			queryArgs = append(queryArgs, markerCreatedAt)
 			argIdx++
 		}
+	}
+
+	// Additional filters
+	var extra []string
+	extra, queryArgs, argIdx = buildVolumeFilterConditions(c, queryArgs, argIdx)
+	conditions = append(conditions, extra...)
+
+	whereClause := ""
+	if len(conditions) > 0 {
+		whereClause = "WHERE " + joinConditions(conditions)
 	}
 
 	queryArgs = append(queryArgs, limit, offset)
@@ -351,10 +426,10 @@ func (svc *Service) ListVolumes(c *gin.Context) {
 	rows, err := svc.activeDB().Query(c.Request.Context(), fmt.Sprintf(`
 		SELECT id, name, size_gb, status, bootable, COALESCE(availability_zone, 'nova')
 		FROM volumes
-		WHERE project_id = $1%s
+		%s
 		ORDER BY created_at DESC
 		LIMIT $%d OFFSET $%d
-	`, markerCondition, argIdx, argIdx+1), queryArgs...)
+	`, whereClause, argIdx, argIdx+1), queryArgs...)
 
 	if err != nil {
 		log.Error().Err(err).Str("operation", "list_volumes").Msg("failed to query volumes")
@@ -419,23 +494,60 @@ func (svc *Service) ListVolumesDetail(c *gin.Context) {
 		}
 	}
 
-	// Marker-based pagination
-	var markerCondition string
+	// Base WHERE: project scope (admin + all_tenants bypasses project filter)
+	var conditions []string
 	var queryArgs []interface{}
-	queryArgs = append(queryArgs, projectID)
-	argIdx := 2
+	argIdx := 1
 
+	allTenants := c.Query("all_tenants") == "true" && isAdminRequest(c)
+	if !allTenants {
+		conditions = append(conditions, fmt.Sprintf("v.project_id = $%d", argIdx))
+		queryArgs = append(queryArgs, projectID)
+		argIdx++
+	}
+
+	// Marker-based pagination
 	if marker := c.Query("marker"); marker != "" {
 		var markerCreatedAt time.Time
-		err := svc.activeDB().QueryRow(c.Request.Context(),
-			"SELECT created_at FROM volumes WHERE id = $1 AND project_id = $2",
-			marker, projectID,
-		).Scan(&markerCreatedAt)
+		markerQuery := "SELECT created_at FROM volumes WHERE id = $1"
+		markerArgs := []interface{}{marker}
+		if !allTenants {
+			markerQuery += " AND project_id = $2"
+			markerArgs = append(markerArgs, projectID)
+		}
+		err := svc.activeDB().QueryRow(c.Request.Context(), markerQuery, markerArgs...).Scan(&markerCreatedAt)
 		if err == nil {
-			markerCondition = fmt.Sprintf(" AND v.created_at < $%d", argIdx)
+			conditions = append(conditions, fmt.Sprintf("v.created_at < $%d", argIdx))
 			queryArgs = append(queryArgs, markerCreatedAt)
 			argIdx++
 		}
+	}
+
+	// Additional filters (using v. alias)
+	if status := c.Query("status"); status != "" {
+		conditions = append(conditions, fmt.Sprintf("v.status = $%d", argIdx))
+		queryArgs = append(queryArgs, status)
+		argIdx++
+	}
+	if name := c.Query("name"); name != "" {
+		conditions = append(conditions, fmt.Sprintf("v.name = $%d", argIdx))
+		queryArgs = append(queryArgs, name)
+		argIdx++
+	}
+	if bootable := c.Query("bootable"); bootable != "" {
+		conditions = append(conditions, fmt.Sprintf("v.bootable = $%d", argIdx))
+		queryArgs = append(queryArgs, bootable == "true")
+		argIdx++
+	}
+	if az := c.Query("availability_zone"); az != "" {
+		conditions = append(conditions, fmt.Sprintf("v.availability_zone = $%d", argIdx))
+		queryArgs = append(queryArgs, az)
+		argIdx++
+	}
+
+	whereClause := ""
+	if len(conditions) > 0 {
+		whereClause = "WHERE " + joinConditions(conditions)
 	}
 
 	queryArgs = append(queryArgs, limit, offset)
@@ -443,10 +555,10 @@ func (svc *Service) ListVolumesDetail(c *gin.Context) {
 	rows, err := svc.activeDB().Query(c.Request.Context(), fmt.Sprintf(`
 		SELECT v.id, v.name, v.size_gb, v.status, v.bootable, v.attached_to_instance_id, v.created_at, v.updated_at, COALESCE(v.volume_type, '__DEFAULT__'), COALESCE(v.availability_zone, 'nova'), COALESCE(v.encrypted, false), v.description, v.user_id::text
 		FROM volumes v
-		WHERE v.project_id = $1%s
+		%s
 		ORDER BY v.created_at DESC
 		LIMIT $%d OFFSET $%d
-	`, markerCondition, argIdx, argIdx+1), queryArgs...)
+	`, whereClause, argIdx, argIdx+1), queryArgs...)
 
 	if err != nil {
 		log.Error().Err(err).Str("operation", "list_volumes_detail").Msg("failed to query volumes")
@@ -593,26 +705,26 @@ func (svc *Service) GetVolume(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"volume": gin.H{
-			"id":                   id,
-			"name":                 name,
-			"description":          descriptionVal,
-			"tenant_id":            projectID,
-			"user_id":              resolvedUserID,
-			"size":                 size,
-			"status":               status,
-			"bootable":             fmt.Sprintf("%t", bootable),
-			"availability_zone":    availabilityZone,
-			"volume_type":          volumeType,
-			"encrypted":            encrypted,
-			"multiattach":          false,
-			"replication_status":   "disabled",
-			"migration_status":     nil,
-			"consistencygroup_id":  nil,
-			"source_volid":         nil,
-			"snapshot_id":          nil,
-			"created_at":           createdAt.Format("2006-01-02T15:04:05.000000"),
-			"updated_at":           updatedAt.Format("2006-01-02T15:04:05.000000"),
-			"attachments":          attachments,
+			"id":                  id,
+			"name":                name,
+			"description":         descriptionVal,
+			"tenant_id":           projectID,
+			"user_id":             resolvedUserID,
+			"size":                size,
+			"status":              status,
+			"bootable":            fmt.Sprintf("%t", bootable),
+			"availability_zone":   availabilityZone,
+			"volume_type":         volumeType,
+			"encrypted":           encrypted,
+			"multiattach":         false,
+			"replication_status":  "disabled",
+			"migration_status":    nil,
+			"consistencygroup_id": nil,
+			"source_volid":        nil,
+			"snapshot_id":         nil,
+			"created_at":          createdAt.Format("2006-01-02T15:04:05.000000"),
+			"updated_at":          updatedAt.Format("2006-01-02T15:04:05.000000"),
+			"attachments":         attachments,
 			"links": []map[string]string{
 				{"rel": "self", "href": fmt.Sprintf("/v3/%s/volumes/%s", projectID, id)},
 				{"rel": "bookmark", "href": fmt.Sprintf("/volumes/%s", id)},

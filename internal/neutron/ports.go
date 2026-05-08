@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cobaltcore-dev/o3k/internal/common"
@@ -231,14 +232,40 @@ func (svc *Service) ListPorts(c *gin.Context) {
 	}
 	limit = common.CapLimit(limit)
 
-	// Marker-based pagination (by ID)
-	var markerCondition string
-	var queryArgs []interface{}
-	queryArgs = append(queryArgs, projectID)
+	// Build dynamic WHERE clause.
+	conditions := []string{"(p.project_id = $1 OR n.shared = true)"}
+	queryArgs := []interface{}{projectID}
 	argIdx := 2
 
+	if v := c.Query("network_id"); v != "" {
+		conditions = append(conditions, fmt.Sprintf("p.network_id = $%d", argIdx))
+		queryArgs = append(queryArgs, v)
+		argIdx++
+	}
+	if v := c.Query("device_id"); v != "" {
+		conditions = append(conditions, fmt.Sprintf("p.device_id = $%d", argIdx))
+		queryArgs = append(queryArgs, v)
+		argIdx++
+	}
+	if v := c.Query("device_owner"); v != "" {
+		conditions = append(conditions, fmt.Sprintf("p.device_owner = $%d", argIdx))
+		queryArgs = append(queryArgs, v)
+		argIdx++
+	}
+	if v := c.Query("status"); v != "" {
+		conditions = append(conditions, fmt.Sprintf("p.status = $%d", argIdx))
+		queryArgs = append(queryArgs, v)
+		argIdx++
+	}
+	if v := c.Query("mac_address"); v != "" {
+		conditions = append(conditions, fmt.Sprintf("p.mac_address = $%d", argIdx))
+		queryArgs = append(queryArgs, v)
+		argIdx++
+	}
+
+	// Marker-based pagination (by ID).
 	if marker := c.Query("marker"); marker != "" {
-		markerCondition = fmt.Sprintf(" AND p.id > $%d", argIdx)
+		conditions = append(conditions, fmt.Sprintf("p.id > $%d", argIdx))
 		queryArgs = append(queryArgs, marker)
 		argIdx++
 	}
@@ -249,10 +276,10 @@ func (svc *Service) ListPorts(c *gin.Context) {
 		SELECT p.id, p.name, p.network_id, p.device_id, p.device_owner, p.mac_address, p.admin_state_up, p.status, p.fixed_ips, p.created_at, p.updated_at
 		FROM ports p
 		JOIN networks n ON p.network_id = n.id
-		WHERE (p.project_id = $1 OR n.shared = true)%s
+		WHERE %s
 		ORDER BY p.id ASC
 		LIMIT $%d
-	`, markerCondition, argIdx), queryArgs...)
+	`, strings.Join(conditions, " AND "), argIdx), queryArgs...)
 
 	if err != nil {
 		log.Error().Err(err).Str("operation", "list_ports").Msg("database error")
