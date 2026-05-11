@@ -595,19 +595,27 @@ func (svc *Service) CreateServer(c *gin.Context) {
 	middleware.LogOperationEnd(c, "create", "server", instanceID, time.Since(start), nil)
 
 	// Return instance details
+	selfURL := fmt.Sprintf("/v2.1/servers/%s", instanceID)
+	bookmarkURL := fmt.Sprintf("/servers/%s", instanceID)
 	c.JSON(http.StatusAccepted, gin.H{
 		"server": gin.H{
-			"id":        instanceID,
-			"name":      req.Server.Name,
-			"status":    "BUILD",
-			"tenant_id": projectID,
-			"user_id":   userID,
-			"created":   now.Format(time.RFC3339),
-			"updated":   now.Format(time.RFC3339),
-			"flavor":    gin.H{"id": flavor.ID},
-			"image":     gin.H{"id": req.Server.ImageRef},
-			"metadata":  gin.H{},
-			"adminPass": common.GeneratePassword(16),
+			"id":               instanceID,
+			"name":             req.Server.Name,
+			"status":           "BUILD",
+			"tenant_id":        projectID,
+			"user_id":          userID,
+			"created":          now.Format(time.RFC3339),
+			"updated":          now.Format(time.RFC3339),
+			"flavor":           gin.H{"id": flavor.ID},
+			"image":            gin.H{"id": req.Server.ImageRef},
+			"metadata":         gin.H{},
+			"adminPass":        common.GeneratePassword(16),
+			"security_groups":  []gin.H{{"name": "default"}},
+			"OS-DCF:diskConfig": "AUTO",
+			"links": []gin.H{
+				{"rel": "self", "href": selfURL},
+				{"rel": "bookmark", "href": bookmarkURL},
+			},
 		},
 	})
 }
@@ -920,7 +928,7 @@ func (svc *Service) ListServersDetail(c *gin.Context) {
 			"OS-EXT-SRV-ATTR:hypervisor_hostname": hostStr,
 			"OS-EXT-SRV-ATTR:root_device_name":    "/dev/vda",
 			"OS-EXT-SRV-ATTR:launch_index":        0,
-			"security_groups":                     []gin.H{{"name": "default"}},
+			"security_groups":                     svc.getServerSecurityGroups(c.Request.Context(), id),
 			"links": []gin.H{
 				{"rel": "self", "href": fmt.Sprintf("/v2.1/servers/%s", id)},
 				{"rel": "bookmark", "href": fmt.Sprintf("/servers/%s", id)},
@@ -966,7 +974,14 @@ func (svc *Service) ListServersDetail(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"servers": servers})
+	resp := gin.H{"servers": servers}
+	// Add next-page link when the result set hit the limit (may be more pages).
+	if len(servers) == limit {
+		lastID := servers[len(servers)-1]["id"].(string)
+		nextHref := fmt.Sprintf("/v2.1/servers/detail?marker=%s&limit=%d", lastID, limit)
+		resp["servers_links"] = []gin.H{{"rel": "next", "href": nextHref}}
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // getInstanceAddresses retrieves network addresses for an instance from ports
@@ -975,7 +990,7 @@ func (svc *Service) getInstanceAddresses(ctx context.Context, instanceID, projec
 
 	// Query ports for this instance
 	rows, err := svc.activeDB().Query(ctx, `
-		SELECT p.network_id, p.fixed_ips, n.name
+		SELECT p.network_id, p.fixed_ips, n.name, p.mac_address
 		FROM ports p
 		JOIN networks n ON p.network_id = n.id
 		WHERE p.device_id = $1 AND p.project_id = $2
@@ -989,8 +1004,9 @@ func (svc *Service) getInstanceAddresses(ctx context.Context, instanceID, projec
 	for rows.Next() {
 		var networkID, networkName string
 		var fixedIPsJSON []byte
+		var macAddress string
 
-		if err := rows.Scan(&networkID, &fixedIPsJSON, &networkName); err != nil {
+		if err := rows.Scan(&networkID, &fixedIPsJSON, &networkName, &macAddress); err != nil {
 			log.Warn().Err(err).Msg("failed to scan network row")
 			continue
 		}
@@ -1006,9 +1022,10 @@ func (svc *Service) getInstanceAddresses(ctx context.Context, instanceID, projec
 		for _, ipInfo := range fixedIPs {
 			if ipAddr, ok := ipInfo["ip_address"].(string); ok {
 				addressList = append(addressList, gin.H{
-					"addr":            ipAddr,
-					"version":         4,
-					"OS-EXT-IPS:type": "fixed",
+					"addr":                     ipAddr,
+					"version":                  4,
+					"OS-EXT-IPS:type":          "fixed",
+					"OS-EXT-IPS-MAC:mac_addr":  macAddress,
 				})
 			}
 		}
@@ -1698,6 +1715,7 @@ func (svc *Service) ListFlavorsDetail(c *gin.Context) {
 			"os-flavor-access:is_public": isPublic,
 			"rxtx_factor":                1.0,
 			"swap":                       "",
+			"extra_specs":                svc.flavorExtraSpecs(ctx, id),
 		})
 	}
 
@@ -1762,6 +1780,7 @@ func (svc *Service) GetFlavor(c *gin.Context) {
 		"os-flavor-access:is_public": isPublic,
 		"rxtx_factor":                1.0,
 		"swap":                       "",
+		"extra_specs":                svc.flavorExtraSpecs(ctx, id),
 	}
 
 	// Store in cache (24 hour TTL - flavors rarely change)

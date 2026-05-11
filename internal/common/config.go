@@ -31,6 +31,7 @@ type TaskConfig struct {
 
 type ServerConfig struct {
 	CORSAllowedOrigins []string `yaml:"cors_allowed_origins"`
+	BindHost           string   `yaml:"bind_host"` // Default bind address for all services; defaults to "127.0.0.1"
 }
 
 type DatabaseConfig struct {
@@ -195,6 +196,15 @@ func LoadConfig(path string) (*Config, error) {
 	if jwtSecret := os.Getenv("O3K_JWT_SECRET"); jwtSecret != "" {
 		cfg.Keystone.JWTSecret = jwtSecret
 	}
+	if s3Bucket := os.Getenv("O3K_S3_BUCKET"); s3Bucket != "" {
+		cfg.Glance.S3Bucket = s3Bucket
+	}
+	if s3Region := os.Getenv("O3K_S3_REGION"); s3Region != "" {
+		cfg.Glance.S3Region = s3Region
+	}
+	if s3Endpoint := os.Getenv("O3K_S3_ENDPOINT"); s3Endpoint != "" {
+		cfg.Glance.S3Endpoint = s3Endpoint
+	}
 
 	// Refuse to start with default JWT secret in production.
 	// Skip the check when no secret is set at all — zero-config mode will
@@ -209,4 +219,76 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+// ValidateConfig checks required fields and allowed enum values.
+// It does not enforce JWT secret strength — that check lives in main.go
+// because zero-config mode may supply the secret after LoadConfig returns.
+func ValidateConfig(cfg *Config) error {
+	// Database: at least one of URL or Datastore must be set (zero-config
+	// mode sets them after this call, so only validate when both are present).
+	if cfg.Database.URL != "" || cfg.Database.Datastore != "" {
+		ds := cfg.Database.Datastore
+		if ds == "" {
+			ds = cfg.Database.URL
+		}
+		if ds == "" {
+			return fmt.Errorf("database.url or database.datastore must not be empty")
+		}
+	}
+
+	// Service ports: 0 means "not configured" (zero-config mode uses defaults),
+	// so only validate ports that are explicitly set to an out-of-range value.
+	ports := map[string]int{
+		"keystone.port": cfg.Keystone.Port,
+		"nova.port":     cfg.Nova.Port,
+		"neutron.port":  cfg.Neutron.Port,
+		"cinder.port":   cfg.Cinder.Port,
+		"glance.port":   cfg.Glance.Port,
+		"tunnel.port":   cfg.Tunnel.Port,
+	}
+	for name, port := range ports {
+		if port != 0 && (port < 1 || port > 65535) {
+			return fmt.Errorf("%s: invalid port %d (must be 1-65535)", name, port)
+		}
+	}
+
+	// Storage mode enum validation.
+	allowedStorageModes := map[string]bool{
+		"stub": true, "local": true, "rbd": true, "s3": true,
+		"local,rbd": true, "local,s3": true, "rbd,s3": true,
+		"local,rbd,s3": true,
+	}
+	if mode := cfg.Cinder.StorageMode; mode != "" && !allowedStorageModes[mode] {
+		return fmt.Errorf("cinder.storage_mode: unknown value %q", mode)
+	}
+	if mode := cfg.Glance.StorageMode; mode != "" && !allowedStorageModes[mode] {
+		return fmt.Errorf("glance.storage_mode: unknown value %q", mode)
+	}
+
+	// Networking mode enum validation.
+	allowedNetworkingModes := map[string]bool{
+		"stub": true, "iptables": true, "ebpf": true, "real": true,
+	}
+	if mode := cfg.Neutron.NetworkingMode; mode != "" && !allowedNetworkingModes[mode] {
+		return fmt.Errorf("neutron.networking_mode: unknown value %q", mode)
+	}
+
+	// Real libvirt mode requires a URI.
+	if cfg.Nova.LibvirtMode == "real" && cfg.Nova.LibvirtURI == "" {
+		return fmt.Errorf("nova.libvirt_uri must be set when nova.libvirt_mode is \"real\"")
+	}
+
+	return nil
+}
+
+// BindAddress returns "host:port", using cfg.Server.BindHost as the host
+// component. When BindHost is empty it defaults to "127.0.0.1" (loopback
+// only). Pass "0.0.0.0" in the config to listen on all interfaces.
+func BindAddress(cfg *Config, port int) string {
+	host := cfg.Server.BindHost
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	return fmt.Sprintf("%s:%d", host, port)
 }

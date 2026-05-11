@@ -259,6 +259,7 @@ func (svc *Service) CreatePort(c *gin.Context) {
 			"name":                  req.Port.Name,
 			"network_id":            req.Port.NetworkID,
 			"tenant_id":             projectID,
+			"project_id":            projectID,
 			"device_id":             req.Port.DeviceID,
 			"device_owner":          req.Port.DeviceOwner,
 			"mac_address":           macAddress,
@@ -266,7 +267,15 @@ func (svc *Service) CreatePort(c *gin.Context) {
 			"status":                "ACTIVE",
 			"fixed_ips":             fixedIPs,
 			"security_groups":       securityGroups,
+			"binding:vif_type":      "ovs",
+			"binding:vnic_type":     "normal",
+			"binding:host_id":       "",
+			"binding:vif_details":   map[string]interface{}{"port_filter": true, "connectivity": "l2"},
+			"binding:profile":       map[string]interface{}{},
+			"port_security_enabled": true,
 			"allowed_address_pairs": allowedAddressPairs,
+			"dns_name":              "",
+			"dns_assignment":        []interface{}{},
 			"created_at":            now.Format(time.RFC3339),
 			"updated_at":            now.Format(time.RFC3339),
 		},
@@ -694,18 +703,25 @@ func (svc *Service) UpdatePort(c *gin.Context) {
 		}
 
 		// Replace the port's security group associations atomically.
-		_, err := svc.activeDB().Exec(c.Request.Context(),
+		sgTx, err := svc.activeDB().BeginTx(c.Request.Context(), database.TxOptions{})
+		if err != nil {
+			log.Error().Err(err).Str("operation", "update_port_sg_begin_tx").Str("port_id", portID).Msg("database error")
+			common.SendError(c, common.NewInternalServerError("failed to update port security groups"))
+			return
+		}
+		defer sgTx.Rollback(c.Request.Context()) //nolint:errcheck
+
+		if _, err := sgTx.Exec(c.Request.Context(),
 			"DELETE FROM port_security_groups WHERE port_id = $1",
 			portID,
-		)
-		if err != nil {
+		); err != nil {
 			log.Error().Err(err).Str("operation", "update_port_sg_delete").Str("port_id", portID).Msg("database error")
 			common.SendError(c, common.NewInternalServerError("failed to update port security groups"))
 			return
 		}
 
 		for _, sgID := range req.Port.SecurityGroups {
-			if _, err := svc.activeDB().Exec(c.Request.Context(),
+			if _, err := sgTx.Exec(c.Request.Context(),
 				"INSERT INTO port_security_groups (port_id, security_group_id) VALUES ($1, $2)",
 				portID, sgID,
 			); err != nil {
@@ -713,6 +729,12 @@ func (svc *Service) UpdatePort(c *gin.Context) {
 				common.SendError(c, common.NewInternalServerError("failed to update port security groups"))
 				return
 			}
+		}
+
+		if err := sgTx.Commit(c.Request.Context()); err != nil {
+			log.Error().Err(err).Str("operation", "update_port_sg_commit").Str("port_id", portID).Msg("database error")
+			common.SendError(c, common.NewInternalServerError("failed to update port security groups"))
+			return
 		}
 	}
 
@@ -773,9 +795,15 @@ func (svc *Service) allocateIPFromSubnet(ctx context.Context, subnetID, cidr str
 		return "", nil, fmt.Errorf("failed to iterate IPs: %w", err)
 	}
 
-	// Reserve .1 for gateway, .2-.9 for infrastructure; start at .10
+	// Calculate the usable range from the CIDR.
+	// First usable = network + 2 (skip network address and gateway).
+	// Last usable  = broadcast - 1 (skip broadcast address).
+	ones, bits := ipNet.Mask.Size()
+	hostBits := bits - ones
+	totalHosts := uint(1) << hostBits // includes network and broadcast
+
 	var candidate net.IP
-	for offset := uint(10); offset < 250; offset++ {
+	for offset := uint(2); offset < totalHosts-1; offset++ {
 		candidate = incrementIP(ipNet.IP, offset)
 		if !ipNet.Contains(candidate) {
 			break

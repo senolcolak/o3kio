@@ -222,8 +222,8 @@ func (svc *Service) UnshelveInstance(c *gin.Context) {
 		return
 	}
 
-	// Can only unshelve a shelved instance
-	if status != "SHELVED" {
+	// Can only unshelve a shelved instance (SHELVED or SHELVED_OFFLOADED are both valid)
+	if status != "SHELVED" && status != "SHELVED_OFFLOADED" {
 		common.SendError(c, common.NewInvalidStateError(fmt.Sprintf("cannot unshelve instance in %s state", status)))
 		return
 	}

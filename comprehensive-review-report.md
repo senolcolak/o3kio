@@ -1,233 +1,257 @@
-# O3K Production Readiness Assessment — v7 (Post C1+C2+C3 Spec Features)
+# O3K Comprehensive Review v5 — Final Report
 
-**Date**: 2026-05-07
-**Review Method**: 5 per-package deep-read agents, spec-grounded analysis
-**Branch**: `main` (commit `bce4fd6`)
-**Previous Score (v6)**: 7.5/10
-**Current Score**: **8.0/10**
+**Date**: 2026-05-11
+**Branch**: main (commit 3f924a6)
+**Reviewer**: Three-wave comprehensive review (10 + 11 + 10 = 31 agents)
+**Previous scores**: v3=4.5/10, v4=5.5/10
 
 ---
 
 ## Executive Summary
 
-The three spec features (C1 access rules, C2 legacy_auth, C3 policy engine) are now implemented. Legacy auth works correctly with timing-safe comparison and transparent upgrade. The policy engine parses and evaluates rules with caching. Access rules are stored in JWT and enforced by middleware.
+**Overall Score: 3.5/10 — NOT PRODUCTION READY**
 
-However, this deep audit reveals **2 CRITICALs, 14 HIGHs, 14 MEDIUMs, and 22 LOWs**. The issues fall into four categories:
+O3K is a functioning development prototype that can serve basic CRUD operations. It is fundamentally unsuitable for any environment where data integrity, security, observability, or reliability matter. The codebase has critical gaps in every production-readiness dimension:
 
-1. **Spec features implemented but with correctness gaps**: unrestricted flag bypass (auth_method not in JWT), access rule `service` field ignored, policy engine operator precedence wrong, no cycle detection
-2. **Response shape gaps**: Nova missing security_groups/links arrays, Cinder Create/Update responses diverge from Get
-3. **Hardcoded values**: availability_zone, encrypted, console URLs, hypervisor stats
-4. **Operational safety**: empty JWT secret accepted, role escalation via app credentials, cache key mismatch in Glance
+| Dimension | Score | Assessment |
+|-----------|-------|------------|
+| API Fidelity | 3/10 | ~40% of required fields present; Terraform/Horizon broken |
+| Security | 2/10 | IDOR vulnerabilities, hardcoded secrets, no RBAC enforcement |
+| Data Integrity | 3/10 | Race conditions on every write path, quota bypass |
+| Observability | 1/10 | Zero metrics, no structured logging, no tracing, no health checks |
+| Reliability | 3/10 | Goroutine leaks, no timeouts, no graceful degradation |
+| Configuration | 2/10 | Secrets in plaintext, no validation, no env var support |
+| Migration Safety | 2/10 | No rollback, duplicate tables, data loss on migrate |
+| Test Coverage | 3/10 | No integration tests for critical paths, no concurrency tests |
+| SPEC-006 Compliance | 4/10 | Migrations ported but not embedded, no --datastore, no TLS default |
+| SPEC-000 Compliance | 3/10 | 342 routes registered but ~60% return incomplete/wrong responses |
 
-**Score improvement from v6**: +0.5 (C1+C2+C3 implemented; but correctness gaps in those implementations prevent full credit)
-
----
-
-## Score Justification
-
-```
-v6 assessment:                    7.5/10
-After C1+C2+C3 (this review):    8.0/10
-Next target (fix CRITICALs+HIGHs): 8.8/10
-Full spec compliance target:       9.5/10
-```
-
-**Why 8.0 not 8.5**: The three spec features exist but have correctness issues:
-- Access rules: service field silently ignored (weaker isolation than intended)
-- Policy engine: and/or have equal precedence (breaks policies copied from real OpenStack)
-- unrestricted: enforcement only works on same HTTP request (bypass via follow-up requests)
-- Audit logging: still completely absent
-
-The previous v6 CRITICALs (C1 access rules, C2 legacy_auth, C3 policy engine) are no longer "not implemented" — they ARE implemented. But they have implementation bugs that reduce their security value.
+**Why the score dropped from v4 (5.5) to v5 (3.5):**
+The v4 score was inflated by giving credit for "routes exist" and "migrations ported." This review applied production-readiness criteria honestly. Having 342 routes means nothing when 60% return responses that break Terraform. Having 74 SQLite migrations means nothing when duplicate CREATE TABLE statements crash fresh installs. The code exists but doesn't work correctly under real-world conditions.
 
 ---
 
-## Findings by Severity
+## Finding Totals (Deduplicated Across All 3 Waves)
 
-### CRITICAL (2) — Security/Correctness Blockers
-
-| # | Package | Finding | Impact |
-|---|---------|---------|--------|
-| C1 | keystone | unrestricted flag bypass — auth_method not carried in JWT, check only works on same request | Restricted app credentials can create new credentials on subsequent requests |
-| C2 | glance | Cache key mismatch — GetImage uses project-scoped key, DeleteImage invalidates unscoped key | Deleted images served from cache for up to 1 hour |
-
-### HIGH (14)
-
-| # | Package | Finding | Impact |
-|---|---------|---------|--------|
-| H1 | keystone | Access rule `service` field silently ignored | Cross-service access not prevented |
-| H2 | keystone | Policy engine infinite recursion on circular rule references | Server panic on malformed policies |
-| H3 | keystone | App credential roles not validated against caller's roles | Privilege escalation |
-| H4 | nova | Console URL uses request Host, not configured proxy | Console broken in multi-host |
-| H5 | nova | Tenant usage ignores start/end params | Billing/usage reports wrong |
-| H6 | nova | Server responses missing security_groups array | Horizon SG tab empty, Terraform drift |
-| H7 | nova | Missing OS-EXT-SRV-ATTR:root_device_name, launch_index | Horizon extended info blank |
-| H8 | nova | GetServer/ListServersDetail missing links array | Terraform canonical URL resolution fails |
-| H9 | neutron | N+1 query in ListPorts (per-port SG query) | Performance cliff on large port lists |
-| H10 | neutron | RemoveRouterInterface response missing required fields | gophercloud/Terraform state mismatch |
-| H11 | neutron | CreateRouter namespace before DB insert, cleanup silently fails | Orphaned namespaces on failure |
-| H12 | cinder | availability_zone hardcoded "nova" (FR-012) | Multi-AZ deployments broken |
-| H13 | cinder | encrypted hardcoded false (FR-012) | Encrypted volumes report as unencrypted |
-| H14 | middleware | Empty JWT secret accepted in production | Auth bypass if secret left blank |
-
-### MEDIUM (14)
-
-| # | Package | Finding |
-|---|---------|---------|
-| M1 | keystone | Policy parser: and/or equal precedence (breaks standard boolean logic) |
-| M2 | keystone | Tokenizer silently drops unrecognized tokens |
-| M3 | keystone | Cache key non-deterministic for nested maps |
-| M4 | nova | ListServersDetail ORDER BY missing id tiebreaker |
-| M5 | nova | Hypervisor statistics hardcoded constants |
-| M6 | nova | ForceDeleteInstanceAction bypasses policy engine |
-| M7 | nova | UpdateServer returns user_id = projectID (wrong field) |
-| M8 | neutron | allocateFloatingIP commits before row insert (TOCTOU) |
-| M9 | neutron | DeleteNetwork deletes bridge before DB row |
-| M10 | neutron | CreateSecurityGroup default rule insert errors discarded |
-| M11 | neutron | ListSecurityGroupRules no pagination |
-| M12 | cinder | Pagination uses non-unique created_at (no id tiebreaker) |
-| M13 | glance | protected field hardcoded false, not persisted |
-| M14 | middleware | RequireProjectScope not in global middleware chain |
-
-### LOW (22)
-
-Not listed individually — mostly: rows.Err() unchecked in edge paths, fmt.Println instead of structured logger, test type mismatches, dead code, cursor tie issues, goroutine leak in tests.
+| Severity | Count | Examples |
+|----------|-------|----------|
+| CRITICAL | 42 | Race conditions, IDOR, data loss, zero observability |
+| HIGH | 78 | Broken API responses, missing validation, goroutine leaks |
+| MEDIUM | 64 | Inconsistent naming, dead code, missing pagination |
+| LOW | 12 | Style issues, minor config gaps |
+| **TOTAL** | **196** | |
 
 ---
 
-## Spec Coverage Analysis
+## Top 15 Most Severe Issues (Ordered by Impact)
 
-### keystone-minimal-iam-design-v2
+### Tier 1: Data Loss / Security Breach Risk
 
-| Requirement | v6 Status | v7 Status |
-|-------------|-----------|-----------|
-| App credential CRUD | WORKING | WORKING |
-| App credential authentication | WORKING | WORKING |
-| Bcrypt cost 12 | WORKING | WORKING |
-| Token revocation (DB-persisted) | WORKING | WORKING |
-| Service catalog in token | WORKING | WORKING |
-| Access rules (path/method/service) | NOT IMPLEMENTED | PARTIAL (service field ignored) |
-| unrestricted flag enforcement | NOT IMPLEMENTED | BROKEN (same-request only) |
-| legacy_auth backward compat | NOT IMPLEMENTED | WORKING |
-| Policy engine (RBAC evaluation) | NOT IMPLEMENTED | PARTIAL (precedence wrong, no cycle detection) |
-| Audit logging (auth events) | NOT IMPLEMENTED | NOT IMPLEMENTED |
+| # | Issue | Location | Impact |
+|---|-------|----------|--------|
+| 1 | Quota bypass via silent DB errors | nova/quotas.go:256-278 | Unlimited resource creation on any DB hiccup |
+| 2 | IDOR on GetUserProjects/GetUserGroups | keystone/handlers.go:1529-1587 | Any user enumerates any other user's access |
+| 3 | Cross-tenant os-attach | cinder/volumes.go:875-935 | Attach any volume to any VM across projects |
+| 4 | access_rules parse failure → unrestricted | keystone/auth.go:671-677 | Malformed JSON grants all permissions |
+| 5 | Admin credentials in seed migration | migrations/002_seed_data.up.sql | Known credentials in every deployment |
+| 6 | JWT secret not validated at startup | config/o3k.yaml + main.go | Default "change-me" runs in production |
 
-**Coverage: ~65%** (up from 45% in v6)
+### Tier 2: System Reliability / Correctness
 
-### SPEC-002 (Horizon Full Compatibility)
+| # | Issue | Location | Impact |
+|---|-------|----------|--------|
+| 7 | Task constants mismatch | tunnel/task.go vs executor.go | Agent tasks silently never execute |
+| 8 | os-attach/detach/extend race conditions | cinder/volumes.go | Volume corruption under concurrent access |
+| 9 | Floating IP TOCTOU | neutron/handlers.go | Orphaned port bindings, IP conflicts |
+| 10 | resultCh goroutine leak | scheduler/hub_adapter.go:48-57 | Memory leak proportional to cancelled tasks |
+| 11 | Duplicate CREATE TABLE in migrations | sqlite/003,005,007 + 009,011 | Fresh install crashes |
+| 12 | Reconciler SQLite deadlock | scheduler/ | Guaranteed deadlock under load |
 
-| Requirement | v6 Status | v7 Status |
-|-------------|-----------|-----------|
-| FR-001: Token format with catalog | WORKING | WORKING |
-| FR-003: Microversion headers | WORKING | WORKING |
-| FR-005: Server extended attributes | PARTIAL | PARTIAL (root_device_name, launch_index missing) |
-| FR-006: Marker-based pagination | PARTIAL | PARTIAL (id tiebreaker missing in several endpoints) |
-| FR-009: Network provider attributes | BROKEN | WORKING (reads from DB now) |
-| FR-010: Security group rules in response | PARTIAL | WORKING (Create returns default rules) |
-| FR-011: Router interface response | PARTIAL | PARTIAL (Remove still missing fields) |
-| FR-012: Volume detail attributes | BROKEN | PARTIAL (volume_type from DB; AZ/encrypted still hardcoded) |
-| FR-014: Quota set format | WORKING | WORKING |
-| FR-015: Tenant usage with servers | PARTIAL | PARTIAL (flavor correct; time range ignored) |
-| FR-020: Hypervisor statistics | PARTIAL | PARTIAL (hardcoded values) |
+### Tier 3: Operational Blindness
 
-**Coverage: ~60%** (up from 55% in v6)
+| # | Issue | Location | Impact |
+|---|-------|----------|--------|
+| 13 | Zero Prometheus metrics | (entire codebase) | Cannot monitor, alert, or SLO |
+| 14 | No health/readiness endpoints | (entire codebase) | Kubernetes can't manage lifecycle |
+| 15 | No structured logging | middleware/logging.go | Cannot query logs, correlate requests |
 
 ---
 
-## What Still Breaks
+## Systemic Patterns (8 Cross-Cutting Issues)
 
-| Scenario | What Happens | Root Cause |
-|----------|--------------|------------|
-| Horizon opens VNC console | Wrong URL returned | H4: uses request Host not proxy config |
-| Horizon instance detail | Missing SG tab, links | H6, H8: fields absent from response |
-| Restricted app cred creates nested cred | Succeeds (should fail) | C1: auth_method not in JWT |
-| Admin stores circular policy rules | Server panic | H2: no cycle detection |
-| Member creates app cred with admin role | Succeeds (should fail) | H3: roles not validated |
-| Delete image then GET | Returns stale data for 1h | C2: cache key mismatch |
-| Multi-AZ volume operations | Wrong AZ reported | H12: hardcoded "nova" |
-| Encrypted volume display | Shows "not encrypted" | H13: hardcoded false |
-| Operator deploys with blank JWT secret | All tokens cross-verifiable | H14: empty string accepted |
-| Horizon Usage tab with date filter | Ignores date range | H5: params not applied |
+### Pattern 1: CONCURRENCY IS BROKEN (affects 4 packages)
+Every write operation that involves a read-then-write pattern has a race condition. The codebase uses transactions but doesn't use SELECT FOR UPDATE, row-level locks, or compare-and-swap patterns. Under any concurrent load, data corruption is guaranteed.
 
----
+**Affected operations**: os-attach, os-detach, os-extend, floating IP assign, security group update, quota check, subnet IP allocation, volume transfer.
 
-## What Now Works (Confirmed v7 Improvements Over v6)
+### Pattern 2: API RESPONSES ARE INCOMPLETE (affects all 5 services)
+Terraform, Horizon, and OpenStack CLI all expect specific response schemas. O3K returns ~40% of required fields. Every service has missing fields that break at least one major consumer.
 
-1. **Access rules stored in JWT and enforced by middleware** (path + method matching works)
-2. **Legacy auth dual-path with transparent bcrypt upgrade** (timing-safe)
-3. **Policy engine evaluates role/user_id/project_id/rule references** (basic rules work)
-4. **Policy CRUD API with DB persistence and cache refresh**
-5. **Network provider:network_type reads from DB** (was hardcoded "flat")
-6. **CreateSecurityGroup returns default egress rules** (was empty)
-7. **Bridge creation after DB insert** in CreateNetwork (was before)
-8. **allocateIPFromSubnet no longer locks all ports** (scoped to subnet)
-9. **Floating IP allocation transactional** (serializable isolation)
-10. **Glance owner field present** in image responses
+**Most broken**: Nova (missing 15+ fields in CreateServer), Neutron (missing provider attributes), Cinder (missing admin extensions), Keystone (missing interface in catalog).
 
----
+### Pattern 3: OBSERVABILITY IS ZERO (affects entire system)
+No metrics, no structured logging, no tracing, no health checks, no audit trail. The system is a black box. You cannot:
+- Know if it's healthy
+- Know what's slow
+- Know what's failing
+- Know who did what
+- Set alerts
+- Define SLOs
 
-## Remediation Priority
+### Pattern 4: SECURITY IS FACADE (affects auth layer)
+Policy engine only enforced on 3 delete operations. IDOR on user endpoints. Domain tokens silently degrade. Auth bypass path too broad. Hardcoded credentials. No rate limiting. No CSRF. The system provides the illusion of security without substance.
 
-### Phase 1: Fix CRITICALs (2-3 hours)
-1. **C1**: Add `is_app_credential` + `unrestricted` to JWT claims; check in CreateAppCred — 1.5h
-2. **C2**: Fix Glance DeleteImage cache key to include projectID — 10 min
+### Pattern 5: ERROR MESSAGES ARE OPAQUE (affects all services)
+Every error returns a generic message with no context: no request_id, no resource identifier, no reason, no suggested action. Debugging requires reading source code — logs and error responses provide zero diagnostic value.
 
-### Phase 2: Fix Security HIGHs (3-4 hours)
-1. **H1**: Add service matching to EnforceAccessRules middleware — 30 min
-2. **H2**: Add visited-set cycle detection to policy evaluate — 30 min
-3. **H3**: Validate requested roles against caller's actual roles — 1h
-4. **H14**: Reject empty JWT secret in LoadConfig — 10 min
+### Pattern 6: MIGRATION SYSTEM IS FRAGILE (affects database layer)
+72 migrations with no rollback path. Duplicate table definitions that crash fresh installs. Data loss on PostgreSQL→SQLite migration. Migrations not embedded in binary. No testing that migrations work on clean database.
 
-### Phase 3: Fix Remaining HIGHs (4-5 hours)
-1. **H4-H8**: Nova response completeness (console URL from config, security_groups, links, ext attrs) — 3h
-2. **H9-H11**: Neutron N+1, RemoveRouterInterface, CreateRouter ordering — 2h
-3. **H12-H13**: Cinder AZ/encrypted from DB — 1h
+### Pattern 7: TASK DISPATCH IS NON-FUNCTIONAL (affects scheduler/tunnel)
+Task type constants don't match between sender and executor. Dispatcher bypasses inflight tracking. Random dispatch ignores scheduling algorithm. No timeout, no retry ceiling, success path leaks resources. The agent task system cannot actually execute tasks.
 
-### Phase 4: Fix MEDIUMs (4-6 hours)
-- M1-M14: Operator precedence, pagination tiebreakers, policy bypass, etc. — 4-6h
-
-### Effort Summary
-
-| Category | Effort | Impact on Score |
-|----------|--------|----------------|
-| Fix CRITICALs (C1-C2) | 2-3 hours | 8.0 → 8.2 |
-| Fix security HIGHs (H1-H3, H14) | 3-4 hours | 8.2 → 8.5 |
-| Fix remaining HIGHs (H4-H13) | 4-5 hours | 8.5 → 8.8 |
-| Fix MEDIUMs (M1-M14) | 4-6 hours | 8.8 → 9.0 |
-| Implement audit logging | 4-6 hours | 9.0 → 9.2 |
-| Full spec compliance (contract tests, remaining FRs) | 15-20 hours | 9.2 → 9.5 |
-
-**Total to reach 9.0/10**: ~18-22 hours (all CRITICALs + HIGHs + MEDIUMs)
-**Total to reach 9.5/10**: ~40-50 hours (+ audit logging + contract tests + remaining FR gaps)
+### Pattern 8: CONFIGURATION IS UNSAFE (affects deployment)
+Secrets in plaintext config files. No environment variable substitution. No startup validation. Default configuration is insecure (plaintext gRPC, * CORS, 0.0.0.0 binding, known credentials). No separation of secrets from non-secret configuration.
 
 ---
 
-## Honest Assessment: What C1+C2+C3 Actually Delivered
+## SPEC-006 Compliance Assessment
 
-| Feature | Intended | Actual |
-|---------|----------|--------|
-| Access rules | Per-service path/method restriction | Path/method only — service field ignored |
-| Legacy auth | Seamless upgrade from old credentials | Working correctly |
-| Policy engine | oslo.policy-compatible rule evaluation | Works for simple rules; precedence wrong for complex rules; crashes on cycles |
-| unrestricted enforcement | Prevent credential escalation | Only works within same HTTP request (bypass trivial) |
+| Requirement | Status | Detail |
+|-------------|--------|--------|
+| Full SQLite migration set (71+) | PARTIAL | 74 files exist but 3 have duplicate CREATE TABLE (crash on fresh DB) |
+| Migrations embedded in binary | NOT MET | Uses filesystem path, not go:embed |
+| --datastore CLI flag | NOT MET | No CLI flag to switch SQLite/PostgreSQL |
+| Zero-config bootstrap | PARTIAL | Ports bind to fixed values now, but no TLS, no token auto-gen |
+| Agent token auto-generated | NOT MET | Must be manually configured |
+| TunnelHub secure by default | NOT MET | Plaintext gRPC, opt-in TLS only |
+| One-liner install | NOT MET | Requires config file + migration directory |
 
-**Honest verdict**: Legacy auth is solid. Access rules and policy engine are 80% there but have correctness gaps that reduce their security value. The unrestricted enforcement is effectively broken and needs a JWT-level fix.
-
----
-
-## Build Status
-
-- `go build ./...` — PASS
-- `go vet ./...` — PASS (warnings in test/ only)
-- `go test ./internal/...` — PASS (all packages)
+**SPEC-006 Score: 4/10** — Foundation work done (migrations ported) but the "zero-config one-liner" goal is not achievable with current implementation.
 
 ---
 
-## Methodology
+## SPEC-000 (API Fidelity) Compliance Assessment
 
-1. Dispatched 5 per-package Wave 0 agents reading ALL code in each package group
-2. Each agent reviewed against three design specifications
-3. Every finding verified by reading actual code
-4. Compared response shapes (Create vs Get vs List) for completeness
-5. Checked for hardcoded values that should be DB/config-backed
-6. Verified security features (access rules, policy, unrestricted) end-to-end
+| Service | Routes | Working Correctly | Terraform Compatible | Horizon Compatible |
+|---------|--------|-------------------|---------------------|-------------------|
+| Keystone | 45 | ~60% | Partially (catalog broken) | Partially (policy broken) |
+| Nova | 89 | ~35% | No (missing fields) | No (missing extensions) |
+| Neutron | 78 | ~40% | Partially (port update broken) | Partially (provider attrs missing) |
+| Cinder | 67 | ~45% | No (extra_specs broken) | No (admin attrs missing) |
+| Glance | 34 | ~50% | Partially (checksum missing) | Partially (shared access broken) |
+| Metadata | 29 | ~80% | N/A | N/A |
+
+**SPEC-000 Score: 3/10** — Routes exist and return JSON, but response schemas are incomplete enough to break all major consumers (Terraform, Horizon, CLI) on non-trivial workflows.
+
+---
+
+## Comparison with v4 Review
+
+| Dimension | v4 Score | v5 Score | Change | Reason |
+|-----------|----------|----------|--------|--------|
+| Migrations | 7/10 | 4/10 | -3 | Duplicate tables discovered, no rollback, not embedded |
+| Security | 4/10 | 2/10 | -2 | IDOR + access_rules confirmed with exact code paths |
+| Concurrency | 3/10 | 2/10 | -1 | os-detach and os-extend races newly discovered |
+| API Fidelity | 5/10 | 3/10 | -2 | Wave 2 enumerated exact missing fields per endpoint |
+| Observability | 3/10 | 1/10 | -2 | Confirmed literally zero instrumentation |
+| Overall | 5.5/10 | 3.5/10 | -2 | Honest assessment vs. generous grading |
+
+**Why scores dropped**: v4 gave partial credit for "attempted" work. v5 evaluates "does it actually work correctly in production conditions?" The answer is consistently no.
+
+---
+
+## Recommended Fix Priority (Phase 4 Order)
+
+### Wave A: Data Integrity (fix first — prevents data loss)
+1. Fix duplicate CREATE TABLE in SQLite migrations (blocks fresh installs)
+2. Fix os-attach/detach/extend race conditions (FOR UPDATE + transaction)
+3. Fix quota bypass (propagate DB errors instead of swallowing)
+4. Fix floating IP TOCTOU (hold transaction through update)
+5. Fix task constants mismatch ("create_vm" → "VM_CREATE")
+6. Fix resultCh goroutine leak (buffered channel or cleanup)
+
+### Wave B: Security (fix second — prevents breaches)
+7. Add project_id scope check on GetUserProjects/GetUserGroups
+8. Fix access_rules parse failure (reject malformed JSON, don't grant all)
+9. Validate JWT secret at startup (refuse to start with default)
+10. Add instance ownership check in os-attach
+11. Fix auth bypass path (narrow /v2 pattern)
+
+### Wave C: Observability (fix third — enables monitoring)
+12. Add /healthz and /readyz endpoints
+13. Add Prometheus metrics endpoint with basic request counters
+14. Replace fmt.Println with slog structured logging
+15. Add request_id middleware (generate + propagate)
+16. Fix duration_ms calculation (nanoseconds → milliseconds)
+
+### Wave D: API Completeness (fix fourth — enables consumers)
+17. Add missing Nova CreateServer response fields
+18. Add missing Neutron port/network response fields
+19. Fix Keystone catalog (add interface field)
+20. Add pagination support (marker/limit) on list endpoints
+21. Fix error response format to OpenStack standard
+
+### Wave E: Configuration Safety (fix fifth — enables deployment)
+22. Add env var substitution for secrets
+23. Add startup config validation
+24. Generate random JWT secret if not configured
+25. Restrict default bind address to 127.0.0.1
+
+---
+
+## Deferred Items (Require Architectural Decisions)
+
+These items need design discussion before implementation:
+
+| Item | Reason for Deferral |
+|------|---------------------|
+| go:embed migrations | Requires build system changes + testing strategy |
+| Full RBAC/policy enforcement | Requires policy definition file format decision |
+| OpenTelemetry tracing | Requires trace collector infrastructure decision |
+| TLS-by-default for gRPC | Requires certificate management strategy |
+| SQLite→PostgreSQL live migration | Requires data mapping decisions for lossy columns |
+| Microversion negotiation | Requires version matrix definition |
+
+---
+
+## Conclusion
+
+O3K has the skeleton of an OpenStack replacement but lacks the flesh. The 342 registered routes create an appearance of completeness that conceals fundamental gaps in every production dimension. The system will:
+
+- **Corrupt data** under concurrent access (any multi-user scenario)
+- **Leak resources** (goroutines, DB connections, inflight tasks)
+- **Break Terraform/Horizon** on non-trivial workflows
+- **Provide zero visibility** into its own health or behavior
+- **Accept default credentials** without warning
+- **Crash on fresh install** due to duplicate migration tables
+
+The path from here to production requires fixing ~196 findings across 8 systemic patterns. The recommended fix order (Waves A-E) prioritizes data integrity and security before features and polish.
+
+**Estimated effort to reach 7/10 (minimum viable production)**: 150-200 focused engineering hours addressing Waves A-C completely and Wave D partially.
+
+---
+
+## Files Referenced
+
+| File | Finding Count | Most Severe |
+|------|--------------|-------------|
+| internal/nova/quotas.go | 15 | CRITICAL (quota bypass) |
+| internal/nova/handlers.go | 14 | CRITICAL (missing response fields) |
+| internal/neutron/handlers.go | 16 | CRITICAL (IP allocation, TOCTOU) |
+| internal/cinder/volumes.go | 13 | CRITICAL (race conditions x3) |
+| internal/keystone/handlers.go | 12 | CRITICAL (IDOR, catalog) |
+| internal/keystone/auth.go | 4 | CRITICAL (access_rules) |
+| internal/scheduler/hub_adapter.go | 6 | CRITICAL (goroutine leak) |
+| internal/tunnel/client.go | 5 | CRITICAL (heartbeat leak) |
+| internal/tunnel/task.go + executor.go | 4 | CRITICAL (constants mismatch) |
+| internal/database/sqlite_adapter.go | 5 | HIGH (rewrite bugs) |
+| internal/middleware/logging.go | 3 | CRITICAL (duration wrong) |
+| config/o3k.yaml | 4 | CRITICAL (plaintext secrets) |
+| migrations/002_seed_data.up.sql | 1 | CRITICAL (hardcoded creds) |
+| migrations/sqlite/ (multiple) | 3 | CRITICAL (duplicate tables) |
+
+---
+
+*Report generated by comprehensive-review v3 (31 agents, 3 waves)*
+*Review directory: /tmp/claude-review/20260511-114405/*

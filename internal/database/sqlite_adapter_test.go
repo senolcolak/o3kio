@@ -98,7 +98,7 @@ func TestRewriteDialect(t *testing.T) {
 		{
 			name: "EXTRACT EPOCH",
 			in:   "SELECT EXTRACT(EPOCH FROM (NOW() - created_at)) / 3600",
-			want: "SELECT CAST(strftime('%s', CURRENT_TIMESTAMP - created_at) AS INTEGER) / 3600",
+			want: "SELECT (CAST(strftime('%s', CURRENT_TIMESTAMP) AS INTEGER) - CAST(strftime('%s', created_at) AS INTEGER)) / 3600",
 		},
 		{
 			name: "EXTRACT EPOCH nested function call",

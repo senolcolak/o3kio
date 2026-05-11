@@ -7,7 +7,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/binding"
-	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
@@ -58,9 +57,13 @@ func InitLogger(config *common.LoggingConfig) {
 // LoggingMiddleware logs HTTP requests with structured logging
 func LoggingMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Generate request ID
-		requestID := uuid.New().String()
-		c.Set("request_id", requestID)
+		// Use request ID set by RequestIDMiddleware; fall back to generating one
+		// here so LoggingMiddleware works even when registered standalone.
+		requestID := c.GetString("request_id")
+		if requestID == "" {
+			requestID = generateRequestID()
+			c.Set("request_id", requestID)
+		}
 
 		// Start timer
 		start := time.Now()
@@ -114,7 +117,7 @@ func LoggingMiddleware() gin.HandlerFunc {
 			Int("status", statusCode).
 			Dur("duration", duration).
 			Int("response_size", c.Writer.Size()).
-			Dur("duration_ms", duration/time.Millisecond)
+			Int64("duration_ms", duration.Milliseconds())
 
 		if userID != nil {
 			if s, ok := userID.(string); ok {

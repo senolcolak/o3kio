@@ -518,6 +518,8 @@ func (svc *Service) CreateNetwork(c *gin.Context) {
 			"provider:physical_network": nil,
 			"provider:segmentation_id":  nil,
 			"router:external":           isExternal,
+			"port_security_enabled":     true,
+			"subnets":                   []string{},
 			"created_at":                now.Format(time.RFC3339),
 			"updated_at":                now.Format(time.RFC3339),
 		},
@@ -621,6 +623,8 @@ func (svc *Service) ListNetworks(c *gin.Context) {
 			"provider:physical_network": nil,
 			"provider:segmentation_id":  nil,
 			"router:external":           isExternal,
+			"port_security_enabled":     true,
+			"subnets":                   []string{},
 			"created_at":                createdAt.Format(time.RFC3339),
 			"updated_at":                updatedAt.Format(time.RFC3339),
 		})
@@ -700,6 +704,8 @@ func (svc *Service) GetNetwork(c *gin.Context) {
 		"provider:physical_network": nil,
 		"provider:segmentation_id":  nil,
 		"router:external":           isExternal,
+		"port_security_enabled":     true,
+		"subnets":                   []string{},
 		"created_at":                createdAt.Format(time.RFC3339),
 		"updated_at":                updatedAt.Format(time.RFC3339),
 	}
@@ -991,6 +997,10 @@ func (svc *Service) CreateSubnet(c *gin.Context) {
 			"enable_dhcp":      enableDHCP,
 			"dns_nameservers":  req.Subnet.DNSNameservers,
 			"allocation_pools": allocationPools,
+			"service_types":    []string{},
+			"subnetpool_id":    nil,
+			"revision_number":  1,
+			"tags":             []string{},
 			"created_at":       now.Format(time.RFC3339),
 			"updated_at":       now.Format(time.RFC3339),
 		},
@@ -1085,6 +1095,10 @@ func (svc *Service) ListSubnets(c *gin.Context) {
 			"ip_version":      ipVersion,
 			"enable_dhcp":     enableDHCP,
 			"dns_nameservers": dnsNameservers,
+			"service_types":   []string{},
+			"subnetpool_id":   nil,
+			"revision_number": 1,
+			"tags":            []string{},
 			"created_at":      createdAt.Format(time.RFC3339),
 			"updated_at":      updatedAt.Format(time.RFC3339),
 		})
@@ -1152,6 +1166,10 @@ func (svc *Service) GetSubnet(c *gin.Context) {
 			"ip_version":      ipVersion,
 			"enable_dhcp":     enableDHCP,
 			"dns_nameservers": dnsNameservers,
+			"service_types":   []string{},
+			"subnetpool_id":   nil,
+			"revision_number": 1,
+			"tags":            []string{},
 			"created_at":      createdAt.Format(time.RFC3339),
 			"updated_at":      updatedAt.Format(time.RFC3339),
 		},
@@ -1173,6 +1191,27 @@ func (svc *Service) DeleteSubnet(c *gin.Context) {
 	if err == nil {
 		// Stop DHCP server
 		_ = svc.dhcpManager.StopDHCP(networkID)
+	}
+
+	// Refuse to delete if ports are still allocated on this subnet.
+	var portCount int
+	if err := svc.activeDB().QueryRow(c.Request.Context(),
+		"SELECT COUNT(*) FROM ports WHERE subnet_id = $1",
+		subnetID,
+	).Scan(&portCount); err != nil {
+		log.Error().Err(err).Str("operation", "delete_subnet").Str("subnet_id", subnetID).Msg("database error checking ports")
+		common.SendError(c, common.NewInternalServerError("failed to delete subnet"))
+		return
+	}
+	if portCount > 0 {
+		c.JSON(http.StatusConflict, gin.H{
+			"NeutronError": gin.H{
+				"message": "SubnetInUse: Unable to delete subnet, ports still exist on this subnet",
+				"type":    "SubnetInUse",
+				"detail":  "",
+			},
+		})
+		return
 	}
 
 	// Delete from database
@@ -1252,13 +1291,17 @@ func (svc *Service) UpdateSubnet(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"subnet": gin.H{
-			"id":         subnetID,
-			"name":       currentName,
-			"network_id": networkID,
-			"cidr":       cidr,
-			"gateway_ip": gatewayIP,
-			"ip_version": ipVersion,
-			"tenant_id":  projectID,
+			"id":              subnetID,
+			"name":            currentName,
+			"network_id":      networkID,
+			"cidr":            cidr,
+			"gateway_ip":      gatewayIP,
+			"ip_version":      ipVersion,
+			"tenant_id":       projectID,
+			"service_types":   []string{},
+			"subnetpool_id":   nil,
+			"revision_number": 1,
+			"tags":            []string{},
 		},
 	})
 }

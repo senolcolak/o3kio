@@ -23,6 +23,24 @@ type Service struct {
 	db          database.DBIF
 }
 
+// requireAdmin returns true if the caller has the admin role, and writes a 403 if not.
+func requireAdmin(c *gin.Context) bool {
+	if c.GetBool("is_admin") {
+		return true
+	}
+	// Also check the roles slice for callers where is_admin wasn't set by middleware.
+	roles, _ := c.Get("roles")
+	if roleList, ok := roles.([]string); ok {
+		for _, r := range roleList {
+			if r == "admin" {
+				return true
+			}
+		}
+	}
+	common.SendError(c, common.NewForbiddenError("admin role required"))
+	return false
+}
+
 // NewService creates a new Keystone service
 func NewService(authService *AuthService, cacheInstance *cache.Cache) *Service {
 	return &Service{
@@ -662,6 +680,9 @@ func (svc *Service) GetProject(c *gin.Context) {
 
 // CreateProject handles POST /v3/projects
 func (svc *Service) CreateProject(c *gin.Context) {
+	if !requireAdmin(c) {
+		return
+	}
 	var req struct {
 		Project struct {
 			Name        string `json:"name" binding:"required"`
@@ -718,6 +739,9 @@ func (svc *Service) CreateProject(c *gin.Context) {
 
 // UpdateProject handles PATCH /v3/projects/:id
 func (svc *Service) UpdateProject(c *gin.Context) {
+	if !requireAdmin(c) {
+		return
+	}
 	projectID := c.Param("id")
 
 	var req struct {
@@ -797,6 +821,9 @@ func (svc *Service) UpdateProject(c *gin.Context) {
 
 // DeleteProject handles DELETE /v3/projects/:id
 func (svc *Service) DeleteProject(c *gin.Context) {
+	if !requireAdmin(c) {
+		return
+	}
 	projectID := c.Param("id")
 
 	result, err := svc.activeDB().Exec(c.Request.Context(),
@@ -1207,6 +1234,9 @@ func (svc *Service) ListRoleAssignments(c *gin.Context) {
 
 // CreateUser creates a new user (POST /v3/users)
 func (svc *Service) CreateUser(c *gin.Context) {
+	if !requireAdmin(c) {
+		return
+	}
 	var req struct {
 		User struct {
 			Name        string `json:"name" binding:"required"`
@@ -1308,6 +1338,9 @@ func (svc *Service) CreateUser(c *gin.Context) {
 
 // UpdateUser updates an existing user (PATCH /v3/users/:id)
 func (svc *Service) UpdateUser(c *gin.Context) {
+	if !requireAdmin(c) {
+		return
+	}
 	userID := c.Param("id")
 
 	var req struct {
@@ -1426,6 +1459,9 @@ func (svc *Service) UpdateUser(c *gin.Context) {
 
 // DeleteUser deletes a user (DELETE /v3/users/:id)
 func (svc *Service) DeleteUser(c *gin.Context) {
+	if !requireAdmin(c) {
+		return
+	}
 	userID := c.Param("id")
 
 	// Execute delete
@@ -1530,6 +1566,14 @@ func (svc *Service) ChangePassword(c *gin.Context) {
 func (svc *Service) GetUserProjects(c *gin.Context) {
 	userID := c.Param("id")
 
+	// Only the user themselves or an admin may list a user's projects.
+	callerID := c.GetString("user_id")
+	isAdmin, _ := c.Get("is_admin")
+	if callerID != userID && isAdmin != true {
+		common.SendError(c, common.NewForbiddenError("cannot list projects for another user"))
+		return
+	}
+
 	// Check if user exists
 	var exists bool
 	err := svc.activeDB().QueryRow(c.Request.Context(),
@@ -1589,6 +1633,14 @@ func (svc *Service) GetUserProjects(c *gin.Context) {
 // GetUserGroups returns groups for a user (GET /v3/users/:id/groups)
 func (svc *Service) GetUserGroups(c *gin.Context) {
 	userID := c.Param("id")
+
+	// Only the user themselves or an admin may list a user's groups.
+	callerID := c.GetString("user_id")
+	isAdmin, _ := c.Get("is_admin")
+	if callerID != userID && isAdmin != true {
+		common.SendError(c, common.NewForbiddenError("cannot list groups for another user"))
+		return
+	}
 
 	// Check if user exists
 	var exists bool

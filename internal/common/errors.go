@@ -23,8 +23,14 @@ func (e *OpenStackError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Code, e.Message)
 }
 
-// ToJSON converts the error to OpenStack-compatible JSON format
-// OpenStack requires: {"error": {"message": "...", "code": N, "title": "Title"}}
+// ToJSON converts the error to OpenStack-compatible JSON format.
+// For 404 Not Found errors, uses the named fault format required by Terraform:
+//
+//	{"itemNotFound": {"code": 404, "message": "..."}}
+//
+// For all other errors, uses the generic envelope:
+//
+//	{"error": {"message": "...", "code": N, "title": "Title"}}
 func (e *OpenStackError) ToJSON() gin.H {
 	errorBody := gin.H{
 		"message": e.Message,
@@ -34,6 +40,11 @@ func (e *OpenStackError) ToJSON() gin.H {
 
 	if e.Details != "" {
 		errorBody["details"] = e.Details
+	}
+
+	// 404 responses must use the named fault key so Terraform can recognise them.
+	if e.StatusCode == http.StatusNotFound {
+		return gin.H{e.Code: errorBody}
 	}
 
 	return gin.H{
@@ -212,6 +223,14 @@ func NewQuotaExceededError(resource string) *OpenStackError {
 		StatusCode: http.StatusRequestEntityTooLarge,
 		Code:       "overLimit",
 		Message:    fmt.Sprintf("Quota exceeded for resource: %s", resource),
+	}
+}
+
+func NewNotImplementedError(message string) *OpenStackError {
+	return &OpenStackError{
+		StatusCode: http.StatusNotImplemented,
+		Code:       "notImplemented",
+		Message:    message,
 	}
 }
 

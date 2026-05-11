@@ -1,6 +1,7 @@
 package nova
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/cobaltcore-dev/o3k/internal/common"
@@ -9,6 +10,27 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/rs/zerolog/log"
 )
+
+// flavorExtraSpecs queries the extra_specs table for a given flavor ID.
+// Returns an empty map when no specs exist or the table cannot be read.
+func (svc *Service) flavorExtraSpecs(ctx context.Context, flavorID string) map[string]string {
+	specs := make(map[string]string)
+	rows, err := svc.activeDB().Query(ctx,
+		"SELECT key, value FROM flavor_extra_specs WHERE flavor_id = $1",
+		flavorID,
+	)
+	if err != nil {
+		return specs
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var k, v string
+		if rows.Scan(&k, &v) == nil {
+			specs[k] = v
+		}
+	}
+	return specs
+}
 
 // CreateFlavor handles POST /v2.1/flavors
 func (svc *Service) CreateFlavor(c *gin.Context) {
