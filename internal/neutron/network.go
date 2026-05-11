@@ -750,6 +750,50 @@ func (svc *Service) DeleteNetwork(c *gin.Context) {
 		}
 	}
 
+	// Check for active ports (excluding DHCP and router-interface system ports).
+	var portCount int
+	err = svc.activeDB().QueryRow(ctx,
+		`SELECT COUNT(*) FROM ports WHERE network_id = $1 AND device_owner NOT IN ('network:dhcp', 'network:router_interface')`,
+		networkID,
+	).Scan(&portCount)
+	if err != nil {
+		log.Error().Err(err).Str("operation", "delete_network").Str("network_id", networkID).Msg("database error checking ports")
+		common.SendError(c, common.NewInternalServerError("failed to delete network"))
+		return
+	}
+	if portCount > 0 {
+		c.JSON(http.StatusConflict, gin.H{
+			"NeutronError": gin.H{
+				"message": "NetworkInUse: Unable to delete network, ports still exist on this network",
+				"type":    "NetworkInUse",
+				"detail":  "",
+			},
+		})
+		return
+	}
+
+	// Check for subnets.
+	var subnetCount int
+	err = svc.activeDB().QueryRow(ctx,
+		"SELECT COUNT(*) FROM subnets WHERE network_id = $1",
+		networkID,
+	).Scan(&subnetCount)
+	if err != nil {
+		log.Error().Err(err).Str("operation", "delete_network").Str("network_id", networkID).Msg("database error checking subnets")
+		common.SendError(c, common.NewInternalServerError("failed to delete network"))
+		return
+	}
+	if subnetCount > 0 {
+		c.JSON(http.StatusConflict, gin.H{
+			"NeutronError": gin.H{
+				"message": "NetworkInUse: Unable to delete network, subnets still exist on this network",
+				"type":    "NetworkInUse",
+				"detail":  "",
+			},
+		})
+		return
+	}
+
 	bridgeName := "br-" + networkID[:8]
 	nsName := svc.nsManager.GetNamespaceName(projectID)
 
@@ -920,11 +964,18 @@ func (svc *Service) CreateSubnet(c *gin.Context) {
 		go func() { _ = svc.dhcpManager.StartDHCP(dhcpConfig, nsName) }()
 	}
 
-	// Calculate allocation pools (entire subnet minus gateway)
+	// Calculate allocation pools (entire subnet minus gateway).
+	// IPv6 has no broadcast address, so the pool end is the last address in the prefix.
+	var poolEnd string
+	if ipVersion == 6 {
+		poolEnd = lastIP(ipNet).String()
+	} else {
+		poolEnd = decrementIP(broadcast(ipNet), 1).String() // Skip IPv4 broadcast
+	}
 	allocationPools := []gin.H{
 		{
-			"start": incrementIP(ipNet.IP, 2).String(),         // Skip network address and gateway
-			"end":   decrementIP(broadcast(ipNet), 1).String(), // Skip broadcast
+			"start": incrementIP(ipNet.IP, 2).String(), // Skip network address and gateway
+			"end":   poolEnd,
 		},
 	}
 
@@ -1274,6 +1325,18 @@ func broadcast(ipNet *net.IPNet) net.IP {
 		broadcast[i] = ip[i] | ^mask[i]
 	}
 	return broadcast
+}
+
+// lastIP returns the last address in the network prefix (all host bits set to 1).
+// Works for both IPv4 and IPv6.
+func lastIP(ipNet *net.IPNet) net.IP {
+	ip := ipNet.IP
+	mask := ipNet.Mask
+	last := make(net.IP, len(ip))
+	for i := range ip {
+		last[i] = ip[i] | ^mask[i]
+	}
+	return last
 }
 
 func updateString(updates []string) string {

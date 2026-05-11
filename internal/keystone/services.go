@@ -302,7 +302,8 @@ func (svc *Service) ListEndpoints(c *gin.Context) {
 		}
 
 		if region != nil {
-			endpoint["region"] = *region
+			endpoint["region_id"] = *region
+			endpoint["region"] = *region // backwards compat
 		}
 
 		endpoints = append(endpoints, endpoint)
@@ -361,7 +362,8 @@ func (svc *Service) CreateEndpoint(c *gin.Context) {
 	}
 
 	if req.Endpoint.Region != "" {
-		endpoint["region"] = req.Endpoint.Region
+		endpoint["region_id"] = req.Endpoint.Region
+		endpoint["region"] = req.Endpoint.Region // backwards compat
 	}
 
 	c.JSON(201, gin.H{"endpoint": endpoint})

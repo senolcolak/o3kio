@@ -113,6 +113,9 @@ func Stats() *pgxpool.Stat {
 }
 
 func HealthCheck(ctx context.Context) error {
+	if a, ok := DB.(*SQLiteAdapter); ok {
+		return a.Ping(ctx)
+	}
 	if pool == nil {
 		return fmt.Errorf("database connection not initialized")
 	}

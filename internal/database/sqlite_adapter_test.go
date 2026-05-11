@@ -101,6 +101,16 @@ func TestRewriteDialect(t *testing.T) {
 			want: "SELECT CAST(strftime('%s', CURRENT_TIMESTAMP - created_at) AS INTEGER) / 3600",
 		},
 		{
+			name: "EXTRACT EPOCH nested function call",
+			in:   "SELECT EXTRACT(EPOCH FROM (COALESCE(updated_at, created_at)))",
+			want: "SELECT CAST(strftime('%s', COALESCE(updated_at, created_at)) AS INTEGER)",
+		},
+		{
+			name: "EXTRACT EPOCH multiple occurrences",
+			in:   "SELECT EXTRACT(EPOCH FROM (a)), EXTRACT(EPOCH FROM (b))",
+			want: "SELECT CAST(strftime('%s', a) AS INTEGER), CAST(strftime('%s', b) AS INTEGER)",
+		},
+		{
 			name: "no rewrite needed",
 			in:   "SELECT id, name FROM users WHERE active = 1",
 			want: "SELECT id, name FROM users WHERE active = 1",

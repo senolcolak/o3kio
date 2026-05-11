@@ -198,7 +198,8 @@ type CatalogEntry struct {
 // Endpoint represents a service endpoint
 type Endpoint struct {
 	Interface string `json:"interface"`
-	Region    string `json:"region"`
+	RegionID  string `json:"region_id,omitempty"`
+	Region    string `json:"region,omitempty"` // backwards compat
 	URL       string `json:"url"`
 }
 
@@ -1028,6 +1029,7 @@ func (s *AuthService) BuildServiceCatalog(projectID string, cacheInstance *cache
 				URL:       substitutedURL,
 			}
 			if region != nil {
+				endpoint.RegionID = *region
 				endpoint.Region = *region
 			}
 			serviceMap[serviceID].Endpoints = append(serviceMap[serviceID].Endpoints, endpoint)
@@ -1094,9 +1096,9 @@ func buildHardcodedCatalog(projectID string) []CatalogEntry {
 	// In O3K all interfaces point to the same binary, so all URLs are identical.
 	allInterfaces := func(url string) []Endpoint {
 		return []Endpoint{
-			{Interface: "public", Region: "RegionOne", URL: url},
-			{Interface: "internal", Region: "RegionOne", URL: url},
-			{Interface: "admin", Region: "RegionOne", URL: url},
+			{Interface: "public", RegionID: "RegionOne", Region: "RegionOne", URL: url},
+			{Interface: "internal", RegionID: "RegionOne", Region: "RegionOne", URL: url},
+			{Interface: "admin", RegionID: "RegionOne", Region: "RegionOne", URL: url},
 		}
 	}
 

@@ -611,6 +611,7 @@ func (svc *Service) UpdatePort(c *gin.Context) {
 			AdminStateUp        *bool                    `json:"admin_state_up"`
 			DeviceID            *string                  `json:"device_id"`
 			DeviceOwner         *string                  `json:"device_owner"`
+			SecurityGroups      []string                 `json:"security_groups"`
 			AllowedAddressPairs []map[string]interface{} `json:"allowed_address_pairs"`
 		} `json:"port"`
 	}
@@ -655,25 +656,64 @@ func (svc *Service) UpdatePort(c *gin.Context) {
 		argID++
 	}
 
-	if len(updates) == 0 {
+	if len(updates) == 0 && req.Port.SecurityGroups == nil {
 		common.SendError(c, common.NewBadRequestError("no updates provided"))
 		return
 	}
 
-	updates = append(updates, fmt.Sprintf("updated_at = $%d", argID))
-	args = append(args, time.Now())
-	argID++
+	if len(updates) > 0 {
+		updates = append(updates, fmt.Sprintf("updated_at = $%d", argID))
+		args = append(args, time.Now())
+		argID++
 
-	args = append(args, portID, projectID)
+		args = append(args, portID, projectID)
 
-	query := fmt.Sprintf("UPDATE ports SET %s WHERE id = $%d AND project_id = $%d",
-		updateString(updates), argID, argID+1)
+		query := fmt.Sprintf("UPDATE ports SET %s WHERE id = $%d AND project_id = $%d",
+			updateString(updates), argID, argID+1)
 
-	_, err := svc.activeDB().Exec(c.Request.Context(), query, args...)
-	if err != nil {
-		log.Error().Err(err).Str("operation", "update_port").Str("port_id", portID).Msg("database error")
-		common.SendError(c, common.NewInternalServerError("failed to update port"))
-		return
+		_, err := svc.activeDB().Exec(c.Request.Context(), query, args...)
+		if err != nil {
+			log.Error().Err(err).Str("operation", "update_port").Str("port_id", portID).Msg("database error")
+			common.SendError(c, common.NewInternalServerError("failed to update port"))
+			return
+		}
+	}
+
+	// Update security groups if provided.
+	if req.Port.SecurityGroups != nil {
+		// Verify all requested security groups exist and belong to this project.
+		for _, sgID := range req.Port.SecurityGroups {
+			var exists bool
+			if err := svc.activeDB().QueryRow(c.Request.Context(),
+				"SELECT EXISTS(SELECT 1 FROM security_groups WHERE id = $1 AND project_id = $2)",
+				sgID, projectID,
+			).Scan(&exists); err != nil || !exists {
+				common.SendError(c, common.NewNotFoundError(fmt.Sprintf("security group %s", sgID)))
+				return
+			}
+		}
+
+		// Replace the port's security group associations atomically.
+		_, err := svc.activeDB().Exec(c.Request.Context(),
+			"DELETE FROM port_security_groups WHERE port_id = $1",
+			portID,
+		)
+		if err != nil {
+			log.Error().Err(err).Str("operation", "update_port_sg_delete").Str("port_id", portID).Msg("database error")
+			common.SendError(c, common.NewInternalServerError("failed to update port security groups"))
+			return
+		}
+
+		for _, sgID := range req.Port.SecurityGroups {
+			if _, err := svc.activeDB().Exec(c.Request.Context(),
+				"INSERT INTO port_security_groups (port_id, security_group_id) VALUES ($1, $2)",
+				portID, sgID,
+			); err != nil {
+				log.Error().Err(err).Str("operation", "update_port_sg_insert").Str("port_id", portID).Str("sg_id", sgID).Msg("database error")
+				common.SendError(c, common.NewInternalServerError("failed to update port security groups"))
+				return
+			}
+		}
 	}
 
 	// Return updated port

@@ -25,9 +25,6 @@ func rewritePlaceholders(query string) string {
 // castRegex matches PostgreSQL type-cast suffixes (::text, ::jsonb, etc.).
 var castRegex = regexp.MustCompile(`::(text|int|bigint|integer|jsonb|timestamp|boolean|uuid)`)
 
-// extractEpochRegex matches EXTRACT(EPOCH FROM (...)) expressions.
-var extractEpochRegex = regexp.MustCompile(`EXTRACT\(EPOCH FROM \(([^)]+)\)\)`)
-
 // rewriteDialect rewrites PostgreSQL-specific syntax to SQLite equivalents.
 func rewriteDialect(query string) string {
 	// ILIKE → LIKE (SQLite LIKE is case-insensitive for ASCII by default)
@@ -42,7 +39,8 @@ func rewriteDialect(query string) string {
 	query = castRegex.ReplaceAllString(query, "")
 
 	// EXTRACT(EPOCH FROM (...)) → CAST(strftime('%s', ...) AS INTEGER)
-	query = extractEpochRegex.ReplaceAllStringFunc(query, rewriteExtractEpoch)
+	// Uses a balanced-paren scanner to correctly handle nested function calls.
+	query = rewriteExtractEpoch(query)
 
 	// Remove row-locking clauses SQLite handles via BEGIN IMMEDIATE
 	query = strings.ReplaceAll(query, " FOR UPDATE SKIP LOCKED", "")
@@ -51,12 +49,57 @@ func rewriteDialect(query string) string {
 	return query
 }
 
-func rewriteExtractEpoch(match string) string {
-	sub := extractEpochRegex.FindStringSubmatch(match)
-	if len(sub) > 1 {
-		return fmt.Sprintf("CAST(strftime('%%s', %s) AS INTEGER)", sub[1])
+// rewriteExtractEpoch rewrites all EXTRACT(EPOCH FROM (...)) occurrences in
+// query to CAST(strftime('%s', ...) AS INTEGER). It uses a balanced-paren
+// scanner so nested function calls inside the expression are handled correctly.
+func rewriteExtractEpoch(query string) string {
+	const prefix = "EXTRACT(EPOCH FROM ("
+	var b strings.Builder
+	for {
+		idx := strings.Index(query, prefix)
+		if idx == -1 {
+			b.WriteString(query)
+			break
+		}
+		// Write everything before the match.
+		b.WriteString(query[:idx])
+
+		// Find the matching closing paren for the outer '(' opened by prefix.
+		// prefix ends with '(' so we start one level deep.
+		rest := query[idx+len(prefix):]
+		depth := 1
+		closeIdx := -1
+		for i, ch := range rest {
+			switch ch {
+			case '(':
+				depth++
+			case ')':
+				depth--
+				if depth == 0 {
+					closeIdx = i
+				}
+			}
+			if closeIdx != -1 {
+				break
+			}
+		}
+		if closeIdx == -1 {
+			// Unbalanced parens — emit unchanged and stop.
+			b.WriteString(query[idx:])
+			break
+		}
+		inner := rest[:closeIdx]
+		fmt.Fprintf(&b, "CAST(strftime('%%s', %s) AS INTEGER)", inner)
+
+		// Advance past the closing ')' of EXTRACT(...).
+		// rest[closeIdx] closes the inner expression; rest[closeIdx+1] closes EXTRACT.
+		after := rest[closeIdx+1:]
+		if len(after) > 0 && after[0] == ')' {
+			after = after[1:]
+		}
+		query = after
 	}
-	return match
+	return b.String()
 }
 
 // rewrite applies placeholder and dialect rewrites in one step.
@@ -101,6 +144,11 @@ func NewSQLiteAdapter(dbPath string) (*SQLiteAdapter, error) {
 // Close releases the underlying SQLite connection.
 func (a *SQLiteAdapter) Close() { a.db.Close() }
 
+// Ping verifies the SQLite connection is still alive by executing SELECT 1.
+func (a *SQLiteAdapter) Ping(ctx context.Context) error {
+	return a.db.PingContext(ctx)
+}
+
 func (a *SQLiteAdapter) Exec(ctx context.Context, query string, args ...any) (Result, error) {
 	res, err := a.db.ExecContext(ctx, rewrite(query), args...)
 	if err != nil {
@@ -121,6 +169,12 @@ func (a *SQLiteAdapter) Query(ctx context.Context, query string, args ...any) (R
 	return &sqlRows{rows: rows}, nil
 }
 
+// BeginTx starts a transaction. opts.ReadOnly is forwarded to the driver.
+// opts.IsoLevel is intentionally not passed per-transaction: the DSN already
+// includes _txlock=immediate, which promotes all write transactions to
+// IMMEDIATE mode globally, preventing SQLITE_BUSY from deferred lock
+// upgrades. Read-only transactions still use shared (deferred) locks because
+// the SQLite driver honours ReadOnly=true and issues BEGIN without IMMEDIATE.
 func (a *SQLiteAdapter) BeginTx(ctx context.Context, opts TxOptions) (Tx, error) {
 	tx, err := a.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: opts.ReadOnly})
 	if err != nil {

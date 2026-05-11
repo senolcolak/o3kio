@@ -2,6 +2,7 @@ package glance
 
 import (
 	"crypto/md5"
+	"crypto/sha512"
 	"database/sql"
 	"encoding/hex"
 	"errors"
@@ -287,6 +288,8 @@ func (svc *Service) ListImages(c *gin.Context) {
 		switch vis {
 		case "public":
 			conditions = append(conditions, "visibility = 'public'")
+		case "community":
+			conditions = append(conditions, "visibility = 'community'")
 		case "private":
 			conditions = append(conditions, fmt.Sprintf("(visibility = 'private' AND project_id = $%d)", argIdx))
 			queryArgs = append(queryArgs, projectID)
@@ -298,17 +301,17 @@ func (svc *Service) ListImages(c *gin.Context) {
 			queryArgs = append(queryArgs, projectID)
 			argIdx++
 		default:
-			// community or unknown: show public + owned + shared with this project
+			// unknown visibility filter: show public + community + owned + shared with this project
 			conditions = append(conditions, fmt.Sprintf(
-				"(visibility = 'public' OR project_id = $%d OR id IN (SELECT image_id FROM image_members WHERE member_id = $%d AND status = 'accepted'))",
+				"(visibility IN ('public', 'community') OR project_id = $%d OR id IN (SELECT image_id FROM image_members WHERE member_id = $%d AND status = 'accepted'))",
 				argIdx, argIdx+1))
 			queryArgs = append(queryArgs, projectID, projectID)
 			argIdx += 2
 		}
 	} else {
-		// No visibility param: show public + owned + shared with this project
+		// No visibility param: show public + community + owned + shared with this project
 		conditions = append(conditions, fmt.Sprintf(
-			"(visibility = 'public' OR project_id = $%d OR id IN (SELECT image_id FROM image_members WHERE member_id = $%d AND status = 'accepted'))",
+			"(visibility IN ('public', 'community') OR project_id = $%d OR id IN (SELECT image_id FROM image_members WHERE member_id = $%d AND status = 'accepted'))",
 			argIdx, argIdx+1))
 		queryArgs = append(queryArgs, projectID, projectID)
 		argIdx += 2
@@ -454,7 +457,7 @@ func (svc *Service) GetImage(c *gin.Context) {
 
 	// Cache miss - query database
 	var id, name, status, visibility, diskFormat, containerFormat string
-	var checksum sql.NullString
+	var checksum, osHashAlgo, osHashValue sql.NullString
 	var sizeBytes sql.NullInt64
 	var minDisk, minRAM int
 	var protected bool
@@ -464,11 +467,11 @@ func (svc *Service) GetImage(c *gin.Context) {
 	// Try by UUID first, then by name if UUID parsing fails
 	// Use CAST to handle non-UUID strings gracefully
 	err := svc.activeDB().QueryRow(ctx, `
-		SELECT id, name, status, visibility, size_bytes, disk_format, container_format, min_disk_gb, min_ram_mb, COALESCE(protected, false), checksum, created_at, updated_at, COALESCE(project_id, '')
+		SELECT id, name, status, visibility, size_bytes, disk_format, container_format, min_disk_gb, min_ram_mb, COALESCE(protected, false), checksum, os_hash_algo, os_hash_value, created_at, updated_at, COALESCE(project_id, '')
 		FROM images
-		WHERE (id::text = $1 OR name = $1) AND (visibility = 'public' OR project_id = $2)
+		WHERE (id::text = $1 OR name = $1) AND (visibility IN ('public', 'community') OR project_id = $2)
 		LIMIT 1
-	`, imageID, projectID).Scan(&id, &name, &status, &visibility, &sizeBytes, &diskFormat, &containerFormat, &minDisk, &minRAM, &protected, &checksum, &createdAt, &updatedAt, &imageOwner)
+	`, imageID, projectID).Scan(&id, &name, &status, &visibility, &sizeBytes, &diskFormat, &containerFormat, &minDisk, &minRAM, &protected, &checksum, &osHashAlgo, &osHashValue, &createdAt, &updatedAt, &imageOwner)
 
 	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("image"))
@@ -506,8 +509,10 @@ func (svc *Service) GetImage(c *gin.Context) {
 
 	if checksum.Valid && checksum.String != "" {
 		image["checksum"] = checksum.String
-		image["os_hash_algo"] = "md5"
-		image["os_hash_value"] = checksum.String
+	}
+	if osHashAlgo.Valid && osHashAlgo.String != "" {
+		image["os_hash_algo"] = osHashAlgo.String
+		image["os_hash_value"] = osHashValue.String
 	} else {
 		image["os_hash_algo"] = nil
 		image["os_hash_value"] = nil
@@ -706,10 +711,12 @@ func (svc *Service) UploadImageData(c *gin.Context) {
 		return
 	}
 
-	// Upload to storage (limit to 5GB), tee through MD5 hasher
+	// Upload to storage (limit to 5GB), tee through MD5 and SHA-512 hashers
 	const maxImageUpload int64 = 5 * 1024 * 1024 * 1024
-	h := md5.New()
-	limitedBody := io.LimitReader(io.TeeReader(c.Request.Body, h), maxImageUpload)
+	md5h := md5.New()
+	sha512h := sha512.New()
+	multiWriter := io.MultiWriter(md5h, sha512h)
+	limitedBody := io.LimitReader(io.TeeReader(c.Request.Body, multiWriter), maxImageUpload)
 	size, err := svc.imageStore.UploadImage(c.Request.Context(), imageID, limitedBody)
 	if err != nil {
 		_, _ = svc.activeDB().Exec(c.Request.Context(),
@@ -720,12 +727,13 @@ func (svc *Service) UploadImageData(c *gin.Context) {
 		return
 	}
 
-	checksum := hex.EncodeToString(h.Sum(nil))
+	checksum := hex.EncodeToString(md5h.Sum(nil))
+	osHashValue := hex.EncodeToString(sha512h.Sum(nil))
 
-	// Update status to active, set size and checksum
+	// Update status to active, set size, MD5 checksum and SHA-512 hash
 	_, _ = svc.activeDB().Exec(c.Request.Context(),
-		"UPDATE images SET status = $1, size_bytes = $2, checksum = $3, updated_at = $4 WHERE id = $5",
-		"active", size, checksum, time.Now(), imageID)
+		"UPDATE images SET status = $1, size_bytes = $2, checksum = $3, os_hash_algo = $4, os_hash_value = $5, updated_at = $6 WHERE id = $7",
+		"active", size, checksum, "sha512", osHashValue, time.Now(), imageID)
 
 	c.Status(http.StatusNoContent)
 }

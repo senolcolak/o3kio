@@ -35,6 +35,23 @@ func (a *AgentInfo) SafeSend(msg *pb.ServerMessage) error {
 	return a.Stream.Send(msg)
 }
 
+// SendTask sends a Task to this agent via its gRPC stream.
+func (a *AgentInfo) SendTask(task Task) error {
+	msg := &pb.ServerMessage{
+		Payload: &pb.ServerMessage_Task{
+			Task: &pb.TaskMsg{
+				TaskId:   task.ID,
+				TaskType: task.Type,
+				Payload:  task.Payload,
+			},
+		},
+	}
+	if err := a.SafeSend(msg); err != nil {
+		return fmt.Errorf("send task to agent %s: %w", a.NodeID, err)
+	}
+	return nil
+}
+
 // Hub tracks connected tunnel agents and provides agent selection.
 type Hub struct {
 	pb.UnimplementedTunnelHubServer
@@ -49,7 +66,12 @@ type Hub struct {
 }
 
 // NewHub creates a new Hub with the given JWT token secret.
+// If tokenSecret is empty a warning is printed — all agent joins will be rejected
+// until a non-empty secret is configured.
 func NewHub(tokenSecret string) *Hub {
+	if tokenSecret == "" {
+		fmt.Println("WARNING: tunnel hub has no token_secret configured — all agent joins will be rejected")
+	}
 	return &Hub{
 		tokenSecret: tokenSecret,
 		agents:      make(map[string]*AgentInfo),
@@ -115,11 +137,19 @@ func (h *Hub) PickAgent() *AgentInfo {
 	return nil
 }
 
+// GetAgent returns the agent with the given nodeID, or nil if not connected.
+func (h *Hub) GetAgent(nodeID string) *AgentInfo {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.agents[nodeID]
+}
+
 // VerifyJoin reports whether the given tokenHash is valid for nodeID.
-// When tokenSecret is empty the hub is in open enrollment mode and all joins are accepted.
+// When tokenSecret is empty all joins are rejected — an unconfigured secret is
+// not equivalent to open enrollment.
 func (h *Hub) VerifyJoin(nodeID, tokenHash string) bool {
 	if h.tokenSecret == "" {
-		return true
+		return false
 	}
 	return VerifyTokenHash(h.tokenSecret, nodeID, tokenHash)
 }

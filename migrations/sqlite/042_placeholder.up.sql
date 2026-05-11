@@ -1,0 +1,1 @@
+-- Migration 042 was skipped during development. Placeholder for sequential numbering.

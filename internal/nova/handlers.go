@@ -381,10 +381,14 @@ func (svc *Service) CreateServer(c *gin.Context) {
 	}
 
 	queryStart = time.Now()
+	var keyNameValue interface{}
+	if req.Server.KeyName != "" {
+		keyNameValue = req.Server.KeyName
+	}
 	_, err = svc.activeDB().Exec(c.Request.Context(), `
-		INSERT INTO instances (id, name, project_id, user_id, flavor_id, image_id, status, power_state, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-	`, instanceID, req.Server.Name, projectID, userID, flavor.ID, imageID, "BUILD", 0, now, now)
+		INSERT INTO instances (id, name, project_id, user_id, flavor_id, image_id, status, power_state, key_name, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	`, instanceID, req.Server.Name, projectID, userID, flavor.ID, imageID, "BUILD", 0, keyNameValue, now, now)
 	// Release the quota lock as soon as the row is committed (or failed).
 	mu.Unlock()
 	middleware.LogDatabaseQuery(c, "INSERT instance", time.Since(queryStart), err)
@@ -721,6 +725,14 @@ func (svc *Service) ListServers(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"servers": servers})
 }
 
+// nullStringToInterface returns nil when s is NULL, or the string value when valid.
+func nullStringToInterface(s sql.NullString) interface{} {
+	if !s.Valid || s.String == "" {
+		return nil
+	}
+	return s.String
+}
+
 // ListServersDetail lists all servers (detailed)
 func (svc *Service) ListServersDetail(c *gin.Context) {
 	projectID := c.GetString("project_id")
@@ -742,7 +754,7 @@ func (svc *Service) ListServersDetail(c *gin.Context) {
 		SELECT i.id, i.name, i.status, i.power_state, i.project_id, i.user_id,
 		       i.flavor_id, i.image_id, i.created_at, i.updated_at, i.launched_at,
 		       f.vcpus, f.ram_mb, f.disk_gb, f.name as flavor_name, i.host, i.locked,
-		       i.task_state
+		       i.task_state, i.key_name, i.fault_message
 		FROM instances i
 		LEFT JOIN flavors f ON i.flavor_id = f.id
 		WHERE 1=1`
@@ -821,10 +833,12 @@ func (svc *Service) ListServersDetail(c *gin.Context) {
 		var host sql.NullString
 		var locked bool
 		var taskStateDB sql.NullString
+		var keyNameDB sql.NullString
+		var faultMsgDB sql.NullString
 
 		if err := rows.Scan(&id, &name, &status, &powerState, &projectID, &userID,
 			&flavorID, &imageID, &createdAt, &updatedAt, &launchedAt,
-			&vcpus, &ramMB, &diskGB, &flavorName, &host, &locked, &taskStateDB); err != nil {
+			&vcpus, &ramMB, &diskGB, &flavorName, &host, &locked, &taskStateDB, &keyNameDB, &faultMsgDB); err != nil {
 			log.Warn().Err(err).Msg("failed to scan server detail row")
 			continue
 		}
@@ -862,6 +876,20 @@ func (svc *Service) ListServersDetail(c *gin.Context) {
 			vmState = "error"
 		case "DELETED", "SOFT_DELETED":
 			vmState = "deleted"
+		case "PAUSED":
+			vmState = "paused"
+		case "SUSPENDED":
+			vmState = "suspended"
+		case "SHELVED":
+			vmState = "shelved"
+		case "SHELVED_OFFLOADED":
+			vmState = "shelved_offloaded"
+		case "RESCUED":
+			vmState = "rescued"
+		case "RESIZED", "VERIFY_RESIZE":
+			vmState = "resized"
+		case "REBOOT", "REBUILD", "MIGRATING":
+			vmState = "active"
 		}
 
 		// progress: 25 for BUILD, 0 otherwise
@@ -912,12 +940,16 @@ func (svc *Service) ListServersDetail(c *gin.Context) {
 			"locked":       locked,
 			"description":  nil,
 			"tags":         []string{},
-			"key_name":     nil,
+			"key_name":     nullStringToInterface(keyNameDB),
 		}
 		if status == "ERROR" {
+			faultMsg := "Server in error state"
+			if faultMsgDB.Valid && faultMsgDB.String != "" {
+				faultMsg = faultMsgDB.String
+			}
 			entry["fault"] = gin.H{
 				"code":    500,
-				"message": "Server in error state",
+				"message": faultMsg,
 				"created": createdAt.Format(time.RFC3339),
 			}
 		}
@@ -1028,6 +1060,8 @@ func (svc *Service) GetServer(c *gin.Context) {
 	var vcpus, ramMB, diskGB int
 	var flavorName sql.NullString
 	var taskStateDB sql.NullString
+	var keyNameDB sql.NullString
+	var faultMsgDB sql.NullString
 
 	// Try to find by ID first, then by name
 	// Use separate conditions to avoid type mismatch when id is UUID and param might be a name
@@ -1035,13 +1069,13 @@ func (svc *Service) GetServer(c *gin.Context) {
 		SELECT i.id, i.name, i.status, i.power_state, i.project_id, i.user_id,
 		       i.flavor_id, i.image_id, i.created_at, i.updated_at, i.host, i.launched_at,
 		       i.locked, COALESCE(f.vcpus, 0), COALESCE(f.ram_mb, 0), COALESCE(f.disk_gb, 0), f.name,
-		       i.task_state
+		       i.task_state, i.key_name, i.fault_message
 		FROM instances i
 		LEFT JOIN flavors f ON i.flavor_id = f.id
 		WHERE i.project_id = $2 AND (
 			(i.id::text = $1) OR (i.name = $1)
 		)
-	`, instanceID, projectID).Scan(&id, &name, &status, &powerState, &projID, &userID, &flavorID, &imageID, &createdAt, &updatedAt, &host, &launchedAt, &locked, &vcpus, &ramMB, &diskGB, &flavorName, &taskStateDB)
+	`, instanceID, projectID).Scan(&id, &name, &status, &powerState, &projID, &userID, &flavorID, &imageID, &createdAt, &updatedAt, &host, &launchedAt, &locked, &vcpus, &ramMB, &diskGB, &flavorName, &taskStateDB, &keyNameDB, &faultMsgDB)
 
 	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("instance"))
@@ -1077,6 +1111,20 @@ func (svc *Service) GetServer(c *gin.Context) {
 		getVMState = "error"
 	case "DELETED", "SOFT_DELETED":
 		getVMState = "deleted"
+	case "PAUSED":
+		getVMState = "paused"
+	case "SUSPENDED":
+		getVMState = "suspended"
+	case "SHELVED":
+		getVMState = "shelved"
+	case "SHELVED_OFFLOADED":
+		getVMState = "shelved_offloaded"
+	case "RESCUED":
+		getVMState = "rescued"
+	case "RESIZED", "VERIFY_RESIZE":
+		getVMState = "resized"
+	case "REBOOT", "REBUILD", "MIGRATING":
+		getVMState = "active"
 	}
 
 	// Use DB launched_at if non-null; fall back to created_at for ACTIVE instances
@@ -1118,7 +1166,7 @@ func (svc *Service) GetServer(c *gin.Context) {
 		"locked":                              locked,
 		"description":                         nil,
 		"tags":                                []string{},
-		"key_name":                            nil,
+		"key_name":                            nullStringToInterface(keyNameDB),
 	}
 
 	if userID != nil {
@@ -1143,9 +1191,13 @@ func (svc *Service) GetServer(c *gin.Context) {
 		response["image"] = gin.H{"id": imageID}
 	}
 	if status == "ERROR" {
+		faultMsg := "Server in error state"
+		if faultMsgDB.Valid && faultMsgDB.String != "" {
+			faultMsg = faultMsgDB.String
+		}
 		response["fault"] = gin.H{
 			"code":    500,
-			"message": "Server in error state",
+			"message": faultMsg,
 			"created": createdAt.Format(time.RFC3339),
 		}
 	}

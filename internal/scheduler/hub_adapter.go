@@ -17,12 +17,13 @@ func NewHubAdapter(hub *tunnel.Hub) *HubAdapter {
 	return &HubAdapter{hub: hub}
 }
 
-// Dispatch picks an available agent, validates the task, sends it via the tunnel
-// stream, and blocks until a TaskResult arrives or the context is cancelled.
+// Dispatch routes the task to the agent identified by agentID (as selected by the
+// scheduler algorithm), validates the task, sends it via the tunnel stream, and
+// blocks until a TaskResult arrives or the context is cancelled.
 func (h *HubAdapter) Dispatch(ctx context.Context, agentID string, taskType string, payload []byte, timeoutSec int) ([]byte, string, error) {
-	agent := h.hub.PickAgent()
+	agent := h.hub.GetAgent(agentID)
 	if agent == nil {
-		return nil, "", fmt.Errorf("no agents connected")
+		return nil, "", fmt.Errorf("agent %s not connected", agentID)
 	}
 	if agent.Stream == nil {
 		return nil, "", fmt.Errorf("agent %s has no active stream", agent.NodeID)
@@ -39,8 +40,7 @@ func (h *HubAdapter) Dispatch(ctx context.Context, agentID string, taskType stri
 
 	resultCh := h.hub.RegisterResultChan(task.ID)
 
-	d := tunnel.NewDispatcher(h.hub)
-	if err := d.Dispatch(task); err != nil {
+	if err := agent.SendTask(task); err != nil {
 		h.hub.ReleaseInflight(agent.NodeID)
 		return nil, err.Error(), err
 	}

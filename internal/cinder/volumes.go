@@ -233,6 +233,46 @@ func (svc *Service) CreateVolume(c *gin.Context) {
 		return
 	}
 
+	// Enforce project quota before allocating storage
+	const defaultMaxVolumes = 10
+	const defaultMaxGigabytes = 1000
+
+	var quotaVolumes, quotaGigabytes int
+	var usedCount int
+	var usedGB int
+
+	// Load per-project quota limits (fall back to defaults when absent)
+	rowV := svc.activeDB().QueryRow(c.Request.Context(),
+		`SELECT "limit" FROM cinder_quotas WHERE project_id = $1 AND resource = 'volumes'`,
+		projectID)
+	if err := rowV.Scan(&quotaVolumes); err != nil {
+		quotaVolumes = defaultMaxVolumes
+	}
+	rowG := svc.activeDB().QueryRow(c.Request.Context(),
+		`SELECT "limit" FROM cinder_quotas WHERE project_id = $1 AND resource = 'gigabytes'`,
+		projectID)
+	if err := rowG.Scan(&quotaGigabytes); err != nil {
+		quotaGigabytes = defaultMaxGigabytes
+	}
+
+	if err := svc.activeDB().QueryRow(c.Request.Context(),
+		`SELECT COUNT(*), COALESCE(SUM(size_gb), 0) FROM volumes WHERE project_id = $1 AND status != 'deleted'`,
+		projectID,
+	).Scan(&usedCount, &usedGB); err != nil {
+		log.Error().Err(err).Str("operation", "create_volume_quota_check").Msg("failed to query volume usage")
+		common.SendError(c, common.NewInternalServerError("failed to check quota"))
+		return
+	}
+
+	if usedCount+1 > quotaVolumes {
+		common.SendError(c, common.NewQuotaExceededError("VolumeLimitExceeded"))
+		return
+	}
+	if usedGB+req.Volume.Size > quotaGigabytes {
+		common.SendError(c, common.NewQuotaExceededError("VolumeLimitExceeded"))
+		return
+	}
+
 	// Create RBD volume in Ceph
 	if err := svc.cephClient.CreateVolume(c.Request.Context(), volumeID, req.Volume.Size); err != nil {
 		log.Error().Err(err).Str("operation", "create_volume_ceph").Msg("failed to create volume in Ceph")
@@ -788,9 +828,12 @@ func (svc *Service) DeleteVolume(c *gin.Context) {
 		return
 	}
 
-	// Clean up Ceph (best-effort — orphaned backend data is preferable to data loss)
-	if err := svc.cephClient.DeleteVolume(c.Request.Context(), actualVolumeID); err != nil {
-		log.Error().Err(err).Str("operation", "delete_volume_ceph").Str("volume_id", actualVolumeID).Msg("failed to delete volume from Ceph (orphaned)")
+	// Clean up storage backend (best-effort — orphaned backend data is preferable to data loss)
+	// Skip in stub mode: no real backend is available.
+	if svc.mode != "stub" {
+		if err := svc.cephClient.DeleteVolume(c.Request.Context(), actualVolumeID); err != nil {
+			log.Error().Err(err).Str("operation", "delete_volume_ceph").Str("volume_id", actualVolumeID).Msg("failed to delete volume from Ceph (orphaned)")
+		}
 	}
 
 	c.Status(http.StatusNoContent)
@@ -841,25 +884,48 @@ func (svc *Service) VolumeAction(c *gin.Context) {
 			return
 		}
 
-		if currentStatus != "available" {
+		// Atomically verify status and transition to 'attaching' then 'in-use'
+		// to prevent concurrent attach of the same volume.
+		tx, err := svc.activeDB().BeginTx(c.Request.Context(), database.TxOptions{})
+		if err != nil {
+			log.Error().Err(err).Str("operation", "attach_volume_begin_tx").Str("volume_id", volumeID).Msg("failed to begin transaction")
+			common.SendError(c, common.NewInternalServerError("failed to attach volume"))
+			return
+		}
+		defer tx.Rollback(c.Request.Context()) //nolint:errcheck
+
+		var txStatus string
+		if err := tx.QueryRow(c.Request.Context(),
+			"SELECT status FROM volumes WHERE id = $1 AND project_id = $2",
+			volumeID, projectID,
+		).Scan(&txStatus); err != nil {
+			log.Error().Err(err).Str("operation", "attach_volume_tx_status").Str("volume_id", volumeID).Msg("failed to query volume status in transaction")
+			common.SendError(c, common.NewInternalServerError("failed to attach volume"))
+			return
+		}
+
+		if txStatus != "available" {
 			c.JSON(http.StatusConflict, gin.H{
 				"conflictingRequest": gin.H{
-					"message": fmt.Sprintf("Invalid volume: Volume %s status must be available to attach, currently %s.", volumeID, currentStatus),
+					"message": fmt.Sprintf("Invalid volume: Volume %s status must be available to attach, currently %s.", volumeID, txStatus),
 					"code":    409,
 				},
 			})
 			return
 		}
 
-		// Update volume to attached status
-		_, err := svc.activeDB().Exec(c.Request.Context(), `
+		if _, err := tx.Exec(c.Request.Context(), `
 			UPDATE volumes
 			SET attached_to_instance_id = $1, status = $2, updated_at = $3
 			WHERE id = $4 AND project_id = $5
-		`, instanceID, "in-use", time.Now(), volumeID, projectID)
-
-		if err != nil {
+		`, instanceID, "in-use", time.Now(), volumeID, projectID); err != nil {
 			log.Error().Err(err).Str("operation", "attach_volume").Str("volume_id", volumeID).Msg("failed to attach volume")
+			common.SendError(c, common.NewInternalServerError("failed to attach volume"))
+			return
+		}
+
+		if err := tx.Commit(c.Request.Context()); err != nil {
+			log.Error().Err(err).Str("operation", "attach_volume_commit").Str("volume_id", volumeID).Msg("failed to commit attach transaction")
 			common.SendError(c, common.NewInternalServerError("failed to attach volume"))
 			return
 		}

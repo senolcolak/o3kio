@@ -253,11 +253,11 @@ func (svc *Service) CheckQuota(c *gin.Context, resource string, requestedAmount 
 	var usage int
 	switch resource {
 	case "instances":
-		svc.activeDB().QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM instances WHERE project_id = $1`, projectID).Scan(&usage)
+		svc.activeDB().QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM instances WHERE project_id = $1 AND status NOT IN ('DELETED', 'SOFT_DELETED', 'ERROR')`, projectID).Scan(&usage)
 	case "cores":
-		svc.activeDB().QueryRow(c.Request.Context(), `SELECT COALESCE(SUM(f.vcpus), 0) FROM instances i LEFT JOIN flavors f ON i.flavor_id = f.id WHERE i.project_id = $1`, projectID).Scan(&usage)
+		svc.activeDB().QueryRow(c.Request.Context(), `SELECT COALESCE(SUM(f.vcpus), 0) FROM instances i LEFT JOIN flavors f ON i.flavor_id = f.id WHERE i.project_id = $1 AND i.status NOT IN ('DELETED', 'SOFT_DELETED', 'ERROR')`, projectID).Scan(&usage)
 	case "ram":
-		svc.activeDB().QueryRow(c.Request.Context(), `SELECT COALESCE(SUM(f.ram_mb), 0) FROM instances i LEFT JOIN flavors f ON i.flavor_id = f.id WHERE i.project_id = $1`, projectID).Scan(&usage)
+		svc.activeDB().QueryRow(c.Request.Context(), `SELECT COALESCE(SUM(f.ram_mb), 0) FROM instances i LEFT JOIN flavors f ON i.flavor_id = f.id WHERE i.project_id = $1 AND i.status NOT IN ('DELETED', 'SOFT_DELETED', 'ERROR')`, projectID).Scan(&usage)
 	case "volumes":
 		svc.activeDB().QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM volumes WHERE project_id = $1`, projectID).Scan(&usage)
 	case "gigabytes":

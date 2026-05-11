@@ -180,13 +180,22 @@ func (svc *Service) CreateFloatingIP(c *gin.Context) {
 		return
 	}
 
-	// Allocate an IP from the external network subnet
-	floatingIP, err := svc.allocateFloatingIP(c.Request.Context(), req.FloatingIP.FloatingNetworkID, subnetCIDR)
+	// Allocate an IP from the external network subnet.
+	// allocateFloatingIP returns an open transaction holding a row-level lock.
+	// We must INSERT within that same transaction and then commit to prevent
+	// two concurrent requests from picking the same available IP.
+	floatingIP, allocTx, err := svc.allocateFloatingIP(c.Request.Context(), req.FloatingIP.FloatingNetworkID, subnetCIDR)
 	if err != nil {
 		log.Error().Err(err).Str("operation", "allocate_floatingip").Msg("failed to allocate floating IP")
 		common.SendError(c, common.NewInternalServerError("failed to allocate floating IP"))
 		return
 	}
+	allocTxDone := false
+	defer func() {
+		if !allocTxDone {
+			_ = allocTx.Rollback(c.Request.Context())
+		}
+	}()
 
 	// Determine status and associated details
 	status := "DOWN"
@@ -271,9 +280,9 @@ func (svc *Service) CreateFloatingIP(c *gin.Context) {
 		}
 	}
 
-	// Insert into database
+	// Insert into database within the allocation transaction to prevent double-allocation.
 	now := time.Now()
-	_, err = svc.activeDB().Exec(c.Request.Context(), `
+	_, err = allocTx.Exec(c.Request.Context(), `
 		INSERT INTO floating_ips (id, project_id, floating_network_id, floating_ip_address, fixed_ip_address, port_id, router_id, status, description, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 	`, floatingIPID, projectID, req.FloatingIP.FloatingNetworkID, floatingIP, fixedIP, portID, routerID, status, req.FloatingIP.Description, now, now)
@@ -283,6 +292,13 @@ func (svc *Service) CreateFloatingIP(c *gin.Context) {
 		common.SendError(c, common.NewInternalServerError("failed to create floating IP"))
 		return
 	}
+
+	if err := allocTx.Commit(c.Request.Context()); err != nil {
+		log.Error().Err(err).Str("operation", "create_floatingip_commit").Msg("transaction commit failed")
+		common.SendError(c, common.NewInternalServerError("failed to create floating IP"))
+		return
+	}
+	allocTxDone = true
 
 	result := gin.H{
 		"id":                  floatingIPID,
@@ -609,30 +625,33 @@ func (svc *Service) DeleteFloatingIP(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// Helper function to allocate a floating IP from subnet
-func (svc *Service) allocateFloatingIP(ctx context.Context, floatingNetworkID, subnetCIDR string) (string, error) {
+// allocateFloatingIP finds an available IP in subnetCIDR within floatingNetworkID.
+// It returns the chosen IP and the open transaction that holds the lock — the
+// caller MUST INSERT the floating_ips row and then Commit (or Rollback) the
+// transaction. Keeping the lock across the INSERT prevents double-allocation.
+func (svc *Service) allocateFloatingIP(ctx context.Context, floatingNetworkID, subnetCIDR string) (string, database.Tx, error) {
 	_, ipNet, err := net.ParseCIDR(subnetCIDR)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 
 	tx, err := svc.activeDB().BeginTx(ctx, database.TxOptions{
 		IsoLevel: "serializable",
 	})
 	if err != nil {
-		return "", fmt.Errorf("failed to begin transaction: %w", err)
+		return "", nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
 
-	// Get all allocated floating IPs in this external network
+	// Get all allocated floating IPs in this external network — lock the rows so
+	// a concurrent allocation cannot pick the same address before we INSERT.
 	rows, err := tx.Query(ctx,
 		"SELECT floating_ip_address FROM floating_ips WHERE floating_network_id = $1 FOR UPDATE",
 		floatingNetworkID,
 	)
 	if err != nil {
-		return "", fmt.Errorf("failed to query allocated IPs: %w", err)
+		_ = tx.Rollback(ctx)
+		return "", nil, fmt.Errorf("failed to query allocated IPs: %w", err)
 	}
-	defer rows.Close()
 
 	allocatedIPs := make(map[string]bool)
 	for rows.Next() {
@@ -642,23 +661,22 @@ func (svc *Service) allocateFloatingIP(ctx context.Context, floatingNetworkID, s
 		}
 		allocatedIPs[ip] = true
 	}
+	rows.Close()
 	if err := rows.Err(); err != nil {
-		return "", fmt.Errorf("iterating allocated IPs: %w", err)
+		_ = tx.Rollback(ctx)
+		return "", nil, fmt.Errorf("iterating allocated IPs: %w", err)
 	}
 
-	// Find first available IP in range
-	// Start from .100 to avoid gateway and DHCP range
+	// Find first available IP in range. Start from .100 to avoid gateway/DHCP range.
 	ip := incrementIP(ipNet.IP, 100)
 	for ipNet.Contains(ip) {
-		ipStr := ip.String()
-		if !allocatedIPs[ipStr] {
-			if err := tx.Commit(ctx); err != nil {
-				return "", fmt.Errorf("failed to commit IP allocation: %w", err)
-			}
-			return ipStr, nil
+		if !allocatedIPs[ip.String()] {
+			// Return without committing — caller must INSERT then commit.
+			return ip.String(), tx, nil
 		}
 		ip = incrementIP(ip, 1)
 	}
 
-	return "", fmt.Errorf("no available IPs in subnet %s", subnetCIDR)
+	_ = tx.Rollback(ctx)
+	return "", nil, fmt.Errorf("no available IPs in subnet %s", subnetCIDR)
 }

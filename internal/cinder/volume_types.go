@@ -193,7 +193,7 @@ func (svc *Service) CreateVolumeTypeExtraSpecs(c *gin.Context) {
 		return
 	}
 
-	// Convert to JSONB
+	// Merge incoming keys into existing extra_specs without dropping unmentioned keys.
 	extraSpecsJSON, err := json.Marshal(req.ExtraSpecs)
 	if err != nil {
 		log.Error().Err(err).Str("operation", "create_extra_specs").Msg("failed to marshal extra specs")
@@ -202,7 +202,7 @@ func (svc *Service) CreateVolumeTypeExtraSpecs(c *gin.Context) {
 	}
 
 	_, err = svc.activeDB().Exec(c.Request.Context(),
-		"UPDATE volume_types SET extra_specs = $1 WHERE id = $2",
+		"UPDATE volume_types SET extra_specs = COALESCE(extra_specs, '{}'::jsonb) || $1::jsonb WHERE id = $2",
 		extraSpecsJSON, typeID,
 	)
 	if err != nil {

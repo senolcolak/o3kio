@@ -56,6 +56,12 @@ func TestHubVerifiesToken(t *testing.T) {
 	assert.False(t, hub.VerifyJoin("node-2", validHash))
 }
 
+func TestHubRejectsJoinWhenSecretEmpty(t *testing.T) {
+	hub := tunnel.NewHub("")
+	assert.False(t, hub.VerifyJoin("node-1", ""), "empty secret must reject all joins")
+	assert.False(t, hub.VerifyJoin("node-1", "any-hash"), "empty secret must reject all joins")
+}
+
 func TestHubSetTLSConfig(t *testing.T) {
 	ca, err := tunnel.GenerateCA()
 	assert.NoError(t, err)
