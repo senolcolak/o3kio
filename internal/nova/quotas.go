@@ -2,6 +2,7 @@ package nova
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -249,33 +250,37 @@ func (svc *Service) CheckQuota(c *gin.Context, resource string, requestedAmount 
 		return err
 	}
 
-	// Get current usage
+	// Get current usage — errors are propagated so a DB failure cannot silently bypass quota.
 	var usage int
+	var usageErr error
 	switch resource {
 	case "instances":
-		svc.activeDB().QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM instances WHERE project_id = $1 AND status NOT IN ('DELETED', 'SOFT_DELETED', 'ERROR')`, projectID).Scan(&usage)
+		usageErr = svc.activeDB().QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM instances WHERE project_id = $1 AND status NOT IN ('DELETED', 'SOFT_DELETED', 'ERROR')`, projectID).Scan(&usage)
 	case "cores":
-		svc.activeDB().QueryRow(c.Request.Context(), `SELECT COALESCE(SUM(f.vcpus), 0) FROM instances i LEFT JOIN flavors f ON i.flavor_id = f.id WHERE i.project_id = $1 AND i.status NOT IN ('DELETED', 'SOFT_DELETED', 'ERROR')`, projectID).Scan(&usage)
+		usageErr = svc.activeDB().QueryRow(c.Request.Context(), `SELECT COALESCE(SUM(f.vcpus), 0) FROM instances i LEFT JOIN flavors f ON i.flavor_id = f.id WHERE i.project_id = $1 AND i.status NOT IN ('DELETED', 'SOFT_DELETED', 'ERROR')`, projectID).Scan(&usage)
 	case "ram":
-		svc.activeDB().QueryRow(c.Request.Context(), `SELECT COALESCE(SUM(f.ram_mb), 0) FROM instances i LEFT JOIN flavors f ON i.flavor_id = f.id WHERE i.project_id = $1 AND i.status NOT IN ('DELETED', 'SOFT_DELETED', 'ERROR')`, projectID).Scan(&usage)
+		usageErr = svc.activeDB().QueryRow(c.Request.Context(), `SELECT COALESCE(SUM(f.ram_mb), 0) FROM instances i LEFT JOIN flavors f ON i.flavor_id = f.id WHERE i.project_id = $1 AND i.status NOT IN ('DELETED', 'SOFT_DELETED', 'ERROR')`, projectID).Scan(&usage)
 	case "volumes":
-		svc.activeDB().QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM volumes WHERE project_id = $1`, projectID).Scan(&usage)
+		usageErr = svc.activeDB().QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM volumes WHERE project_id = $1`, projectID).Scan(&usage)
 	case "gigabytes":
-		svc.activeDB().QueryRow(c.Request.Context(), `SELECT COALESCE(SUM(size_gb), 0) FROM volumes WHERE project_id = $1`, projectID).Scan(&usage)
+		usageErr = svc.activeDB().QueryRow(c.Request.Context(), `SELECT COALESCE(SUM(size_gb), 0) FROM volumes WHERE project_id = $1`, projectID).Scan(&usage)
 	case "networks":
-		svc.activeDB().QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM networks WHERE project_id = $1`, projectID).Scan(&usage)
+		usageErr = svc.activeDB().QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM networks WHERE project_id = $1`, projectID).Scan(&usage)
 	case "subnets":
-		svc.activeDB().QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM subnets WHERE project_id = $1`, projectID).Scan(&usage)
+		usageErr = svc.activeDB().QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM subnets WHERE project_id = $1`, projectID).Scan(&usage)
 	case "ports":
-		svc.activeDB().QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM ports WHERE project_id = $1`, projectID).Scan(&usage)
+		usageErr = svc.activeDB().QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM ports WHERE project_id = $1`, projectID).Scan(&usage)
 	case "routers":
-		svc.activeDB().QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM routers WHERE project_id = $1`, projectID).Scan(&usage)
+		usageErr = svc.activeDB().QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM routers WHERE project_id = $1`, projectID).Scan(&usage)
 	case "floatingip":
-		svc.activeDB().QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM floating_ips WHERE project_id = $1`, projectID).Scan(&usage)
+		usageErr = svc.activeDB().QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM floating_ips WHERE project_id = $1`, projectID).Scan(&usage)
 	case "security_groups":
-		svc.activeDB().QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM security_groups WHERE project_id = $1`, projectID).Scan(&usage)
+		usageErr = svc.activeDB().QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM security_groups WHERE project_id = $1`, projectID).Scan(&usage)
 	case "security_group_rules":
-		svc.activeDB().QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM security_group_rules WHERE security_group_id IN (SELECT id FROM security_groups WHERE project_id = $1)`, projectID).Scan(&usage)
+		usageErr = svc.activeDB().QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM security_group_rules WHERE security_group_id IN (SELECT id FROM security_groups WHERE project_id = $1)`, projectID).Scan(&usage)
+	}
+	if usageErr != nil {
+		return fmt.Errorf("failed to query usage for %s: %w", resource, usageErr)
 	}
 
 	// Check if adding requested amount would exceed limit

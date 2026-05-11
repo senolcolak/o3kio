@@ -59,6 +59,17 @@ func NewAuthService(jwtSecret string, tokenTTL time.Duration, cacheInstance *cac
 		cache:     cacheInstance,
 	}
 	svc.loadRevokedTokens()
+	// Periodically purge expired revocation entries from memory and DB.
+	// Interval is half the token TTL, minimum 5 minutes.
+	cleanupInterval := tokenTTL / 2
+	if cleanupInterval < 5*time.Minute {
+		cleanupInterval = 5 * time.Minute
+	}
+	go func() {
+		for range time.Tick(cleanupInterval) {
+			svc.CleanExpiredRevocations()
+		}
+	}()
 	return svc
 }
 
@@ -109,8 +120,9 @@ func (s *AuthService) activeDB() database.DBIF {
 // AuthRequest represents an authentication request
 // ScopeField handles both string ("unscoped") and object scope formats
 type ScopeField struct {
-	IsUnscoped bool
-	Project    *struct {
+	IsUnscoped     bool
+	IsDomainScoped bool
+	Project        *struct {
 		Name   string `json:"name"`
 		ID     string `json:"id"`
 		Domain *struct {
@@ -129,7 +141,7 @@ func (s *ScopeField) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 
-	// Otherwise unmarshal as object
+	// Otherwise unmarshal as object — check for unsupported domain scope
 	var temp struct {
 		Project *struct {
 			Name   string `json:"name"`
@@ -139,9 +151,15 @@ func (s *ScopeField) UnmarshalJSON(data []byte) error {
 				ID   string `json:"id"`
 			} `json:"domain,omitempty"`
 		} `json:"project,omitempty"`
+		Domain *json.RawMessage `json:"domain,omitempty"`
 	}
 	if err := json.Unmarshal(data, &temp); err != nil {
 		return err
+	}
+	if temp.Domain != nil {
+		// Caller requested domain-scoped token; signal this upstream.
+		s.IsDomainScoped = true
+		return nil
 	}
 	s.Project = temp.Project
 	s.IsUnscoped = false
@@ -259,6 +277,11 @@ func (s *AuthService) AuthenticatePassword(ctx context.Context, req *AuthRequest
 	var projectID string
 	var roles []string
 	var project *database.Project
+
+	// Reject domain-scoped token requests — not supported
+	if req.Auth.Scope != nil && req.Auth.Scope.IsDomainScoped {
+		return nil, "", common.NewNotImplementedError("domain-scoped tokens are not supported")
+	}
 
 	// Check if scope is explicitly requested
 	if req.Auth.Scope != nil && !req.Auth.Scope.IsUnscoped && req.Auth.Scope.Project != nil {
@@ -450,6 +473,11 @@ func (s *AuthService) AuthenticateToken(ctx context.Context, req *AuthRequest) (
 	var projectID string
 	var roles []string
 	var project *database.Project
+
+	// Reject domain-scoped token requests — not supported
+	if req.Auth.Scope != nil && req.Auth.Scope.IsDomainScoped {
+		return nil, "", common.NewNotImplementedError("domain-scoped tokens are not supported")
+	}
 
 	if req.Auth.Scope == nil || (req.Auth.Scope != nil && req.Auth.Scope.IsUnscoped) {
 		// Unscoped token - no project/roles
@@ -672,8 +700,8 @@ func (s *AuthService) AuthenticateApplicationCredential(ctx context.Context, req
 	var accessRules []AccessRule
 	if accessRulesJSON != nil {
 		if err := json.Unmarshal(accessRulesJSON, &accessRules); err != nil {
-			log.Warn().Err(err).Str("credential_id", credID).Msg("failed to parse access_rules, treating as unrestricted")
-			accessRules = nil
+			log.Error().Err(err).Str("credential_id", credID).Msg("failed to parse access_rules; denying access")
+			return nil, "", false, common.NewUnauthorizedError("application credential has invalid access_rules")
 		}
 	}
 
@@ -698,6 +726,18 @@ func (s *AuthService) AuthenticateApplicationCredential(ctx context.Context, req
 	var scopeProjectID string
 	if projectID != nil {
 		scopeProjectID = *projectID
+	}
+
+	// Prevent scope escalation: if the caller requested a specific project scope,
+	// it must match the project the application credential was created for.
+	if req.Auth.Scope != nil && !req.Auth.Scope.IsUnscoped && req.Auth.Scope.IsDomainScoped {
+		return nil, "", false, common.NewNotImplementedError("domain-scoped tokens are not supported")
+	}
+	if req.Auth.Scope != nil && !req.Auth.Scope.IsUnscoped && req.Auth.Scope.Project != nil {
+		requestedProjectID := req.Auth.Scope.Project.ID
+		if requestedProjectID != "" && requestedProjectID != scopeProjectID {
+			return nil, "", false, common.NewUnauthorizedError("application credential scope does not match requested project")
+		}
 	}
 
 	// Get roles for this application credential

@@ -28,6 +28,7 @@ import (
 	"github.com/cobaltcore-dev/o3k/internal/scheduler"
 	"github.com/cobaltcore-dev/o3k/internal/server"
 	"github.com/cobaltcore-dev/o3k/internal/tunnel"
+	migrations "github.com/cobaltcore-dev/o3k/migrations"
 	"github.com/cobaltcore-dev/o3k/pkg/cache"
 	"github.com/cobaltcore-dev/o3k/pkg/networking"
 	"github.com/gin-gonic/gin"
@@ -71,6 +72,11 @@ func runServer(args []string) {
 	cfg, err := common.LoadConfig(*configPath)
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
+	}
+
+	// Validate configuration before bootstrapping anything.
+	if err := common.ValidateConfig(cfg); err != nil {
+		log.Fatalf("Invalid configuration: %v", err)
 	}
 
 	// Zero-config mode: if no database URL or datastore is configured, bootstrap
@@ -117,10 +123,10 @@ func runServer(args []string) {
 	}
 
 	// Validate JWT secret now that bootstrap may have set it.
-	if cfg.Keystone.JWTSecret == "" || cfg.Keystone.JWTSecret == "change-me-in-production" {
+	if cfg.Keystone.JWTSecret == "" || cfg.Keystone.JWTSecret == "change-me-in-production" || len(cfg.Keystone.JWTSecret) < 32 {
 		env := os.Getenv("O3K_ENV")
 		if env != "development" && env != "test" {
-			log.Fatalf("FATAL: JWT secret is not set. Set O3K_JWT_SECRET or use O3K_ENV=development for dev mode.")
+			log.Fatalf("FATAL: JWT secret is not set or too short (min 32 chars). Set O3K_JWT_SECRET or use O3K_ENV=development for dev mode.")
 		}
 	}
 
@@ -196,7 +202,7 @@ func runServer(args []string) {
 		}
 	} else {
 		log.Println("Running SQLite migrations...")
-		if err := database.MigrateSQLite(*migrationsPath); err != nil {
+		if err := database.MigrateSQLiteFS(migrations.SQLiteFS); err != nil {
 			log.Fatalf("Failed to run SQLite migrations: %v", err)
 		}
 	}
@@ -393,7 +399,7 @@ func runServer(args []string) {
 		createCinderServer(cfg, cinderService, authService),
 		createGlanceServer(cfg, glanceService, authService),
 		createPlacementServer(cfg, placementService, authService),
-		createMetadataServer(metadataService),
+		createMetadataServer(cfg, metadataService),
 	}
 
 	// Channel for shutdown signaling (from OS signals or server failures)
@@ -589,6 +595,10 @@ func runTokenCmd(args []string) {
 
 func createKeystoneServer(cfg *common.Config, svc *keystone.Service, authService *keystone.AuthService) *http.Server {
 	r := gin.New()
+	middleware.RegisterHealthRoutes(r)
+	middleware.RegisterMetricsRoute(r)
+	r.Use(middleware.RequestIDMiddleware())
+	r.Use(middleware.MetricsMiddleware())
 	r.Use(middleware.ErrorHandlingMiddleware())
 	r.Use(middleware.LoggingMiddleware())
 	r.Use(middleware.RecoveryMiddleware())
@@ -620,7 +630,7 @@ func createKeystoneServer(cfg *common.Config, svc *keystone.Service, authService
 	svc.RegisterRoutes(r.Group(""), middleware.RequireRole("admin"))
 
 	return &http.Server{
-		Addr:         fmt.Sprintf(":%d", cfg.Keystone.Port),
+		Addr:         common.BindAddress(cfg, cfg.Keystone.Port),
 		Handler:      r,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 60 * time.Second,
@@ -630,6 +640,10 @@ func createKeystoneServer(cfg *common.Config, svc *keystone.Service, authService
 
 func createNovaServer(cfg *common.Config, svc *nova.Service, authService *keystone.AuthService) *http.Server {
 	r := gin.New()
+	middleware.RegisterHealthRoutes(r)
+	middleware.RegisterMetricsRoute(r)
+	r.Use(middleware.RequestIDMiddleware())
+	r.Use(middleware.MetricsMiddleware())
 	r.Use(middleware.ErrorHandlingMiddleware())
 	r.Use(middleware.LoggingMiddleware())
 	r.Use(middleware.RecoveryMiddleware())
@@ -644,7 +658,7 @@ func createNovaServer(cfg *common.Config, svc *nova.Service, authService *keysto
 	svc.RegisterRoutes(r.Group(""))
 
 	return &http.Server{
-		Addr:         fmt.Sprintf(":%d", cfg.Nova.Port),
+		Addr:         common.BindAddress(cfg, cfg.Nova.Port),
 		Handler:      r,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 60 * time.Second,
@@ -654,6 +668,10 @@ func createNovaServer(cfg *common.Config, svc *nova.Service, authService *keysto
 
 func createNeutronServer(cfg *common.Config, svc *neutron.Service, authService *keystone.AuthService) *http.Server {
 	r := gin.New()
+	middleware.RegisterHealthRoutes(r)
+	middleware.RegisterMetricsRoute(r)
+	r.Use(middleware.RequestIDMiddleware())
+	r.Use(middleware.MetricsMiddleware())
 	r.Use(middleware.ErrorHandlingMiddleware())
 	r.Use(middleware.LoggingMiddleware())
 	r.Use(middleware.RecoveryMiddleware())
@@ -667,7 +685,7 @@ func createNeutronServer(cfg *common.Config, svc *neutron.Service, authService *
 	svc.RegisterRoutes(r.Group(""))
 
 	return &http.Server{
-		Addr:         fmt.Sprintf(":%d", cfg.Neutron.Port),
+		Addr:         common.BindAddress(cfg, cfg.Neutron.Port),
 		Handler:      r,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 60 * time.Second,
@@ -677,6 +695,10 @@ func createNeutronServer(cfg *common.Config, svc *neutron.Service, authService *
 
 func createCinderServer(cfg *common.Config, svc *cinder.Service, authService *keystone.AuthService) *http.Server {
 	r := gin.New()
+	middleware.RegisterHealthRoutes(r)
+	middleware.RegisterMetricsRoute(r)
+	r.Use(middleware.RequestIDMiddleware())
+	r.Use(middleware.MetricsMiddleware())
 	r.Use(middleware.ErrorHandlingMiddleware())
 	r.Use(middleware.LoggingMiddleware())
 	r.Use(middleware.RecoveryMiddleware())
@@ -690,7 +712,7 @@ func createCinderServer(cfg *common.Config, svc *cinder.Service, authService *ke
 	svc.RegisterRoutes(r.Group(""))
 
 	return &http.Server{
-		Addr:         fmt.Sprintf(":%d", cfg.Cinder.Port),
+		Addr:         common.BindAddress(cfg, cfg.Cinder.Port),
 		Handler:      r,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 60 * time.Second,
@@ -700,6 +722,10 @@ func createCinderServer(cfg *common.Config, svc *cinder.Service, authService *ke
 
 func createGlanceServer(cfg *common.Config, svc *glance.Service, authService *keystone.AuthService) *http.Server {
 	r := gin.New()
+	middleware.RegisterHealthRoutes(r)
+	middleware.RegisterMetricsRoute(r)
+	r.Use(middleware.RequestIDMiddleware())
+	r.Use(middleware.MetricsMiddleware())
 	r.Use(middleware.ErrorHandlingMiddleware())
 	r.Use(middleware.LoggingMiddleware())
 	r.Use(middleware.RecoveryMiddleware())
@@ -720,7 +746,7 @@ func createGlanceServer(cfg *common.Config, svc *glance.Service, authService *ke
 	svc.RegisterRoutes(authGroup)
 
 	return &http.Server{
-		Addr:         fmt.Sprintf(":%d", cfg.Glance.Port),
+		Addr:         common.BindAddress(cfg, cfg.Glance.Port),
 		Handler:      r,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 10 * time.Minute,
@@ -730,6 +756,10 @@ func createGlanceServer(cfg *common.Config, svc *glance.Service, authService *ke
 
 func createPlacementServer(cfg *common.Config, svc *placement.Service, authService *keystone.AuthService) *http.Server {
 	r := gin.New()
+	middleware.RegisterHealthRoutes(r)
+	middleware.RegisterMetricsRoute(r)
+	r.Use(middleware.RequestIDMiddleware())
+	r.Use(middleware.MetricsMiddleware())
 	r.Use(middleware.ErrorHandlingMiddleware())
 	r.Use(middleware.LoggingMiddleware())
 	r.Use(middleware.RecoveryMiddleware())
@@ -742,7 +772,7 @@ func createPlacementServer(cfg *common.Config, svc *placement.Service, authServi
 	svc.RegisterRoutes(r.Group(""))
 
 	return &http.Server{
-		Addr:         ":8778",
+		Addr:         common.BindAddress(cfg, 8778),
 		Handler:      r,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 60 * time.Second,
@@ -750,8 +780,12 @@ func createPlacementServer(cfg *common.Config, svc *placement.Service, authServi
 	}
 }
 
-func createMetadataServer(svc *metadata.Service) *http.Server {
+func createMetadataServer(cfg *common.Config, svc *metadata.Service) *http.Server {
 	r := gin.New()
+	middleware.RegisterHealthRoutes(r)
+	middleware.RegisterMetricsRoute(r)
+	r.Use(middleware.RequestIDMiddleware())
+	r.Use(middleware.MetricsMiddleware())
 	r.Use(middleware.ErrorHandlingMiddleware())
 	r.Use(middleware.LoggingMiddleware())
 	r.Use(middleware.RecoveryMiddleware())
@@ -763,7 +797,7 @@ func createMetadataServer(svc *metadata.Service) *http.Server {
 	svc.RegisterRoutes(r.Group(""))
 
 	return &http.Server{
-		Addr:         ":8775",
+		Addr:         common.BindAddress(cfg, 8775),
 		Handler:      r,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 60 * time.Second,

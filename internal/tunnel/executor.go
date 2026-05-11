@@ -28,10 +28,10 @@ func NewExecutor(mode string) *Executor {
 
 // Execute routes the task to the appropriate VM lifecycle handler.
 func (e *Executor) Execute(ctx context.Context, taskType string, payload []byte) ([]byte, error) {
-	switch strings.ToUpper(taskType) {
-	case "VM_CREATE":
+	switch taskType {
+	case TaskCreateVM:
 		return e.vmCreate(ctx, payload)
-	case "VM_DELETE":
+	case TaskDeleteVM:
 		return e.vmDelete(ctx, payload)
 	case "VM_START":
 		return e.vmStart(ctx, payload)
@@ -41,9 +41,9 @@ func (e *Executor) Execute(ctx context.Context, taskType string, payload []byte)
 		return e.vmReboot(ctx, payload)
 	case "NET_ENSURE_NAMESPACE":
 		return e.netEnsureNamespace(ctx, payload)
-	case "NET_ADD_PORT":
+	case TaskCreatePort:
 		return e.netAddPort(ctx, payload)
-	case "NET_REMOVE_PORT":
+	case TaskDeletePort:
 		return e.netRemovePort(ctx, payload)
 	default:
 		return nil, fmt.Errorf("unknown task type: %s", taskType)

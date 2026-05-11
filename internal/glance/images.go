@@ -180,6 +180,22 @@ func (svc *Service) GetVersionV2(c *gin.Context) {
 	})
 }
 
+// checksumOrEmpty returns the string value or "" for a NullString checksum.
+func checksumOrEmpty(s sql.NullString) string {
+	if s.Valid {
+		return s.String
+	}
+	return ""
+}
+
+// nullStringOrEmpty returns the string value or "" for a NullString.
+func nullStringOrEmpty(s sql.NullString) string {
+	if s.Valid {
+		return s.String
+	}
+	return ""
+}
+
 // CreateImage creates a new image
 func (svc *Service) CreateImage(c *gin.Context) {
 	var req CreateImageRequest
@@ -371,7 +387,7 @@ func (svc *Service) ListImages(c *gin.Context) {
 	queryArgs = append(queryArgs, limit, offset)
 
 	rows, err := svc.activeDB().Query(c.Request.Context(), fmt.Sprintf(`
-		SELECT id, name, status, visibility, size_bytes, disk_format, container_format, min_disk_gb, min_ram_mb, COALESCE(protected, false), created_at, updated_at, COALESCE(project_id, '')
+		SELECT id, name, status, visibility, size_bytes, disk_format, container_format, min_disk_gb, min_ram_mb, COALESCE(protected, false), created_at, updated_at, COALESCE(project_id, ''), checksum, os_hash_algo, os_hash_value
 		FROM images
 		%s
 		ORDER BY created_at DESC
@@ -393,8 +409,9 @@ func (svc *Service) ListImages(c *gin.Context) {
 		var protected bool
 		var createdAt, updatedAt time.Time
 		var imageOwner string
+		var checksum, osHashAlgo, osHashValue sql.NullString
 
-		if err := rows.Scan(&id, &name, &status, &visibility, &sizeBytes, &diskFormat, &containerFormat, &minDisk, &minRAM, &protected, &createdAt, &updatedAt, &imageOwner); err != nil {
+		if err := rows.Scan(&id, &name, &status, &visibility, &sizeBytes, &diskFormat, &containerFormat, &minDisk, &minRAM, &protected, &createdAt, &updatedAt, &imageOwner, &checksum, &osHashAlgo, &osHashValue); err != nil {
 			continue
 		}
 
@@ -409,6 +426,10 @@ func (svc *Service) ListImages(c *gin.Context) {
 			"min_ram":          minRAM,
 			"owner":            imageOwner,
 			"protected":        protected,
+			"checksum":         checksumOrEmpty(checksum),
+			"os_hash_algo":     nullStringOrEmpty(osHashAlgo),
+			"os_hash_value":    nullStringOrEmpty(osHashValue),
+			"tags":             []string{},
 			"created_at":       createdAt.Format(time.RFC3339),
 			"updated_at":       updatedAt.Format(time.RFC3339),
 			"self":             fmt.Sprintf("/v2/images/%s", id),
@@ -432,11 +453,19 @@ func (svc *Service) ListImages(c *gin.Context) {
 		images = []gin.H{}
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	resp := gin.H{
 		"images": images,
 		"schema": "/v2/schemas/images",
-		"first":  "/v2/images",
-	})
+		"first":  fmt.Sprintf("/v2/images?limit=%d", limit),
+	}
+
+	// Include "next" link only when the page is full (there may be more results)
+	if len(images) == limit {
+		lastID := images[len(images)-1]["id"].(string)
+		resp["next"] = fmt.Sprintf("/v2/images?marker=%s&limit=%d", lastID, limit)
+	}
+
+	c.JSON(http.StatusOK, resp)
 }
 
 // GetImage returns a single image
@@ -469,7 +498,11 @@ func (svc *Service) GetImage(c *gin.Context) {
 	err := svc.activeDB().QueryRow(ctx, `
 		SELECT id, name, status, visibility, size_bytes, disk_format, container_format, min_disk_gb, min_ram_mb, COALESCE(protected, false), checksum, os_hash_algo, os_hash_value, created_at, updated_at, COALESCE(project_id, '')
 		FROM images
-		WHERE (id::text = $1 OR name = $1) AND (visibility IN ('public', 'community') OR project_id = $2)
+		WHERE (id::text = $1 OR name = $1) AND (
+			visibility IN ('public', 'community') OR
+			project_id = $2 OR
+			EXISTS (SELECT 1 FROM image_members WHERE image_id = images.id AND member_id = $2 AND status = 'accepted')
+		)
 		LIMIT 1
 	`, imageID, projectID).Scan(&id, &name, &status, &visibility, &sizeBytes, &diskFormat, &containerFormat, &minDisk, &minRAM, &protected, &checksum, &osHashAlgo, &osHashValue, &createdAt, &updatedAt, &imageOwner)
 

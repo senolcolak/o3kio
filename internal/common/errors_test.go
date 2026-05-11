@@ -227,11 +227,12 @@ func TestOpenStackErrorToJSON(t *testing.T) {
 		t.Fatal("Expected JSON output")
 	}
 
-	if _, exists := json["error"]; !exists {
-		t.Error("Expected 'error' key in JSON")
+	// 404 errors use the named fault key ("itemNotFound"), not the generic "error" key.
+	if _, exists := json["itemNotFound"]; !exists {
+		t.Error("Expected 'itemNotFound' key in JSON for 404 responses")
 	}
 
-	errorBody := json["error"].(gin.H)
+	errorBody := json["itemNotFound"].(gin.H)
 	if errorBody["message"] == "" {
 		t.Error("Expected message in error body")
 	}
@@ -246,6 +247,20 @@ func TestOpenStackErrorToJSON(t *testing.T) {
 
 	if errorBody["details"] == "" {
 		t.Error("Expected details in error body")
+	}
+}
+
+func TestOpenStackErrorToJSONNon404(t *testing.T) {
+	err := NewBadRequestError("invalid input")
+	json := err.ToJSON()
+
+	if json == nil {
+		t.Fatal("Expected JSON output")
+	}
+
+	// Non-404 errors still use the generic "error" envelope.
+	if _, exists := json["error"]; !exists {
+		t.Error("Expected 'error' key in JSON for non-404 responses")
 	}
 }
 

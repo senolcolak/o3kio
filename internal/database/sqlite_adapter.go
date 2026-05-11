@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -22,8 +23,9 @@ func rewritePlaceholders(query string) string {
 	return placeholderRegex.ReplaceAllString(query, "?")
 }
 
-// castRegex matches PostgreSQL type-cast suffixes (::text, ::jsonb, etc.).
-var castRegex = regexp.MustCompile(`::(text|int|bigint|integer|jsonb|timestamp|boolean|uuid)`)
+// castRegex matches PostgreSQL type-cast suffixes (::text, ::jsonb, ::varchar(N), etc.).
+// It covers all common PostgreSQL cast targets including parameterized types.
+var castRegex = regexp.MustCompile(`(?i)::\s*(?:double\s+precision|timestamp(?:\s+(?:with|without)\s+time\s+zone)?|varchar(?:\(\d+\))?|numeric(?:\(\d+(?:,\s*\d+)?\))?|char(?:\(\d+\))?|smallint|bigint|integer|int|jsonb|json|boolean|uuid|real|float|interval|date|time|bytea|inet|cidr|text)`)
 
 // rewriteDialect rewrites PostgreSQL-specific syntax to SQLite equivalents.
 func rewriteDialect(query string) string {
@@ -89,7 +91,13 @@ func rewriteExtractEpoch(query string) string {
 			break
 		}
 		inner := rest[:closeIdx]
-		fmt.Fprintf(&b, "CAST(strftime('%%s', %s) AS INTEGER)", inner)
+		if parts := strings.SplitN(inner, " - ", 2); len(parts) == 2 {
+			left := strings.TrimSpace(parts[0])
+			right := strings.TrimSpace(parts[1])
+			fmt.Fprintf(&b, "(CAST(strftime('%%s', %s) AS INTEGER) - CAST(strftime('%%s', %s) AS INTEGER))", left, right)
+		} else {
+			fmt.Fprintf(&b, "CAST(strftime('%%s', %s) AS INTEGER)", inner)
+		}
 
 		// Advance past the closing ')' of EXTRACT(...).
 		// rest[closeIdx] closes the inner expression; rest[closeIdx+1] closes EXTRACT.
@@ -232,6 +240,102 @@ func (t *sqlTx) Rollback(_ context.Context) error { return t.tx.Rollback() }
 
 // migrationVersionRegex extracts the numeric prefix from migration filenames like "001_initial_schema.up.sql".
 var migrationVersionRegex = regexp.MustCompile(`^(\d+)_.+\.up\.sql$`)
+
+// MigrateSQLiteFS applies SQLite migration files from an fs.FS (typically an
+// embed.FS) under the "sqlite" directory, in sorted order.  It tracks applied
+// migrations in a schema_migrations table and is idempotent.
+//
+// Use this in place of MigrateSQLite when the binary embeds migrations via
+// go:embed so that no migrations/ directory is required at runtime.
+func MigrateSQLiteFS(fsys fs.FS) error {
+	adapter, ok := DB.(*SQLiteAdapter)
+	if !ok {
+		return fmt.Errorf("MigrateSQLiteFS called but DB is not SQLite")
+	}
+	db := adapter.db
+
+	// Create schema_migrations tracking table if not exists.
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
+		version TEXT PRIMARY KEY,
+		applied_at TEXT DEFAULT CURRENT_TIMESTAMP
+	)`)
+	if err != nil {
+		return fmt.Errorf("create schema_migrations table: %w", err)
+	}
+
+	// Read migration entries from the embedded FS.
+	entries, err := fs.ReadDir(fsys, "sqlite")
+	if err != nil {
+		return fmt.Errorf("read sqlite migrations from embedded FS: %w", err)
+	}
+
+	// Filter and sort *.up.sql files by numeric version prefix.
+	type migration struct {
+		version  string
+		filename string
+	}
+	var migrations []migration
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		matches := migrationVersionRegex.FindStringSubmatch(entry.Name())
+		if matches == nil {
+			continue
+		}
+		migrations = append(migrations, migration{version: matches[1], filename: entry.Name()})
+	}
+	sort.Slice(migrations, func(i, j int) bool {
+		return migrations[i].version < migrations[j].version
+	})
+
+	// Apply each migration that hasn't been applied yet.
+	applied := 0
+	for _, m := range migrations {
+		var exists string
+		err := db.QueryRow("SELECT version FROM schema_migrations WHERE version = ?", m.version).Scan(&exists)
+		if err == nil {
+			// Already applied.
+			continue
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("check migration %s: %w", m.version, err)
+		}
+
+		// Read and execute migration inside a transaction.
+		content, err := fs.ReadFile(fsys, filepath.Join("sqlite", m.filename))
+		if err != nil {
+			return fmt.Errorf("read embedded migration file %s: %w", m.filename, err)
+		}
+
+		tx, err := db.Begin()
+		if err != nil {
+			return fmt.Errorf("begin transaction for migration %s: %w", m.version, err)
+		}
+
+		if _, err := tx.Exec(string(content)); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("execute migration %s: %w", m.version, err)
+		}
+
+		if _, err := tx.Exec("INSERT INTO schema_migrations (version) VALUES (?)", m.version); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("record migration %s: %w", m.version, err)
+		}
+
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit migration %s: %w", m.version, err)
+		}
+		applied++
+	}
+
+	if applied == 0 {
+		fmt.Println("SQLite database is already up to date")
+	} else {
+		fmt.Printf("Applied %d SQLite migration(s)\n", applied)
+	}
+	return nil
+}
 
 // MigrateSQLite applies SQLite migration files from {migrationsPath}/sqlite/ in sorted order.
 // It tracks applied migrations in a schema_migrations table and is idempotent.

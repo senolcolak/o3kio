@@ -189,6 +189,14 @@ func (h *Hub) RegisterResultChan(taskID string) chan ResultMsg {
 	return ch
 }
 
+// UnregisterResultChan removes the result channel for taskID without delivering a result.
+// Call this when the waiter (e.g. an RPC context) is cancelled so the map entry does not leak.
+func (h *Hub) UnregisterResultChan(taskID string) {
+	h.resultMu.Lock()
+	defer h.resultMu.Unlock()
+	delete(h.resultChs, taskID)
+}
+
 // DeliverResult routes a ResultMsg to the channel registered for its TaskID.
 // The entry is removed after delivery; a second call for the same TaskID is a no-op.
 func (h *Hub) DeliverResult(msg ResultMsg) {

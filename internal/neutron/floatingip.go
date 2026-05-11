@@ -99,6 +99,10 @@ func (svc *Service) ListFloatingIPs(c *gin.Context) {
 			"floating_network_id": fip.FloatingNetworkID,
 			"floating_ip_address": fip.FloatingIPAddress,
 			"status":              fip.Status,
+			"dns_domain":          "",
+			"dns_name":            "",
+			"revision_number":     1,
+			"tags":                []string{},
 			"created_at":          fip.CreatedAt.Format(time.RFC3339),
 			"updated_at":          fip.UpdatedAt.Format(time.RFC3339),
 		}
@@ -308,6 +312,10 @@ func (svc *Service) CreateFloatingIP(c *gin.Context) {
 		"floating_ip_address": floatingIP,
 		"status":              status,
 		"description":         req.FloatingIP.Description,
+		"dns_domain":          "",
+		"dns_name":            "",
+		"revision_number":     1,
+		"tags":                []string{},
 		"created_at":          now.Format(time.RFC3339),
 		"updated_at":          now.Format(time.RFC3339),
 	}
@@ -367,6 +375,10 @@ func (svc *Service) GetFloatingIP(c *gin.Context) {
 		"floating_network_id": fip.FloatingNetworkID,
 		"floating_ip_address": fip.FloatingIPAddress,
 		"status":              fip.Status,
+		"dns_domain":          "",
+		"dns_name":            "",
+		"revision_number":     1,
+		"tags":                []string{},
 		"created_at":          fip.CreatedAt.Format(time.RFC3339),
 		"updated_at":          fip.UpdatedAt.Format(time.RFC3339),
 	}
@@ -410,11 +422,29 @@ func (svc *Service) UpdateFloatingIP(c *gin.Context) {
 		return
 	}
 
-	// Get current floating IP details
+	// Begin a transaction so the read-modify-write on the floating IP binding
+	// is atomic. Without this, two concurrent reassignments can both read the
+	// same current state and corrupt the port bindings (TOCTOU race).
+	tx, err := svc.activeDB().BeginTx(c.Request.Context(), database.TxOptions{
+		IsoLevel: "serializable",
+	})
+	if err != nil {
+		log.Error().Err(err).Str("operation", "update_floatingip_begin_tx").Msg("failed to begin transaction")
+		common.SendError(c, common.NewInternalServerError("failed to update floating IP"))
+		return
+	}
+	txDone := false
+	defer func() {
+		if !txDone {
+			_ = tx.Rollback(c.Request.Context())
+		}
+	}()
+
+	// Read current state within the transaction with a row-level lock.
 	var currentFloatingIP, currentFixedIP, currentRouterID sql.NullString
 	var currentPortID sql.NullString
-	err := svc.activeDB().QueryRow(c.Request.Context(),
-		"SELECT floating_ip_address, fixed_ip_address, port_id, router_id FROM floating_ips WHERE id = $1 AND project_id = $2",
+	err = tx.QueryRow(c.Request.Context(),
+		"SELECT floating_ip_address, fixed_ip_address, port_id, router_id FROM floating_ips WHERE id = $1 AND project_id = $2 FOR UPDATE",
 		floatingIPID, projectID,
 	).Scan(&currentFloatingIP, &currentFixedIP, &currentPortID, &currentRouterID)
 
@@ -556,7 +586,9 @@ func (svc *Service) UpdateFloatingIP(c *gin.Context) {
 	}
 
 	if len(updates) == 0 {
-		// No updates, just return current state
+		// No updates — commit the empty tx and return current state.
+		txDone = true
+		_ = tx.Commit(c.Request.Context())
 		svc.GetFloatingIP(c)
 		return
 	}
@@ -570,12 +602,19 @@ func (svc *Service) UpdateFloatingIP(c *gin.Context) {
 	query := fmt.Sprintf("UPDATE floating_ips SET %s WHERE id = $%d AND project_id = $%d",
 		updateString(updates), argID, argID+1)
 
-	_, err = svc.activeDB().Exec(c.Request.Context(), query, args...)
+	_, err = tx.Exec(c.Request.Context(), query, args...)
 	if err != nil {
 		log.Error().Err(err).Str("operation", "update_floatingip").Str("floatingip_id", floatingIPID).Msg("database error")
 		common.SendError(c, common.NewInternalServerError("failed to update floating IP"))
 		return
 	}
+
+	if err := tx.Commit(c.Request.Context()); err != nil {
+		log.Error().Err(err).Str("operation", "update_floatingip_commit").Str("floatingip_id", floatingIPID).Msg("transaction commit failed")
+		common.SendError(c, common.NewInternalServerError("failed to update floating IP"))
+		return
+	}
+	txDone = true
 
 	// Return updated floating IP
 	svc.GetFloatingIP(c)

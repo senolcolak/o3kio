@@ -1,17 +1,13 @@
 PRAGMA foreign_keys = ON;
 
--- Add Nova server groups for VM placement policies
-CREATE TABLE IF NOT EXISTS server_groups (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    project_id TEXT NOT NULL,
-    user_id TEXT,
-    policies TEXT DEFAULT '{}',
-    members TEXT DEFAULT '{}',
-    metadata TEXT DEFAULT '{}',
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(project_id, name)
-);
+-- Extend server_groups (created in migration 017) with columns that were
+-- omitted from the initial schema.
+-- SQLite ADD COLUMN does not support IF NOT EXISTS; the migration runner
+-- guarantees each migration runs at most once, so these will not be
+-- re-executed on an existing database.
+ALTER TABLE server_groups ADD COLUMN user_id TEXT;
+ALTER TABLE server_groups ADD COLUMN metadata TEXT DEFAULT '{}';
 
-CREATE INDEX idx_server_groups_project ON server_groups(project_id);
+-- Add unique constraint on (project_id, name).
+-- SQLite does not support ADD CONSTRAINT; use a unique index instead.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_server_groups_project_name ON server_groups(project_id, name);

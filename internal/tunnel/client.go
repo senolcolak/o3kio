@@ -106,13 +106,17 @@ func (c *AgentClient) runStream(ctx context.Context) error {
 
 	// Start periodic heartbeat so the scheduler's stats_updated_at filter sees
 	// this agent as active (requires a report within the last 30 seconds).
+	// Use a child context so the heartbeat goroutine is cancelled when the stream
+	// connection drops, preventing one leaked goroutine per reconnect attempt.
+	heartbeatCtx, heartbeatCancel := context.WithCancel(ctx)
+	defer heartbeatCancel()
 	go func() {
 		ticker := time.NewTicker(10 * time.Second)
 		defer ticker.Stop()
 		stats := CollectHostStats("stub") // TODO: use c.mode when available
 		for {
 			select {
-			case <-ctx.Done():
+			case <-heartbeatCtx.Done():
 				return
 			case <-ticker.C:
 				_ = safeSend(&pb.AgentMessage{

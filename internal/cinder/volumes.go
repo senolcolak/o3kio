@@ -669,6 +669,10 @@ func (svc *Service) ListVolumesDetail(c *gin.Context) {
 				{"rel": "self", "href": fmt.Sprintf("/v3/%s/volumes/%s", projectID, id)},
 				{"rel": "bookmark", "href": fmt.Sprintf("/volumes/%s", id)},
 			},
+			"os-vol-host-attr:host":          "localhost",
+			"os-vol-mig-status-attr:migstat": nil,
+			"os-vol-mig-status-attr:name_id": nil,
+			"os-vol-tenant-attr:tenant_id":   projectID,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -768,6 +772,10 @@ func (svc *Service) GetVolume(c *gin.Context) {
 				{"rel": "self", "href": fmt.Sprintf("/v3/%s/volumes/%s", projectID, id)},
 				{"rel": "bookmark", "href": fmt.Sprintf("/volumes/%s", id)},
 			},
+			"os-vol-host-attr:host":              "localhost",
+			"os-vol-mig-status-attr:migstat":     nil,
+			"os-vol-mig-status-attr:name_id":     nil,
+			"os-vol-tenant-attr:tenant_id":        projectID,
 		},
 	})
 }
@@ -884,6 +892,16 @@ func (svc *Service) VolumeAction(c *gin.Context) {
 			return
 		}
 
+		// Verify the instance belongs to the caller's project.
+		var instanceExists bool
+		if err := svc.activeDB().QueryRow(c.Request.Context(),
+			"SELECT EXISTS(SELECT 1 FROM instances WHERE id = $1 AND project_id = $2)",
+			instanceID, projectID,
+		).Scan(&instanceExists); err != nil || !instanceExists {
+			common.SendError(c, common.NewNotFoundError("instance"))
+			return
+		}
+
 		// Atomically verify status and transition to 'attaching' then 'in-use'
 		// to prevent concurrent attach of the same volume.
 		tx, err := svc.activeDB().BeginTx(c.Request.Context(), database.TxOptions{})
@@ -936,24 +954,48 @@ func (svc *Service) VolumeAction(c *gin.Context) {
 
 	// Handle detach action
 	if _, ok := req["os-detach"]; ok {
-		if currentStatus != "in-use" {
+		// Wrap status read+update in a transaction to prevent concurrent detach
+		// from reading "in-use" twice and both proceeding.
+		tx, err := svc.activeDB().BeginTx(c.Request.Context(), database.TxOptions{})
+		if err != nil {
+			log.Error().Err(err).Str("operation", "detach_volume_begin_tx").Str("volume_id", volumeID).Msg("failed to begin transaction")
+			common.SendError(c, common.NewInternalServerError("failed to detach volume"))
+			return
+		}
+		defer tx.Rollback(c.Request.Context()) //nolint:errcheck
+
+		var txStatus string
+		if err := tx.QueryRow(c.Request.Context(),
+			"SELECT status FROM volumes WHERE id = $1 AND project_id = $2",
+			volumeID, projectID,
+		).Scan(&txStatus); err != nil {
+			log.Error().Err(err).Str("operation", "detach_volume_tx_status").Str("volume_id", volumeID).Msg("failed to query volume status in transaction")
+			common.SendError(c, common.NewInternalServerError("failed to detach volume"))
+			return
+		}
+
+		if txStatus != "in-use" {
 			c.JSON(http.StatusConflict, gin.H{
 				"conflictingRequest": gin.H{
-					"message": fmt.Sprintf("Invalid volume: Volume %s status must be in-use to detach, currently %s.", volumeID, currentStatus),
+					"message": fmt.Sprintf("Invalid volume: Volume %s status must be in-use to detach, currently %s.", volumeID, txStatus),
 					"code":    409,
 				},
 			})
 			return
 		}
-		// Update volume to available status
-		_, err := svc.activeDB().Exec(c.Request.Context(), `
+
+		if _, err := tx.Exec(c.Request.Context(), `
 			UPDATE volumes
 			SET attached_to_instance_id = NULL, status = $1, updated_at = $2
 			WHERE id = $3 AND project_id = $4
-		`, "available", time.Now(), volumeID, projectID)
-
-		if err != nil {
+		`, "available", time.Now(), volumeID, projectID); err != nil {
 			log.Error().Err(err).Str("operation", "detach_volume").Str("volume_id", volumeID).Msg("failed to detach volume")
+			common.SendError(c, common.NewInternalServerError("failed to detach volume"))
+			return
+		}
+
+		if err := tx.Commit(c.Request.Context()); err != nil {
+			log.Error().Err(err).Str("operation", "detach_volume_commit").Str("volume_id", volumeID).Msg("failed to commit detach transaction")
 			common.SendError(c, common.NewInternalServerError("failed to detach volume"))
 			return
 		}
@@ -967,16 +1009,6 @@ func (svc *Service) VolumeAction(c *gin.Context) {
 		extendMap, ok := extendData.(map[string]interface{})
 		if !ok {
 			common.SendError(c, common.NewBadRequestError("invalid os-extend payload"))
-			return
-		}
-
-		if currentStatus != "available" {
-			c.JSON(http.StatusConflict, gin.H{
-				"conflictingRequest": gin.H{
-					"message": fmt.Sprintf("Invalid volume: Volume %s status must be available to extend, currently %s.", volumeID, currentStatus),
-					"code":    409,
-				},
-			})
 			return
 		}
 
@@ -1010,21 +1042,55 @@ func (svc *Service) VolumeAction(c *gin.Context) {
 			return
 		}
 
-		if newSize <= currentSizeGB {
-			common.SendError(c, common.NewBadRequestError(
-				fmt.Sprintf("New size must be greater than current size (%d GB)", currentSizeGB)))
+		// Wrap status read+size check+update in a transaction to prevent concurrent
+		// extends from both reading the same old size and both proceeding.
+		tx, err := svc.activeDB().BeginTx(c.Request.Context(), database.TxOptions{})
+		if err != nil {
+			log.Error().Err(err).Str("operation", "extend_volume_begin_tx").Str("volume_id", volumeID).Msg("failed to begin transaction")
+			common.SendError(c, common.NewInternalServerError("failed to extend volume"))
+			return
+		}
+		defer tx.Rollback(c.Request.Context()) //nolint:errcheck
+
+		var txStatus string
+		var txSizeGB int
+		if err := tx.QueryRow(c.Request.Context(),
+			"SELECT status, size_gb FROM volumes WHERE id = $1 AND project_id = $2",
+			volumeID, projectID,
+		).Scan(&txStatus, &txSizeGB); err != nil {
+			log.Error().Err(err).Str("operation", "extend_volume_tx_status").Str("volume_id", volumeID).Msg("failed to query volume in transaction")
+			common.SendError(c, common.NewInternalServerError("failed to extend volume"))
 			return
 		}
 
-		// Update volume size
-		_, err := svc.activeDB().Exec(c.Request.Context(), `
+		if txStatus != "available" {
+			c.JSON(http.StatusConflict, gin.H{
+				"conflictingRequest": gin.H{
+					"message": fmt.Sprintf("Invalid volume: Volume %s status must be available to extend, currently %s.", volumeID, txStatus),
+					"code":    409,
+				},
+			})
+			return
+		}
+
+		if newSize <= txSizeGB {
+			common.SendError(c, common.NewBadRequestError(
+				fmt.Sprintf("New size must be greater than current size (%d GB)", txSizeGB)))
+			return
+		}
+
+		if _, err := tx.Exec(c.Request.Context(), `
 			UPDATE volumes
 			SET size_gb = $1, updated_at = $2
 			WHERE id = $3 AND project_id = $4
-		`, newSize, time.Now(), volumeID, projectID)
-
-		if err != nil {
+		`, newSize, time.Now(), volumeID, projectID); err != nil {
 			log.Error().Err(err).Str("operation", "extend_volume").Str("volume_id", volumeID).Msg("failed to extend volume")
+			common.SendError(c, common.NewInternalServerError("failed to extend volume"))
+			return
+		}
+
+		if err := tx.Commit(c.Request.Context()); err != nil {
+			log.Error().Err(err).Str("operation", "extend_volume_commit").Str("volume_id", volumeID).Msg("failed to commit extend transaction")
 			common.SendError(c, common.NewInternalServerError("failed to extend volume"))
 			return
 		}
@@ -1399,6 +1465,8 @@ func (svc *Service) CreateSnapshot(c *gin.Context) {
 			"size":       size,
 			"status":     "creating",
 			"created_at": now.Format("2006-01-02T15:04:05.000000"),
+			"os-extended-snapshot-attributes:progress":   "0%",
+			"os-extended-snapshot-attributes:project_id": projectID,
 		},
 	})
 }
@@ -1453,10 +1521,12 @@ func (svc *Service) ListSnapshotsDetail(c *gin.Context) {
 			"size":       size,
 			"status":     status,
 			"created_at": createdAt.Format("2006-01-02T15:04:05.000000"),
+			"os-extended-snapshot-attributes:progress":   "100%",
+			"os-extended-snapshot-attributes:project_id": projectID,
 		})
 	}
 	if err := rows.Err(); err != nil {
-		log.Error().Err(err).Str("operation", "list_snapshots").Msg("rows iteration error")
+		log.Error().Err(err).Str("operation", "list_snapshots_detail").Msg("rows iteration error")
 		common.SendError(c, common.NewInternalServerError("failed to list snapshots"))
 		return
 	}
@@ -1531,6 +1601,8 @@ func (svc *Service) ListSnapshots(c *gin.Context) {
 			"size":       size,
 			"status":     status,
 			"created_at": createdAt.Format("2006-01-02T15:04:05.000000"),
+			"os-extended-snapshot-attributes:progress":   "100%",
+			"os-extended-snapshot-attributes:project_id": projectID,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -1583,6 +1655,8 @@ func (svc *Service) GetSnapshot(c *gin.Context) {
 			"size":       size,
 			"status":     status,
 			"created_at": createdAt.Format("2006-01-02T15:04:05.000000"),
+			"os-extended-snapshot-attributes:progress":   "100%",
+			"os-extended-snapshot-attributes:project_id": projectID,
 		},
 	})
 }
@@ -1859,6 +1933,8 @@ func (svc *Service) UpdateSnapshot(c *gin.Context) {
 			"size":        sizeGB,
 			"status":      status,
 			"created_at":  createdAt.Format("2006-01-02T15:04:05.000000"),
+			"os-extended-snapshot-attributes:progress":   "100%",
+			"os-extended-snapshot-attributes:project_id": projectID,
 		},
 	})
 }
