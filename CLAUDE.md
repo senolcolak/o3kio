@@ -7,10 +7,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **IMPORTANT**: This project uses the Ultimate Project System (Beastmode × Spec-Kit synthesis).
 
 ### Workflow & Knowledge Hierarchy
-- **L0 (Autoload)**: Read `.beastmode/BEASTMODE.md` at the start of every session
-- **L1 (Phase Context)**: `.beastmode/context/{PHASE}.md` - Load at phase start
-- **L2 (Domain Details)**: `.beastmode/context/{phase}/{domain}.md` - On-demand
-- **L3 (Specs & Artifacts)**: `specs/NNN-*/` - Feature specifications
+- **L0 (Autoload)**: Read `CLAUDE.md` at the start of every session
+- **L1 (Phase Context)**: `specs/NNN-*/` - Feature specifications (load at phase start)
+- **L2 (Domain Details)**: `docs/` - Architecture and API documentation (on-demand)
+- **L3 (Specs & Artifacts)**: `specs/NNN-*/` - Detailed feature specs and artifacts
 
 ### Development Workflow
 ```
@@ -19,7 +19,7 @@ specify → plan → tasks → implement → validate → release
 Each phase: **prime → execute → validate → checkpoint → retro**
 
 ### The Nine Articles (Constitution)
-Immutable principles in `memory/constitution.md`:
+Immutable principles governing this project:
 1. **Library-First** - Features begin as standalone libraries
 2. **CLI Interface** - All libraries expose CLI functionality
 3. **Test-First** - TDD mandatory (NON-NEGOTIABLE: tests → fail → implement)
@@ -62,14 +62,17 @@ O3K is a lightweight OpenStack implementation in Go, inspired by K3s. It provide
 
 ## Build and Development Commands
 
-### Quick Start with Docker Compose
+### Quick Start
 
 ```bash
-# Start all services (PostgreSQL + O3K)
-docker compose -f deployments/docker-compose.yml up -d
+# Zero-config (recommended for development):
+./o3k
 
-# Configure environment
-source ~/.o3k-env         # Sets OS_AUTH_URL, OS_USERNAME, etc.
+# Or with Docker Compose (PostgreSQL mode):
+docker compose -f deployments/docker-compose.yml up -d
+export OS_AUTH_URL=http://localhost:35357/v3
+export OS_USERNAME=admin OS_PASSWORD=secret
+export OS_PROJECT_NAME=default OS_USER_DOMAIN_NAME=Default OS_PROJECT_DOMAIN_NAME=Default
 
 # Test it works
 openstack token issue
@@ -140,12 +143,13 @@ make install-tools            # Installs air, golangci-lint, migrate
 
 ### Service Structure
 
-O3K runs as a single process (`cmd/o3k/main.go`) that starts six HTTP servers on different ports:
+O3K runs as a single process (`cmd/o3k/main.go`) that starts seven HTTP servers on different ports:
 - **Keystone** (35357): Identity service, JWT-based authentication
 - **Nova** (8774): Compute service, VM lifecycle via libvirt
 - **Neutron** (9696): Network service, namespace isolation via netlink
 - **Cinder** (8776): Block storage, multi-backend support (local/RBD/S3)
 - **Glance** (9292): Image service, multi-backend with hybrid failover
+- **Placement** (8778): Resource inventory and allocation tracking
 - **Metadata** (8775): EC2-compatible metadata service (no auth)
 
 Each service is initialized in `main.go` with its configuration and shares:
@@ -241,7 +245,7 @@ Requires Linux with appropriate dependencies.
 
 ## Database Schema
 
-PostgreSQL with 15 tables. Key tables:
+SQLite by default (zero-config); PostgreSQL supported as an optional backend. 50+ tables across 74 migrations. Key tables:
 
 - **users**: User credentials (bcrypt hashed passwords)
 - **projects**: Projects/tenants
@@ -411,11 +415,11 @@ if requestedVersion == "" {
 **"Token validation failed"**: Ensure `jwt_secret` matches between Keystone and other services
 
 ## Active Technologies
-- Go 1.26 + Gin (HTTP framework), pgx (PostgreSQL driver), gophercloud (contract testing), go-libvirt (hypervisor), netlink (networking) (002-horizon-full-compatibility)
-- PostgreSQL 17 (primary database) (002-horizon-full-compatibility)
+- Go 1.26 + Gin (HTTP framework), pgx (PostgreSQL driver), gophercloud (contract testing), go-libvirt (hypervisor), netlink (networking)
+- PostgreSQL 17 (optional database backend; SQLite is the default)
 
 ## Recent Changes
-- 002-horizon-full-compatibility: Added Go 1.26 + Gin (HTTP framework), pgx (PostgreSQL driver), gophercloud (contract testing), go-libvirt (hypervisor), netlink (networking)
+- Added Placement service (port 8778) for resource inventory and allocation
 
 ## Skill routing
 

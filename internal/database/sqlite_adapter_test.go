@@ -455,3 +455,124 @@ func TestExtractEpochMultipleWithSubtraction(t *testing.T) {
 		t.Errorf("rewriteDialect multiple EXTRACT\n  got  %q\n  want %q", got, want)
 	}
 }
+
+func TestSQLiteAdapter_OnConflictDoNothing(t *testing.T) {
+	dir := t.TempDir()
+	adapter, err := NewSQLiteAdapter(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteAdapter: %v", err)
+	}
+	t.Cleanup(adapter.Close)
+	ctx := t.Context()
+
+	_, err = adapter.Exec(ctx, `CREATE TABLE kv (k TEXT PRIMARY KEY, v TEXT)`)
+	if err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+
+	// First insert
+	_, err = adapter.Exec(ctx, `INSERT INTO kv (k, v) VALUES ($1, $2)`, "key1", "first")
+	if err != nil {
+		t.Fatalf("first insert: %v", err)
+	}
+
+	// Duplicate insert with ON CONFLICT DO NOTHING — must not error
+	_, err = adapter.Exec(ctx, `INSERT INTO kv (k, v) VALUES ($1, $2) ON CONFLICT (k) DO NOTHING`, "key1", "second")
+	if err != nil {
+		t.Fatalf("ON CONFLICT DO NOTHING: %v", err)
+	}
+
+	// Value should still be "first"
+	var v string
+	err = adapter.QueryRow(ctx, `SELECT v FROM kv WHERE k = $1`, "key1").Scan(&v)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if v != "first" {
+		t.Errorf("value = %q, want \"first\" (DO NOTHING should preserve original)", v)
+	}
+}
+
+func TestSQLiteAdapter_OnConflictDoUpdate(t *testing.T) {
+	dir := t.TempDir()
+	adapter, err := NewSQLiteAdapter(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteAdapter: %v", err)
+	}
+	t.Cleanup(adapter.Close)
+	ctx := t.Context()
+
+	_, err = adapter.Exec(ctx, `CREATE TABLE kv (k TEXT PRIMARY KEY, v TEXT, updated_at TEXT)`)
+	if err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+
+	// First insert
+	_, err = adapter.Exec(ctx, `INSERT INTO kv (k, v, updated_at) VALUES ($1, $2, $3)`, "key1", "first", "2024-01-01")
+	if err != nil {
+		t.Fatalf("first insert: %v", err)
+	}
+
+	// Upsert with ON CONFLICT DO UPDATE
+	_, err = adapter.Exec(ctx,
+		`INSERT INTO kv (k, v, updated_at) VALUES ($1, $2, $3) ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v, updated_at = EXCLUDED.updated_at`,
+		"key1", "updated", "2024-06-01")
+	if err != nil {
+		t.Fatalf("ON CONFLICT DO UPDATE: %v", err)
+	}
+
+	var v, ts string
+	err = adapter.QueryRow(ctx, `SELECT v, updated_at FROM kv WHERE k = $1`, "key1").Scan(&v, &ts)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if v != "updated" {
+		t.Errorf("value = %q, want \"updated\"", v)
+	}
+	if ts != "2024-06-01" {
+		t.Errorf("updated_at = %q, want \"2024-06-01\"", ts)
+	}
+}
+
+func TestSQLiteAdapter_Returning(t *testing.T) {
+	dir := t.TempDir()
+	adapter, err := NewSQLiteAdapter(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteAdapter: %v", err)
+	}
+	t.Cleanup(adapter.Close)
+	ctx := t.Context()
+
+	_, err = adapter.Exec(ctx, `CREATE TABLE items (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, active INTEGER DEFAULT 1)`)
+	if err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+
+	// INSERT with RETURNING
+	var id int
+	var name string
+	err = adapter.QueryRow(ctx,
+		`INSERT INTO items (name) VALUES ($1) RETURNING id, name`, "test-item",
+	).Scan(&id, &name)
+	if err != nil {
+		t.Fatalf("INSERT RETURNING: %v", err)
+	}
+	if id != 1 {
+		t.Errorf("id = %d, want 1", id)
+	}
+	if name != "test-item" {
+		t.Errorf("name = %q, want \"test-item\"", name)
+	}
+
+	// UPDATE with RETURNING
+	var newName string
+	err = adapter.QueryRow(ctx,
+		`UPDATE items SET name = $1 WHERE id = $2 RETURNING name`, "renamed", 1,
+	).Scan(&newName)
+	if err != nil {
+		t.Fatalf("UPDATE RETURNING: %v", err)
+	}
+	if newName != "renamed" {
+		t.Errorf("name after update = %q, want \"renamed\"", newName)
+	}
+}

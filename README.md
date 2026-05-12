@@ -3,7 +3,7 @@
 O3K replaces the entire OpenStack control plane with one Go binary. Like K3s did for Kubernetes — same API surface, dramatically less complexity.
 
 ```
-Single binary → 5 services → 342 endpoint routes registered → PostgreSQL only
+Single binary → 7 services → 342 endpoint routes → SQLite default (PostgreSQL optional)
 ```
 
 > **Status: Alpha.** Basic CRUD works for all services. Query filters, response schema completeness, state machine validation, and production safety features are still in progress. See [Project Status](#project-status) for honest details.
@@ -17,7 +17,7 @@ Single binary → 5 services → 342 endpoint routes registered → PostgreSQL o
 ./o3k
 
 # Starts with:
-# - SQLite database (./o3k.db)
+# - SQLite database (~/.local/share/o3k/db/state.db)
 # - All services in stub mode
 # - Auto-generated JWT secret + agent token
 # - TLS on gRPC tunnel
@@ -34,6 +34,22 @@ Single binary → 5 services → 342 endpoint routes registered → PostgreSQL o
 
 ```bash
 ./o3k --port 5000  # Keystone: 5357, Nova: 5774, etc.
+```
+
+### Database Options
+
+O3K supports two database backends:
+
+| Backend | Use Case | Config |
+|---------|----------|--------|
+| SQLite (default) | Development, single-node, edge | `./o3k` or `./o3k --datastore sqlite` |
+| PostgreSQL | Production, multi-replica | `./o3k --datastore postgres --db-url "postgres://..."` |
+
+SQLite mode embeds all 74 migrations in the binary — no external files needed. Data is stored at `$O3K_DATA_DIR/db/state.db` (default: `~/.local/share/o3k/`).
+
+To migrate from SQLite to PostgreSQL:
+```bash
+./o3k-migrate --from sqlite:///path/to/state.db --to "postgres://user:pass@host/db"
 ```
 
 ### Docker Compose (with Horizon)
@@ -60,13 +76,15 @@ openstack server create --flavor m1.small --image cirros --network my-net test-v
 │                  O3K Binary (~35MB)               │
 │                                                  │
 │  Keystone · Nova · Neutron · Cinder · Glance    │
+│  Placement · Metadata                            │
 │                                                  │
 │  Shared: JWT auth, connection pool, middleware   │
 └──────────────────────┬───────────────────────────┘
                        │
-              ┌────────┴────────┐
-              │   PostgreSQL 17 │
-              └─────────────────┘
+          ┌────────────┼────────────┐
+          │  SQLite    │  PostgreSQL │
+          │  (default) │  (optional) │
+          └────────────┴────────────┘
 ```
 
 No RabbitMQ. No Conductor. No Scheduler daemons. One process, one database.
@@ -82,7 +100,7 @@ No RabbitMQ. No Conductor. No Scheduler daemons. One process, one database.
 
 ## Project Status
 
-**Overall: 7/10** (up from 3.5/10 at v0.6.0 review start)
+**Overall: 6/10** (up from 3.5/10 at v0.6.0 review start)
 
 ### What Works Today
 
@@ -141,7 +159,7 @@ No RabbitMQ. No Conductor. No Scheduler daemons. One process, one database.
 ### Contract Tests
 
 ```
-Unit tests: 15/15 packages passing
+Unit tests: 16/16 packages passing
 Contract tests: Require running server (not CI-integrated yet)
 Integration tests: 20+ bash scripts (manual)
 ```
@@ -197,7 +215,7 @@ pkg/
 ├── hypervisor/       libvirt abstraction
 ├── networking/       netlink, VXLAN, iptables
 └── storage/          RBD, S3, local backends
-migrations/           62 SQL migration files
+migrations/           74 SQL migration files
 test/                 Contract + integration tests
 deployments/          Docker Compose configs
 docs/                 Documentation
@@ -207,7 +225,7 @@ docs/                 Documentation
 
 | Topic | Guide |
 |-------|-------|
-| Getting started | [Deployment Guide](docs/DEPLOYMENT_GUIDE.md) |
+| Getting started | [Deployment Guide](docs/DEPLOYMENT.md) |
 | Architecture | [Architecture](docs/ARCHITECTURE.md) |
 | Configuration | [Configuration](docs/CONFIGURATION.md) |
 | Operations | [Operations](docs/OPERATIONS.md) |
