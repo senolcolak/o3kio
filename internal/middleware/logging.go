@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin/binding"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/cobaltcore-dev/o3k/internal/common"
 )
@@ -115,9 +116,15 @@ func LoggingMiddleware() gin.HandlerFunc {
 			Str("method", c.Request.Method).
 			Str("path", c.Request.URL.Path).
 			Int("status", statusCode).
-			Dur("duration", duration).
 			Int("response_size", c.Writer.Size()).
 			Int64("duration_ms", duration.Milliseconds())
+
+		// Inject OTel trace context so log lines correlate with traces.
+		span := trace.SpanFromContext(c.Request.Context())
+		if span.SpanContext().IsValid() {
+			logEvent.Str("trace_id", span.SpanContext().TraceID().String()).
+				Str("span_id", span.SpanContext().SpanID().String())
+		}
 
 		if userID != nil {
 			if s, ok := userID.(string); ok {

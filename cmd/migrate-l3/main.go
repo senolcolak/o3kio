@@ -3,13 +3,17 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 
 	"github.com/jackc/pgx/v5"
 )
 
 func main() {
-	dbURL := "postgres://lightstack:secret@localhost/lightstack?sslmode=disable"
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		log.Fatal("DATABASE_URL environment variable is required")
+	}
 
 	conn, err := pgx.Connect(context.Background(), dbURL)
 	if err != nil {

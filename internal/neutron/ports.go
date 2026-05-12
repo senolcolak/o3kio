@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -795,6 +796,13 @@ func (svc *Service) allocateIPFromSubnet(ctx context.Context, subnetID, cidr str
 		return "", nil, fmt.Errorf("failed to iterate IPs: %w", err)
 	}
 
+	// Exclude the subnet's gateway IP so it is never allocated to a port.
+	var gatewayIP string
+	_ = tx.QueryRow(ctx, "SELECT COALESCE(gateway_ip, '') FROM subnets WHERE id = $1", subnetID).Scan(&gatewayIP)
+	if gatewayIP != "" {
+		usedIPs[gatewayIP] = true
+	}
+
 	// Calculate the usable range from the CIDR.
 	// First usable = network + 2 (skip network address and gateway).
 	// Last usable  = broadcast - 1 (skip broadcast address).
@@ -802,19 +810,50 @@ func (svc *Service) allocateIPFromSubnet(ctx context.Context, subnetID, cidr str
 	hostBits := bits - ones
 	totalHosts := uint(1) << hostBits // includes network and broadcast
 
-	var candidate net.IP
-	for offset := uint(2); offset < totalHosts-1; offset++ {
-		candidate = incrementIP(ipNet.IP, offset)
-		if !ipNet.Contains(candidate) {
-			break
+	// Convert the usedIPs set to sorted offsets so we can find the first gap
+	// in O(k log k) where k = number of already-allocated IPs, not subnet size.
+	usedOffsets := make([]uint, 0, len(usedIPs))
+	for ipStr := range usedIPs {
+		ip := net.ParseIP(ipStr)
+		if ip == nil {
+			continue
 		}
-		if !usedIPs[candidate.String()] {
-			return candidate.String(), tx, nil
+		offset := ipToOffset(ipNet.IP, ip)
+		if offset >= 2 && offset < totalHosts-1 {
+			usedOffsets = append(usedOffsets, offset)
+		}
+	}
+	slices.Sort(usedOffsets)
+
+	// Walk the sorted offsets to find the first gap starting at offset 2.
+	candidate := uint(2)
+	for _, used := range usedOffsets {
+		if candidate < used {
+			break // gap found before this used offset
+		}
+		if candidate == used {
+			candidate++
 		}
 	}
 
-	_ = tx.Rollback(ctx)
-	return "", nil, fmt.Errorf("no available IPs in subnet %s", subnetID)
+	if candidate >= totalHosts-1 {
+		_ = tx.Rollback(ctx)
+		return "", nil, fmt.Errorf("no available IPs in subnet %s", subnetID)
+	}
+
+	return incrementIP(ipNet.IP, candidate).String(), tx, nil
+}
+
+// ipToOffset returns the numeric distance from base to ip. Both addresses must
+// be IPv4. Returns 0 if either address is not IPv4 or if ip precedes base.
+func ipToOffset(base, ip net.IP) uint {
+	base4 := base.To4()
+	ip4 := ip.To4()
+	if base4 == nil || ip4 == nil {
+		return 0
+	}
+	return uint(ip4[0]-base4[0])<<24 | uint(ip4[1]-base4[1])<<16 |
+		uint(ip4[2]-base4[2])<<8 | uint(ip4[3]-base4[3])
 }
 
 // Security Groups implementation

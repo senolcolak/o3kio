@@ -781,6 +781,110 @@ func generateHostID(projectID, hostname string) string {
 	return fmt.Sprintf("%x", h[:])
 }
 
+// buildInClause returns a parameterized SQL IN clause for count placeholders,
+// e.g. buildInClause(3) → "($1, $2, $3)". Returns "()" for count == 0.
+func buildInClause(count int) string {
+	if count == 0 {
+		return "()"
+	}
+	placeholders := make([]string, count)
+	for i := range placeholders {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+	}
+	return "(" + strings.Join(placeholders, ", ") + ")"
+}
+
+// batchFetchAddresses fetches addresses for a set of instance IDs in one query.
+// Returns a map keyed by device_id (instance ID).
+func (svc *Service) batchFetchAddresses(ctx context.Context, serverIDs []string) map[string]gin.H {
+	result := make(map[string]gin.H, len(serverIDs))
+	if len(serverIDs) == 0 {
+		return result
+	}
+
+	args := make([]any, len(serverIDs))
+	for i, id := range serverIDs {
+		args[i] = id
+	}
+	query := fmt.Sprintf(`
+		SELECT p.device_id, p.network_id, p.fixed_ips, p.mac_address, n.name
+		FROM ports p
+		JOIN networks n ON p.network_id = n.id
+		WHERE p.device_id IN %s`, buildInClause(len(serverIDs)))
+
+	rows, err := svc.activeDB().Query(ctx, query, args...)
+	if err != nil {
+		return result
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var deviceID, networkID, networkName, macAddress string
+		var fixedIPsJSON []byte
+		if err := rows.Scan(&deviceID, &networkID, &fixedIPsJSON, &macAddress, &networkName); err != nil {
+			log.Warn().Err(err).Msg("failed to scan batch address row")
+			continue
+		}
+		var fixedIPs []map[string]interface{}
+		if err := json.Unmarshal(fixedIPsJSON, &fixedIPs); err != nil {
+			continue
+		}
+		if _, ok := result[deviceID]; !ok {
+			result[deviceID] = gin.H{}
+		}
+		var addressList []gin.H
+		for _, ipInfo := range fixedIPs {
+			if ipAddr, ok := ipInfo["ip_address"].(string); ok {
+				addressList = append(addressList, gin.H{
+					"addr":                    ipAddr,
+					"version":                 4,
+					"OS-EXT-IPS:type":         "fixed",
+					"OS-EXT-IPS-MAC:mac_addr": macAddress,
+				})
+			}
+		}
+		if len(addressList) > 0 {
+			result[deviceID][networkName] = addressList
+		}
+	}
+	return result
+}
+
+// batchFetchSecurityGroups fetches security groups for a set of instance IDs in one query.
+// Returns a map keyed by server ID. Servers with no groups are omitted (callers fall back to "default").
+func (svc *Service) batchFetchSecurityGroups(ctx context.Context, serverIDs []string) map[string][]gin.H {
+	result := make(map[string][]gin.H, len(serverIDs))
+	if len(serverIDs) == 0 {
+		return result
+	}
+
+	args := make([]any, len(serverIDs))
+	for i, id := range serverIDs {
+		args[i] = id
+	}
+	query := fmt.Sprintf(`
+		SELECT ssg.server_id, sg.name
+		FROM server_security_groups ssg
+		JOIN security_groups sg ON sg.id = ssg.security_group_id
+		WHERE ssg.server_id IN %s`, buildInClause(len(serverIDs)))
+
+	rows, err := svc.activeDB().Query(ctx, query, args...)
+	if err != nil {
+		return result
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var serverID, sgName string
+		if err := rows.Scan(&serverID, &sgName); err != nil {
+			log.Warn().Err(err).Msg("failed to scan batch security group row")
+			continue
+		}
+		result[serverID] = append(result[serverID], gin.H{"name": sgName})
+	}
+	return result
+}
+
 // ListServersDetail lists all servers (detailed)
 func (svc *Service) ListServersDetail(c *gin.Context) {
 	projectID := c.GetString("project_id")
@@ -871,46 +975,73 @@ func (svc *Service) ListServersDetail(c *gin.Context) {
 	}
 	defer rows.Close()
 
-	var servers []gin.H
-	for rows.Next() {
-		var id, name, status, projectID, userID, flavorID, flavorName string
-		var imageID *string
-		var powerState, vcpus, ramMB, diskGB int
-		var createdAt, updatedAt time.Time
-		var launchedAt *time.Time
-		var host sql.NullString
-		var locked bool
-		var taskStateDB sql.NullString
-		var keyNameDB sql.NullString
-		var faultMsgDB sql.NullString
+	// First pass: scan all rows into a temporary slice and collect server IDs.
+	type serverRow struct {
+		id, name, status, projID, userID, flavorID, flavorName string
+		imageID                                                 *string
+		powerState, vcpus, ramMB, diskGB                       int
+		createdAt, updatedAt                                    time.Time
+		launchedAt                                              *time.Time
+		host                                                    sql.NullString
+		locked                                                  bool
+		taskStateDB, keyNameDB, faultMsgDB                     sql.NullString
+	}
+	var rawRows []serverRow
+	var serverIDs []string
 
-		if err := rows.Scan(&id, &name, &status, &powerState, &projectID, &userID,
-			&flavorID, &imageID, &createdAt, &updatedAt, &launchedAt,
-			&vcpus, &ramMB, &diskGB, &flavorName, &host, &locked, &taskStateDB, &keyNameDB, &faultMsgDB); err != nil {
+	for rows.Next() {
+		var r serverRow
+		if err := rows.Scan(&r.id, &r.name, &r.status, &r.powerState, &r.projID, &r.userID,
+			&r.flavorID, &r.imageID, &r.createdAt, &r.updatedAt, &r.launchedAt,
+			&r.vcpus, &r.ramMB, &r.diskGB, &r.flavorName, &r.host, &r.locked,
+			&r.taskStateDB, &r.keyNameDB, &r.faultMsgDB); err != nil {
 			log.Warn().Err(err).Msg("failed to scan server detail row")
 			continue
 		}
+		rawRows = append(rawRows, r)
+		serverIDs = append(serverIDs, r.id)
+	}
 
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Str("operation", "list_servers_detail").Msg("row iteration error")
+		common.SendError(c, common.NewInternalServerError("failed to read servers"))
+		return
+	}
+
+	// Batch-fetch addresses and security groups (2 queries total regardless of page size).
+	ctx := c.Request.Context()
+	addressesByServer := svc.batchFetchAddresses(ctx, serverIDs)
+	sgsByServer := svc.batchFetchSecurityGroups(ctx, serverIDs)
+
+	// Second pass: build response using the pre-fetched maps.
+	var servers []gin.H
+	for _, r := range rawRows {
 		imageIDStr := ""
-		if imageID != nil {
-			imageIDStr = *imageID
+		if r.imageID != nil {
+			imageIDStr = *r.imageID
 		}
 		launchedAtStr := ""
-		if launchedAt != nil {
-			launchedAtStr = launchedAt.Format(time.RFC3339)
+		if r.launchedAt != nil {
+			launchedAtStr = r.launchedAt.Format(time.RFC3339)
 		}
 
-		// Get addresses for this instance
-		addresses := svc.getInstanceAddresses(c.Request.Context(), id, projectID)
+		addresses, ok := addressesByServer[r.id]
+		if !ok {
+			addresses = gin.H{}
+		}
+
+		sgs, ok := sgsByServer[r.id]
+		if !ok || len(sgs) == 0 {
+			sgs = []gin.H{{"name": "default"}}
+		}
 
 		// Derive OS-EXT-STS fields
-		// Use task_state from DB if set; otherwise derive from status
 		var taskState interface{}
-		if taskStateDB.Valid && taskStateDB.String != "" {
-			taskState = taskStateDB.String
+		if r.taskStateDB.Valid && r.taskStateDB.String != "" {
+			taskState = r.taskStateDB.String
 		}
 		vmState := "active"
-		switch status {
+		switch r.status {
 		case "BUILD", "BUILDING":
 			if taskState == nil {
 				taskState = "spawning"
@@ -940,23 +1071,22 @@ func (svc *Service) ListServersDetail(c *gin.Context) {
 			vmState = "active"
 		}
 
-		// progress: 25 for BUILD, 0 otherwise
 		progress := 0
-		if status == "BUILD" || status == "BUILDING" {
+		if r.status == "BUILD" || r.status == "BUILDING" {
 			progress = 25
 		}
 
-		hostStr := host.String // empty string if NULL
+		hostStr := r.host.String
 		entry := gin.H{
-			"id":                                  id,
-			"name":                                name,
-			"status":                              status,
-			"tenant_id":                           projectID,
-			"user_id":                             userID,
-			"created":                             createdAt.Format(time.RFC3339),
-			"updated":                             updatedAt.Format(time.RFC3339),
+			"id":                                  r.id,
+			"name":                                r.name,
+			"status":                              r.status,
+			"tenant_id":                           r.projID,
+			"user_id":                             r.userID,
+			"created":                             r.createdAt.Format(time.RFC3339),
+			"updated":                             r.updatedAt.Format(time.RFC3339),
 			"addresses":                           addresses,
-			"OS-EXT-STS:power_state":              powerState,
+			"OS-EXT-STS:power_state":              r.powerState,
 			"OS-EXT-STS:task_state":               taskState,
 			"OS-EXT-STS:vm_state":                 vmState,
 			"OS-EXT-AZ:availability_zone":         "nova",
@@ -964,45 +1094,45 @@ func (svc *Service) ListServersDetail(c *gin.Context) {
 			"OS-SRV-USG:launched_at":              launchedAtStr,
 			"OS-SRV-USG:terminated_at":            nil,
 			"OS-EXT-SRV-ATTR:host":                hostStr,
-			"OS-EXT-SRV-ATTR:instance_name":       fmt.Sprintf("instance-%s", id[:8]),
+			"OS-EXT-SRV-ATTR:instance_name":       fmt.Sprintf("instance-%s", r.id[:8]),
 			"OS-EXT-SRV-ATTR:hypervisor_hostname": hostStr,
 			"OS-EXT-SRV-ATTR:root_device_name":    "/dev/vda",
 			"OS-EXT-SRV-ATTR:launch_index":        0,
-			"security_groups":                     svc.getServerSecurityGroups(c.Request.Context(), id),
+			"security_groups":                     sgs,
 			"links": []gin.H{
-				{"rel": "self", "href": fmt.Sprintf("/v2.1/servers/%s", id)},
-				{"rel": "bookmark", "href": fmt.Sprintf("/servers/%s", id)},
+				{"rel": "self", "href": fmt.Sprintf("/v2.1/servers/%s", r.id)},
+				{"rel": "bookmark", "href": fmt.Sprintf("/servers/%s", r.id)},
 			},
 			"flavor": gin.H{
-				"id":            flavorID,
-				"name":          flavorName,
-				"vcpus":         vcpus,
-				"ram":           ramMB,
-				"disk":          diskGB,
+				"id":            r.flavorID,
+				"name":          r.flavorName,
+				"vcpus":         r.vcpus,
+				"ram":           r.ramMB,
+				"disk":          r.diskGB,
 				"ephemeral":     0,
 				"swap":          0,
-				"original_name": flavorName,
+				"original_name": r.flavorName,
 			},
 			"image":        gin.H{"id": imageIDStr},
 			"config_drive": "",
 			"progress":     progress,
-			"locked":       locked,
+			"locked":       r.locked,
 			"description":  nil,
 			"tags":         []string{},
-			"key_name":     nullStringToInterface(keyNameDB),
+			"key_name":     nullStringToInterface(r.keyNameDB),
 			"accessIPv4":   "",
 			"accessIPv6":   "",
 			"metadata":     map[string]string{},
 		}
-		if status == "ERROR" {
+		if r.status == "ERROR" {
 			faultMsg := "Server in error state"
-			if faultMsgDB.Valid && faultMsgDB.String != "" {
-				faultMsg = faultMsgDB.String
+			if r.faultMsgDB.Valid && r.faultMsgDB.String != "" {
+				faultMsg = r.faultMsgDB.String
 			}
 			entry["fault"] = gin.H{
 				"code":    500,
 				"message": faultMsg,
-				"created": createdAt.Format(time.RFC3339),
+				"created": r.createdAt.Format(time.RFC3339),
 			}
 		}
 		servers = append(servers, entry)
@@ -1010,12 +1140,6 @@ func (svc *Service) ListServersDetail(c *gin.Context) {
 
 	if servers == nil {
 		servers = []gin.H{}
-	}
-
-	if err := rows.Err(); err != nil {
-		log.Error().Err(err).Str("operation", "list_servers_detail").Msg("row iteration error")
-		common.SendError(c, common.NewInternalServerError("failed to read servers"))
-		return
 	}
 
 	resp := gin.H{"servers": servers}
