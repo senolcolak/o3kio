@@ -62,19 +62,39 @@ func (d *novaDB) QueryRow(_ context.Context, sql string, args ...any) database.R
 			"flavor-m1-small", "m1.small", 1, 512, 10,
 		}}
 	case strings.Contains(sql, "FROM quotas"):
+		// New combined limits query scans (instanceLimit, coreLimit, ramLimit).
+		// When no quota row exists fall through to built-in defaults encoded in the SQL COALESCE.
 		if !d.hasQuotaRow {
-			return &novaErrRow{err: database.ErrNoRows}
+			return &novaSeededRow{values: []any{10, 20, 51200}}
 		}
-		return &novaSeededRow{values: []any{d.instanceQuotaLimit}}
+		return &novaSeededRow{values: []any{d.instanceQuotaLimit, 20, 51200}}
 	case strings.Contains(sql, "COUNT(*)") && strings.Contains(sql, "FROM instances"):
-		return &novaSeededRow{values: []any{d.instanceCount}}
-	case strings.Contains(sql, "COALESCE(SUM(f.vcpus)"):
-		return &novaSeededRow{values: []any{d.instanceCount}} // cores: 1 per instance
-	case strings.Contains(sql, "COALESCE(SUM(f.ram_mb)"):
-		return &novaSeededRow{values: []any{d.instanceCount * 512}} // 512MB per instance
+		// New combined usage query scans (instanceCount, coreSum, ramSum).
+		return &novaSeededRow{values: []any{d.instanceCount, d.instanceCount, d.instanceCount * 512}}
 	}
 	return &novaErrRow{err: database.ErrNoRows}
 }
+
+// BeginTx returns a transaction whose QueryRow/Exec delegate back to novaDB
+// so that the in-transaction quota queries hit the same seeded responses.
+func (d *novaDB) BeginTx(_ context.Context, _ database.TxOptions) (database.Tx, error) {
+	return &novaDBTx{db: d}, nil
+}
+
+// novaDBTx is a minimal Tx that delegates reads/writes back to novaDB.
+type novaDBTx struct{ db *novaDB }
+
+func (t *novaDBTx) QueryRow(ctx context.Context, sql string, args ...any) database.Row {
+	return t.db.QueryRow(ctx, sql, args...)
+}
+func (t *novaDBTx) Exec(ctx context.Context, sql string, args ...any) (database.Result, error) {
+	return t.db.MockDB.Exec(ctx, sql, args...)
+}
+func (t *novaDBTx) Query(ctx context.Context, sql string, args ...any) (database.Rows, error) {
+	return t.db.MockDB.Query(ctx, sql, args...)
+}
+func (t *novaDBTx) Commit(_ context.Context) error   { return nil }
+func (t *novaDBTx) Rollback(_ context.Context) error { return nil }
 
 // novaErrRow is a database.Row that always returns the given error from Scan.
 type novaErrRow struct{ err error }

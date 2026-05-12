@@ -4,9 +4,9 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"os"
 	"time"
 
+	"github.com/cobaltcore-dev/o3k/internal/common"
 	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/gin-gonic/gin"
 )
@@ -24,53 +24,39 @@ func (svc *Service) StageImageData(c *gin.Context) {
 	).Scan(&status)
 
 	if errors.Is(err, database.ErrNoRows) {
-		c.JSON(http.StatusNotFound, gin.H{"message": "Image not found"})
+		common.SendError(c, common.NewNotFoundError("image"))
 		return
 	}
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"message": err.Error()})
+		common.SendError(c, common.NewInternalServerError("failed to query image"))
 		return
 	}
 
 	// Can only stage to queued images
 	if status != "queued" {
-		c.JSON(http.StatusConflict, gin.H{"message": "Image is not in queued state"})
+		common.SendError(c, common.NewConflictError("image must be in queued state to stage data"))
 		return
 	}
 
-	// Stream staged data with size limit (5GB max)
+	// Limit upload size to 5 GB
 	const maxUploadSize int64 = 5 * 1024 * 1024 * 1024
-	limitedReader := io.LimitReader(c.Request.Body, maxUploadSize+1)
+	limitedReader := io.LimitReader(c.Request.Body, maxUploadSize)
 
-	// Stream to temp file to avoid holding entire image in memory
-	tmpFile, err := os.CreateTemp("", "o3k-stage-*")
+	// Upload directly to storage backend so data survives the request
+	size, err := svc.imageStore.UploadImage(c.Request.Context(), imageID, limitedReader)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"message": "Failed to create staging file"})
-		return
-	}
-	defer os.Remove(tmpFile.Name())
-	defer tmpFile.Close()
-
-	written, err := io.Copy(tmpFile, limitedReader)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"message": "Failed to read image data"})
-		return
-	}
-	if written > maxUploadSize {
-		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"message": "Image data exceeds maximum upload size"})
+		common.SendError(c, common.NewInternalServerError("failed to stage image data"))
 		return
 	}
 
-	// Update image status to uploading
-	_, err = svc.activeDB().Exec(c.Request.Context(), `
-		UPDATE images
-		SET status = $1, size_bytes = $2, updated_at = $3
-		WHERE id = $4
-	`, "uploading", written, time.Now(), imageID)
-
+	// Mark image as uploading (staged, awaiting import confirmation)
+	_, err = svc.activeDB().Exec(c.Request.Context(),
+		"UPDATE images SET status = $1, size_bytes = $2, updated_at = $3 WHERE id = $4",
+		"uploading", size, time.Now(), imageID,
+	)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"message": err.Error()})
+		common.SendError(c, common.NewInternalServerError("failed to update image status"))
 		return
 	}
 

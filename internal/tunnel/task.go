@@ -8,10 +8,14 @@ import (
 
 // Task type constants for known tunnel task operations.
 const (
-	TaskCreateVM   = "VM_CREATE"
-	TaskDeleteVM   = "VM_DELETE"
-	TaskCreatePort = "NET_ADD_PORT"
-	TaskDeletePort = "NET_REMOVE_PORT"
+	TaskCreateVM        = "VM_CREATE"
+	TaskDeleteVM        = "VM_DELETE"
+	TaskStartVM         = "VM_START"
+	TaskStopVM          = "VM_STOP"
+	TaskRebootVM        = "VM_REBOOT"
+	TaskCreatePort      = "NET_ADD_PORT"
+	TaskDeletePort      = "NET_REMOVE_PORT"
+	TaskEnsureNamespace = "NET_ENSURE_NAMESPACE"
 )
 
 // Task represents a unit of work dispatched to a tunnel agent.

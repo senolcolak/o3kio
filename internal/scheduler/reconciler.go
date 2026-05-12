@@ -2,7 +2,6 @@ package scheduler
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/cobaltcore-dev/o3k/internal/database"
@@ -48,6 +47,7 @@ func (r *Reconciler) Run(ctx context.Context) {
 func (r *Reconciler) reconcileOnce(ctx context.Context) {
 	tx, err := r.db.BeginTx(ctx, database.TxOptions{})
 	if err != nil {
+		log.Error().Err(err).Msg("reconciler: failed to begin transaction")
 		return
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
@@ -60,6 +60,8 @@ func (r *Reconciler) reconcileOnce(ctx context.Context) {
 		FOR UPDATE SKIP LOCKED
 		LIMIT 10`)
 	if err != nil {
+		log.Error().Err(err).Msg("reconciler: failed to query stalled tasks")
+		_ = tx.Rollback(ctx)
 		return
 	}
 
@@ -80,6 +82,12 @@ func (r *Reconciler) reconcileOnce(ctx context.Context) {
 		stalled = append(stalled, t)
 	}
 	rows.Close()
+
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Msg("reconciler: error iterating stalled tasks")
+		_ = tx.Rollback(ctx)
+		return
+	}
 
 	for _, t := range stalled {
 		if t.retries >= maxTaskRetries {
@@ -104,8 +112,11 @@ func (r *Reconciler) reconcileOnce(ctx context.Context) {
 			}
 		}
 
-		action := map[bool]string{true: "failed", false: "requeued"}[t.retries >= maxTaskRetries]
-		fmt.Printf("reconciler: task %s retries=%d action=%s\n", t.taskID, t.retries, action)
+		action := "requeued"
+		if t.retries >= maxTaskRetries {
+			action = "failed"
+		}
+		log.Warn().Str("task_id", t.taskID).Str("resource_id", t.resourceID).Int("retries", t.retries).Str("action", action).Msg("reconciler: task state changed")
 	}
 
 	if err := tx.Commit(ctx); err != nil {

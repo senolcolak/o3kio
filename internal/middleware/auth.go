@@ -32,7 +32,11 @@ func AuthMiddleware(authService *keystone.AuthService) gin.HandlerFunc {
 		// Validate token
 		claims, err := authService.ValidateToken(token)
 		if err != nil {
-			common.AbortWithError(c, common.NewUnauthorizedError("invalid or expired token"))
+			if osErr, ok := err.(*common.OpenStackError); ok {
+				common.AbortWithError(c, osErr)
+				return
+			}
+			common.AbortWithError(c, common.NewUnauthorizedError("token validation failed"))
 			return
 		}
 

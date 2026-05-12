@@ -376,6 +376,8 @@ func (svc *Service) ValidateToken(c *gin.Context) {
 		tokenResp["roles"] = []gin.H{}
 	}
 
+	c.Header("X-Subject-Token", tokenString)
+	c.Header("Vary", "X-Auth-Token")
 	c.JSON(http.StatusOK, gin.H{"token": tokenResp})
 }
 

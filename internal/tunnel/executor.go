@@ -33,13 +33,13 @@ func (e *Executor) Execute(ctx context.Context, taskType string, payload []byte)
 		return e.vmCreate(ctx, payload)
 	case TaskDeleteVM:
 		return e.vmDelete(ctx, payload)
-	case "VM_START":
+	case TaskStartVM:
 		return e.vmStart(ctx, payload)
-	case "VM_STOP":
+	case TaskStopVM:
 		return e.vmStop(ctx, payload)
-	case "VM_REBOOT":
+	case TaskRebootVM:
 		return e.vmReboot(ctx, payload)
-	case "NET_ENSURE_NAMESPACE":
+	case TaskEnsureNamespace:
 		return e.netEnsureNamespace(ctx, payload)
 	case TaskCreatePort:
 		return e.netAddPort(ctx, payload)

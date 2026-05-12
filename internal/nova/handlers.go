@@ -325,45 +325,57 @@ func (svc *Service) CreateServer(c *gin.Context) {
 		return
 	}
 
-	// Serialise quota check + INSERT per project to prevent TOCTOU races.
-	// The mutex is held until the instance row is committed, so concurrent
-	// requests for the same project cannot both pass the quota check.
-	mu := svc.projectQuotaMu(projectID)
-	mu.Lock()
-
-	// Check quotas before creating instance
-	if err := svc.CheckQuota(c, "instances", 1); err != nil {
-		mu.Unlock()
-		if _, ok := err.(*QuotaExceededError); ok {
-			common.SendError(c, common.NewQuotaExceededError("instances"))
-			return
-		}
-		log.Error().Err(err).Str("operation", "check_quota_instances").Msg("quota check error")
-		common.SendError(c, common.NewInternalServerError("failed to check quota"))
+	// Atomic quota check + INSERT: serializable transaction prevents TOCTOU
+	// races across multiple replicas. The in-process mutex is no longer needed
+	// on this path.
+	tx, err := svc.activeDB().BeginTx(c.Request.Context(), database.TxOptions{IsoLevel: "serializable"})
+	if err != nil {
+		log.Error().Err(err).Str("operation", "begin_tx").Msg("database error")
+		common.SendError(c, common.NewInternalServerError("failed to begin transaction"))
 		return
 	}
+	defer tx.Rollback(c.Request.Context()) //nolint:errcheck
 
-	// Check cores quota
-	if err := svc.CheckQuota(c, "cores", flavor.VCPUs); err != nil {
-		mu.Unlock()
-		if _, ok := err.(*QuotaExceededError); ok {
-			common.SendError(c, common.NewQuotaExceededError("cores"))
-			return
-		}
-		log.Error().Err(err).Str("operation", "check_quota_cores").Msg("quota check error")
-		common.SendError(c, common.NewInternalServerError("failed to check quota"))
+	// Check current usage for all three resources in one query.
+	var instanceCount, coreSum, ramSum int
+	queryStart = time.Now()
+	if err := tx.QueryRow(c.Request.Context(), `
+		SELECT COUNT(*), COALESCE(SUM(f.vcpus), 0), COALESCE(SUM(f.ram_mb), 0)
+		FROM instances i LEFT JOIN flavors f ON i.flavor_id = f.id
+		WHERE i.project_id = $1 AND i.status NOT IN ('DELETED', 'SOFT_DELETED', 'ERROR')
+	`, projectID).Scan(&instanceCount, &coreSum, &ramSum); err != nil {
+		log.Error().Err(err).Str("operation", "quota_usage").Msg("database error")
+		common.SendError(c, common.NewInternalServerError("failed to check quota usage"))
 		return
 	}
+	middleware.LogDatabaseQuery(c, "SELECT quota usage", time.Since(queryStart), nil)
 
-	// Check RAM quota
-	if err := svc.CheckQuota(c, "ram", flavor.RAMMB); err != nil {
-		mu.Unlock()
-		if _, ok := err.(*QuotaExceededError); ok {
-			common.SendError(c, common.NewQuotaExceededError("ram"))
-			return
-		}
-		log.Error().Err(err).Str("operation", "check_quota_ram").Msg("quota check error")
-		common.SendError(c, common.NewInternalServerError("failed to check quota"))
+	// Fetch per-project limits (fall back to built-in defaults if not set).
+	var instanceLimit, coreLimit, ramLimit int
+	queryStart = time.Now()
+	if err := tx.QueryRow(c.Request.Context(), `
+		SELECT
+			COALESCE(MAX(CASE WHEN resource='instances' THEN hard_limit END), 10),
+			COALESCE(MAX(CASE WHEN resource='cores'     THEN hard_limit END), 20),
+			COALESCE(MAX(CASE WHEN resource='ram'       THEN hard_limit END), 51200)
+		FROM quotas WHERE project_id = $1 AND resource IN ('instances','cores','ram')
+	`, projectID).Scan(&instanceLimit, &coreLimit, &ramLimit); err != nil {
+		log.Error().Err(err).Str("operation", "quota_limits").Msg("database error")
+		common.SendError(c, common.NewInternalServerError("failed to check quota limits"))
+		return
+	}
+	middleware.LogDatabaseQuery(c, "SELECT quota limits", time.Since(queryStart), nil)
+
+	if instanceCount+1 > instanceLimit {
+		common.SendError(c, common.NewQuotaExceededError(fmt.Sprintf("instances: used %d of %d", instanceCount, instanceLimit)))
+		return
+	}
+	if coreSum+flavor.VCPUs > coreLimit {
+		common.SendError(c, common.NewQuotaExceededError(fmt.Sprintf("cores: used %d of %d, requested %d", coreSum, coreLimit, flavor.VCPUs)))
+		return
+	}
+	if ramSum+flavor.RAMMB > ramLimit {
+		common.SendError(c, common.NewQuotaExceededError(fmt.Sprintf("ram: used %d of %d MB, requested %d MB", ramSum, ramLimit, flavor.RAMMB)))
 		return
 	}
 
@@ -381,17 +393,15 @@ func (svc *Service) CreateServer(c *gin.Context) {
 		imageID = nil
 	}
 
-	queryStart = time.Now()
 	var keyNameValue interface{}
 	if req.Server.KeyName != "" {
 		keyNameValue = req.Server.KeyName
 	}
-	_, err = svc.activeDB().Exec(c.Request.Context(), `
+	queryStart = time.Now()
+	_, err = tx.Exec(c.Request.Context(), `
 		INSERT INTO instances (id, name, project_id, user_id, flavor_id, image_id, status, power_state, key_name, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 	`, instanceID, req.Server.Name, projectID, userID, flavor.ID, imageID, "BUILD", 0, keyNameValue, now, now)
-	// Release the quota lock as soon as the row is committed (or failed).
-	mu.Unlock()
 	middleware.LogDatabaseQuery(c, "INSERT instance", time.Since(queryStart), err)
 
 	if err != nil {
@@ -399,6 +409,14 @@ func (svc *Service) CreateServer(c *gin.Context) {
 		middleware.LogOperationEnd(c, "create", "server", instanceID, time.Since(start), err)
 		log.Error().Err(err).Str("operation", "insert_instance").Msg("database error")
 		common.SendError(c, common.NewInternalServerError("failed to create instance"))
+		return
+	}
+
+	if err := tx.Commit(c.Request.Context()); err != nil {
+		logger.Error().Err(err).Str("instance_id", instanceID).Msg("Failed to commit instance transaction")
+		middleware.LogOperationEnd(c, "create", "server", instanceID, time.Since(start), err)
+		log.Error().Err(err).Str("operation", "commit_instance").Msg("database error")
+		common.SendError(c, common.NewInternalServerError("failed to commit instance creation"))
 		return
 	}
 
@@ -1633,9 +1651,11 @@ func (svc *Service) ServerAction(c *gin.Context) {
 			common.SendError(c, common.NewInternalServerError("failed to stop server"))
 			return
 		}
-		_, _ = svc.activeDB().Exec(ctx,
+		if _, err := svc.activeDB().Exec(ctx,
 			"UPDATE instances SET status = $1, power_state = $2, updated_at = $3 WHERE (id::text = $4 OR name = $4) AND project_id = $5",
-			"SHUTOFF", 4, time.Now(), instanceID, projectID)
+			"SHUTOFF", 4, time.Now(), instanceID, projectID); err != nil {
+			log.Error().Err(err).Str("instance_id", instanceID).Msg("VM stopped in libvirt but failed to update DB status — state divergence")
+		}
 	} else if _, ok := req["os-start"]; ok {
 		if instanceStatus != "SHUTOFF" {
 			c.JSON(http.StatusConflict, gin.H{
@@ -1651,9 +1671,11 @@ func (svc *Service) ServerAction(c *gin.Context) {
 			common.SendError(c, common.NewInternalServerError("failed to start server"))
 			return
 		}
-		_, _ = svc.activeDB().Exec(ctx,
+		if _, err := svc.activeDB().Exec(ctx,
 			"UPDATE instances SET status = $1, power_state = $2, updated_at = $3 WHERE (id::text = $4 OR name = $4) AND project_id = $5",
-			"ACTIVE", 1, time.Now(), instanceID, projectID)
+			"ACTIVE", 1, time.Now(), instanceID, projectID); err != nil {
+			log.Error().Err(err).Str("instance_id", instanceID).Msg("VM started in libvirt but failed to update DB status — state divergence")
+		}
 	} else {
 		common.SendError(c, common.NewBadRequestError("unknown action"))
 		return
