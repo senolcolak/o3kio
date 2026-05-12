@@ -130,8 +130,10 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 
 	v3 := r.Group("/v3/:project_id")
 	{
-		// Volumes (create, get by ID, update, delete - need project_id in URL)
+		// Volumes (create, list, get by ID, update, delete - need project_id in URL)
 		v3.POST("/volumes", svc.CreateVolume)
+		v3.GET("/volumes", svc.ListVolumes)
+		v3.GET("/volumes/detail", svc.ListVolumesDetail)
 		v3.GET("/volumes/:id", svc.GetVolume)
 		v3.PATCH("/volumes/:id", svc.UpdateVolume)
 		v3.DELETE("/volumes/:id", svc.DeleteVolume)
@@ -146,6 +148,7 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 
 		// Snapshots
 		v3.GET("/snapshots", svc.ListSnapshots)
+		v3.GET("/snapshots/detail", svc.ListSnapshotsDetail)
 		v3.POST("/snapshots", svc.CreateSnapshot)
 		v3.GET("/snapshots/:id", svc.GetSnapshot)
 		v3.PUT("/snapshots/:id", svc.UpdateSnapshot)
@@ -346,7 +349,7 @@ func (svc *Service) CreateVolume(c *gin.Context) {
 			"user_id":           userID,
 			"size":              req.Volume.Size,
 			"status":            "creating",
-			"bootable":          "false",
+			"bootable":          false,
 			"volume_type":       volumeType,
 			"encrypted":         encrypted,
 			"availability_zone": availabilityZone,
@@ -508,7 +511,7 @@ func (svc *Service) ListVolumes(c *gin.Context) {
 			"name":              name,
 			"size":              size,
 			"status":            status,
-			"bootable":          fmt.Sprintf("%t", bootable),
+			"bootable":          bootable,
 			"availability_zone": availabilityZone,
 		})
 	}
@@ -1411,12 +1414,19 @@ func (svc *Service) CreateSnapshot(c *gin.Context) {
 	}
 	snapshotID := uuid.New().String()
 
-	// Get volume info and verify status allows snapshotting
-	var volumeID string
+	// Start transaction to lock the volume row during snapshot creation
+	tx, err := svc.activeDB().BeginTx(c.Request.Context(), database.TxOptions{})
+	if err != nil {
+		common.SendError(c, common.NewInternalServerError("failed to begin transaction"))
+		return
+	}
+	defer tx.Rollback(c.Request.Context())
+
+	// Lock the volume row to prevent concurrent delete/extend
+	var volumeID, volStatus string
 	var size int
-	var volStatus string
-	err := svc.activeDB().QueryRow(c.Request.Context(),
-		"SELECT id, size_gb, status FROM volumes WHERE id = $1 AND project_id = $2",
+	err = tx.QueryRow(c.Request.Context(),
+		"SELECT id, size_gb, status FROM volumes WHERE id = $1 AND project_id = $2 FOR UPDATE",
 		req.Snapshot.VolumeID, projectID,
 	).Scan(&volumeID, &size, &volStatus)
 
@@ -1444,7 +1454,7 @@ func (svc *Service) CreateSnapshot(c *gin.Context) {
 
 	// Insert into database
 	now := time.Now()
-	_, err = svc.activeDB().Exec(c.Request.Context(), `
+	_, err = tx.Exec(c.Request.Context(), `
 		INSERT INTO snapshots (id, name, volume_id, project_id, size_gb, status, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 	`, snapshotID, req.Snapshot.Name, volumeID, projectID, size, "creating", now)
@@ -1453,6 +1463,12 @@ func (svc *Service) CreateSnapshot(c *gin.Context) {
 		_ = svc.cephClient.DeleteSnapshot(c.Request.Context(), volumeID, snapshotID)
 		log.Error().Err(err).Str("operation", "create_snapshot_db").Msg("failed to insert snapshot into database")
 		common.SendError(c, common.NewInternalServerError("failed to create snapshot"))
+		return
+	}
+
+	if err := tx.Commit(c.Request.Context()); err != nil {
+		_ = svc.cephClient.DeleteSnapshot(c.Request.Context(), volumeID, snapshotID)
+		common.SendError(c, common.NewInternalServerError("failed to commit snapshot creation"))
 		return
 	}
 
@@ -1467,9 +1483,12 @@ func (svc *Service) CreateSnapshot(c *gin.Context) {
 		}
 		ctx, cancel := context.WithTimeout(svc.ctx, 5*time.Second)
 		defer cancel()
-		svc.activeDB().Exec(ctx,
-			"UPDATE snapshots SET status = $1 WHERE id = $2",
-			"available", snapshotID)
+		if _, err := svc.activeDB().Exec(ctx,
+			"UPDATE snapshots SET status = $1, updated_at = $2 WHERE id = $3",
+			"available", time.Now(), snapshotID,
+		); err != nil {
+			log.Error().Err(err).Str("snapshot_id", snapshotID).Msg("CRITICAL: failed to mark snapshot available")
+		}
 	}()
 
 	c.JSON(http.StatusAccepted, gin.H{
@@ -1920,7 +1939,7 @@ func (svc *Service) UpdateVolume(c *gin.Context) {
 			"tenant_id":         projectID,
 			"size":              sizeGB,
 			"status":            status,
-			"bootable":          fmt.Sprintf("%t", bootable),
+			"bootable":          bootable,
 			"availability_zone": existingAZ,
 			"volume_type":       existingVolumeType,
 			"encrypted":         existingEncrypted,

@@ -44,6 +44,13 @@ func (rl *RateLimiter) Allow(key string) bool {
 		}
 	}
 
+	// If all timestamps expired, remove the map key to prevent unbounded growth.
+	if len(valid) == 0 {
+		delete(rl.requests, key)
+		rl.requests[key] = []time.Time{now}
+		return true
+	}
+
 	if len(valid) >= rl.limit {
 		rl.requests[key] = valid
 		return false

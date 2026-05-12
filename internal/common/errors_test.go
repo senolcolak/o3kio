@@ -161,12 +161,8 @@ func TestNewDatabaseError(t *testing.T) {
 		t.Errorf("Expected status code %d, got %d", http.StatusInternalServerError, err.StatusCode)
 	}
 
-	if err.Message != "Database error during create operation" {
+	if err.Message != "database error during create operation on Volume" {
 		t.Errorf("Unexpected message: %s", err.Message)
-	}
-
-	if err.Details == "" {
-		t.Error("Expected details with operation and error")
 	}
 }
 

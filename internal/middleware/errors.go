@@ -28,7 +28,7 @@ func ErrorHandlingMiddleware() gin.HandlerFunc {
 		c.Next()
 
 		// Check if there are any errors set by handlers
-		if len(c.Errors) > 0 {
+		if len(c.Errors) > 0 && !c.Writer.Written() {
 			// Get the last error
 			lastErr := c.Errors.Last()
 

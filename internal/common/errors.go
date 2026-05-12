@@ -244,8 +244,7 @@ func NewDatabaseError(operation, resourceType string, err error) *OpenStackError
 	return &OpenStackError{
 		StatusCode: http.StatusInternalServerError,
 		Code:       "computeFault",
-		Message:    fmt.Sprintf("Database error during %s operation", operation),
-		Details:    fmt.Sprintf("Failed to %s %s: %v", operation, resourceType, err),
+		Message:    fmt.Sprintf("database error during %s operation on %s", operation, resourceType),
 	}
 }
 

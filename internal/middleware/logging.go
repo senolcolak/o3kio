@@ -257,9 +257,22 @@ func LogDatabaseQuery(c *gin.Context, query string, duration time.Duration, err 
 		Msg("database query")
 }
 
-// RecoveryMiddleware handles panics
+// RecoveryMiddleware handles panics without exposing stack traces to clients
 func RecoveryMiddleware() gin.HandlerFunc {
-	return gin.RecoveryWithWriter(gin.DefaultWriter)
+	return gin.CustomRecoveryWithWriter(nil, func(c *gin.Context, err any) {
+		logger.Error().
+			Interface("panic", err).
+			Str("request_id", c.GetString("request_id")).
+			Str("path", c.Request.URL.Path).
+			Str("method", c.Request.Method).
+			Msg("panic recovered")
+		c.AbortWithStatusJSON(500, gin.H{
+			"error": gin.H{
+				"message": "internal server error",
+				"code":    500,
+			},
+		})
+	})
 }
 
 // CORSMiddlewareWithConfig adds CORS headers using a configurable origin allowlist.

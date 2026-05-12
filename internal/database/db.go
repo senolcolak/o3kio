@@ -87,9 +87,21 @@ func ConnectSQLite(ctx context.Context, dbPath string) error {
 	return nil
 }
 
+// unwrapDB peels off adapter wrappers (e.g. TracingAdapter) to reach the concrete adapter.
+func unwrapDB(d DBIF) DBIF {
+	type unwrapper interface{ Unwrap() DBIF }
+	for {
+		u, ok := d.(unwrapper)
+		if !ok {
+			return d
+		}
+		d = u.Unwrap()
+	}
+}
+
 // BackendType returns "sqlite" or "postgres" based on the active DB connection.
 func BackendType() string {
-	if _, ok := DB.(*SQLiteAdapter); ok {
+	if _, ok := unwrapDB(DB).(*SQLiteAdapter); ok {
 		return "sqlite"
 	}
 	return "postgres"
@@ -100,7 +112,7 @@ func Close() {
 	if pool != nil {
 		pool.Close()
 	}
-	if a, ok := DB.(*SQLiteAdapter); ok {
+	if a, ok := unwrapDB(DB).(*SQLiteAdapter); ok {
 		a.Close()
 	}
 }
@@ -113,7 +125,7 @@ func Stats() *pgxpool.Stat {
 }
 
 func HealthCheck(ctx context.Context) error {
-	if a, ok := DB.(*SQLiteAdapter); ok {
+	if a, ok := unwrapDB(DB).(*SQLiteAdapter); ok {
 		return a.Ping(ctx)
 	}
 	if pool == nil {

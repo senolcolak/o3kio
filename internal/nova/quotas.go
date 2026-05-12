@@ -81,29 +81,41 @@ func (svc *Service) GetQuotaSet(c *gin.Context) {
 
 	// Calculate compute usage — exclude terminal/error states from quota counts.
 	var instanceCount, coreCount, ramCount int
-	svc.activeDB().QueryRow(c.Request.Context(), `
+	if err := svc.activeDB().QueryRow(c.Request.Context(), `
 		SELECT COUNT(*), COALESCE(SUM(f.vcpus), 0), COALESCE(SUM(f.ram_mb), 0)
 		FROM instances i
 		LEFT JOIN flavors f ON i.flavor_id = f.id
 		WHERE i.project_id = $1 AND i.status NOT IN ('DELETED', 'SOFT_DELETED', 'ERROR')
-	`, projectID).Scan(&instanceCount, &coreCount, &ramCount)
+	`, projectID).Scan(&instanceCount, &coreCount, &ramCount); err != nil {
+		log.Error().Err(err).Str("project_id", projectID).Msg("failed to query compute quota usage")
+		common.SendError(c, common.NewInternalServerError("failed to retrieve quota usage"))
+		return
+	}
 
 	// Volume usage
 	var volumeCount, gigabyteCount, snapshotCount int
-	svc.activeDB().QueryRow(c.Request.Context(), `
+	if err := svc.activeDB().QueryRow(c.Request.Context(), `
 		SELECT COUNT(*), COALESCE(SUM(size_gb), 0)
 		FROM volumes
 		WHERE project_id = $1
-	`, projectID).Scan(&volumeCount, &gigabyteCount)
+	`, projectID).Scan(&volumeCount, &gigabyteCount); err != nil {
+		log.Error().Err(err).Str("project_id", projectID).Msg("failed to query volume quota usage")
+		common.SendError(c, common.NewInternalServerError("failed to retrieve quota usage"))
+		return
+	}
 
 	// Snapshot usage
-	svc.activeDB().QueryRow(c.Request.Context(),
+	if err := svc.activeDB().QueryRow(c.Request.Context(),
 		`SELECT COUNT(*) FROM volume_snapshots WHERE project_id = $1`, projectID,
-	).Scan(&snapshotCount)
+	).Scan(&snapshotCount); err != nil {
+		log.Error().Err(err).Str("project_id", projectID).Msg("failed to query snapshot quota usage")
+		common.SendError(c, common.NewInternalServerError("failed to retrieve quota usage"))
+		return
+	}
 
 	// Network resource usage — all counts in a single round-trip.
 	var networkCount, subnetCount, portCount, routerCount, floatingipCount, sgCount, sgrCount int
-	svc.activeDB().QueryRow(c.Request.Context(), `
+	if err := svc.activeDB().QueryRow(c.Request.Context(), `
 		SELECT
 			(SELECT COUNT(*) FROM networks       WHERE project_id = $1),
 			(SELECT COUNT(*) FROM subnets        WHERE project_id = $1),
@@ -113,7 +125,11 @@ func (svc *Service) GetQuotaSet(c *gin.Context) {
 			(SELECT COUNT(*) FROM security_groups WHERE project_id = $1),
 			(SELECT COUNT(*) FROM security_group_rules
 			 WHERE security_group_id IN (SELECT id FROM security_groups WHERE project_id = $1))
-	`, projectID).Scan(&networkCount, &subnetCount, &portCount, &routerCount, &floatingipCount, &sgCount, &sgrCount)
+	`, projectID).Scan(&networkCount, &subnetCount, &portCount, &routerCount, &floatingipCount, &sgCount, &sgrCount); err != nil {
+		log.Error().Err(err).Str("project_id", projectID).Msg("failed to query network quota usage")
+		common.SendError(c, common.NewInternalServerError("failed to retrieve quota usage"))
+		return
+	}
 
 	usages := map[string]int{
 		"instances":            instanceCount,

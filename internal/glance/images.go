@@ -764,9 +764,14 @@ func (svc *Service) UploadImageData(c *gin.Context) {
 	osHashValue := hex.EncodeToString(sha512h.Sum(nil))
 
 	// Update status to active, set size, MD5 checksum and SHA-512 hash
-	_, _ = svc.activeDB().Exec(c.Request.Context(),
+	if _, err := svc.activeDB().Exec(c.Request.Context(),
 		"UPDATE images SET status = $1, size_bytes = $2, checksum = $3, os_hash_algo = $4, os_hash_value = $5, updated_at = $6 WHERE id = $7",
-		"active", size, checksum, "sha512", osHashValue, time.Now(), imageID)
+		"active", size, checksum, "sha512", osHashValue, time.Now(), imageID,
+	); err != nil {
+		log.Error().Err(err).Str("image_id", imageID).Msg("CRITICAL: failed to finalize image status after successful upload")
+		common.SendError(c, common.NewInternalServerError("failed to finalize image upload"))
+		return
+	}
 
 	c.Status(http.StatusNoContent)
 }

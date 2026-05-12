@@ -2,6 +2,7 @@ package nova
 
 import (
 	"context"
+	"crypto/sha1"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -612,6 +613,19 @@ func (svc *Service) CreateServer(c *gin.Context) {
 			"adminPass":        common.GeneratePassword(16),
 			"security_groups":  []gin.H{{"name": "default"}},
 			"OS-DCF:diskConfig": "AUTO",
+			"hostId":                       "",
+			"progress":                     0,
+			"config_drive":                 "",
+			"key_name":                     keyNameValue,
+			"accessIPv4":                   "",
+			"accessIPv6":                   "",
+			"addresses":                    gin.H{},
+			"OS-EXT-STS:power_state":       0,
+			"OS-EXT-STS:task_state":        "scheduling",
+			"OS-EXT-STS:vm_state":          "building",
+			"OS-EXT-AZ:availability_zone":  "nova",
+			"OS-SRV-USG:launched_at":       nil,
+			"OS-SRV-USG:terminated_at":     nil,
 			"links": []gin.H{
 				{"rel": "self", "href": selfURL},
 				{"rel": "bookmark", "href": bookmarkURL},
@@ -637,7 +651,7 @@ func (svc *Service) ListServers(c *gin.Context) {
 	args := []interface{}{}
 	argIdx := 1
 
-	baseQuery := `SELECT id, name FROM instances WHERE 1=1`
+	baseQuery := `SELECT id, name, status FROM instances WHERE 1=1`
 
 	// Project filter — omitted only when admin requests all_tenants=true.
 	if c.Query("all_tenants") != "true" || !isAdminContext(c) {
@@ -706,14 +720,15 @@ func (svc *Service) ListServers(c *gin.Context) {
 
 	var servers []gin.H
 	for rows.Next() {
-		var id, name string
-		if err := rows.Scan(&id, &name); err != nil {
+		var id, name, status string
+		if err := rows.Scan(&id, &name, &status); err != nil {
 			log.Warn().Err(err).Msg("failed to scan server row")
 			continue
 		}
 		servers = append(servers, gin.H{
-			"id":   id,
-			"name": name,
+			"id":     id,
+			"name":   name,
+			"status": status,
 			"links": []gin.H{
 				{"rel": "self", "href": fmt.Sprintf("%s/v2.1/servers/%s", common.BaseURL(c, 8774), id)},
 			},
@@ -739,6 +754,13 @@ func nullStringToInterface(s sql.NullString) interface{} {
 		return nil
 	}
 	return s.String
+}
+
+// generateHostID returns a deterministic hex string derived from projectID and hostname,
+// matching the Nova convention for the hostId field in server responses.
+func generateHostID(projectID, hostname string) string {
+	h := sha1.Sum([]byte(projectID + hostname))
+	return fmt.Sprintf("%x", h[:])
 }
 
 // ListServersDetail lists all servers (detailed)
@@ -1171,6 +1193,7 @@ func (svc *Service) GetServer(c *gin.Context) {
 		"tenant_id":                           projID,
 		"created":                             createdAt.Format(time.RFC3339),
 		"updated":                             updatedAt.Format(time.RFC3339),
+		"hostId":                              generateHostID(projID, "stub-host"),
 		"OS-EXT-SRV-ATTR:host":                hostStr,
 		"OS-EXT-SRV-ATTR:instance_name":       fmt.Sprintf("instance-%s", id[:8]),
 		"OS-EXT-SRV-ATTR:hypervisor_hostname": hostStr,

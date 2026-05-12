@@ -225,10 +225,8 @@ func (svc *Service) CreatePortForwarding(c *gin.Context) {
 		protocol,
 		externalInterface,
 	); err != nil {
-		fmt.Printf("Warning: failed to configure port forwarding NAT rule: %v\n", err)
+		log.Warn().Err(err).Str("floatingip_id", floatingIPID).Str("router_id", routerID.String).Msg("failed to configure port forwarding NAT rule")
 	}
-
-	// Return created resource
 	result := gin.H{
 		"id":                  pfID,
 		"internal_port_id":    req.PortForwarding.InternalPortID,
@@ -395,7 +393,7 @@ func (svc *Service) UpdatePortForwarding(c *gin.Context) {
 			currentPF.Protocol,
 			externalInterface,
 		); err != nil {
-			fmt.Printf("Warning: failed to update port forwarding NAT rule: %v\n", err)
+			log.Warn().Err(err).Str("floatingip_id", floatingIPID).Str("router_id", routerID.String).Msg("failed to update port forwarding NAT rule")
 		}
 	}
 
@@ -461,7 +459,7 @@ func (svc *Service) DeletePortForwarding(c *gin.Context) {
 			protocol,
 			externalInterface,
 		); err != nil {
-			fmt.Printf("Warning: failed to remove port forwarding NAT rule: %v\n", err)
+			log.Warn().Err(err).Str("floatingip_id", floatingIPID).Str("router_id", routerID.String).Msg("failed to remove port forwarding NAT rule")
 		}
 	}
 

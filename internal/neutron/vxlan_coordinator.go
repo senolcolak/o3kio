@@ -8,6 +8,7 @@ import (
 	"github.com/cobaltcore-dev/o3k/internal/compute"
 	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/cobaltcore-dev/o3k/pkg/networking"
+	"github.com/rs/zerolog/log"
 )
 
 // VXLANCoordinator coordinates VXLAN network state across compute nodes
@@ -91,7 +92,7 @@ func (vc *VXLANCoordinator) syncNetworks(ctx context.Context) {
 	`)
 
 	if err != nil {
-		fmt.Printf("Failed to query networks: %v\n", err)
+		log.Error().Err(err).Msg("failed to query networks")
 		return
 	}
 	defer rows.Close()
@@ -110,7 +111,7 @@ func (vc *VXLANCoordinator) syncNetworks(ctx context.Context) {
 		if vni == nil {
 			allocatedVNI, err := vc.allocateVNI(ctx, networkID)
 			if err != nil {
-				fmt.Printf("Failed to allocate VNI for network %s: %v\n", networkID, err)
+				log.Error().Err(err).Str("network_id", networkID).Msg("failed to allocate VNI for network")
 				continue
 			}
 			vni = &allocatedVNI
@@ -118,7 +119,7 @@ func (vc *VXLANCoordinator) syncNetworks(ctx context.Context) {
 
 		// Create VXLAN interface
 		if err := vc.vxlanManager.CreateVXLAN(networkID, *vni, localIP); err != nil {
-			fmt.Printf("Failed to create VXLAN for network %s: %v\n", networkID, err)
+			log.Error().Err(err).Str("network_id", networkID).Msg("failed to create VXLAN for network")
 			continue
 		}
 
@@ -126,11 +127,11 @@ func (vc *VXLANCoordinator) syncNetworks(ctx context.Context) {
 		bridgeName := "br-" + networkID[:8]
 		nsName := vc.nsManager.GetNamespaceName(projectID)
 		if err := vc.vxlanManager.AttachToBridge(networkID, bridgeName, true, nsName); err != nil {
-			fmt.Printf("Failed to attach VXLAN to bridge for network %s: %v\n", networkID, err)
+			log.Error().Err(err).Str("network_id", networkID).Str("bridge", bridgeName).Msg("failed to attach VXLAN to bridge for network")
 		}
 	}
 	if err := rows.Err(); err != nil {
-		fmt.Printf("Failed to iterate network rows: %v\n", err)
+		log.Error().Err(err).Msg("failed to iterate network rows")
 	}
 }
 
@@ -139,7 +140,7 @@ func (vc *VXLANCoordinator) syncPorts(ctx context.Context) {
 	// Get all active compute nodes
 	nodes, err := vc.nodeRegistry.ListActiveNodes(ctx)
 	if err != nil {
-		fmt.Printf("Failed to list active nodes: %v\n", err)
+		log.Error().Err(err).Msg("failed to list active nodes")
 		return
 	}
 
@@ -150,7 +151,7 @@ func (vc *VXLANCoordinator) syncPorts(ctx context.Context) {
 	`)
 
 	if err != nil {
-		fmt.Printf("Failed to query FDB entries: %v\n", err)
+		log.Error().Err(err).Msg("failed to query FDB entries")
 		return
 	}
 	defer rows.Close()
@@ -186,11 +187,11 @@ func (vc *VXLANCoordinator) syncPorts(ctx context.Context) {
 
 		// Add FDB entry
 		if err := vc.vxlanManager.AddFDBEntry(networkID, macAddress, vtepIP); err != nil {
-			fmt.Printf("Failed to add FDB entry for %s on network %s: %v\n", macAddress, networkID, err)
+			log.Error().Err(err).Str("mac_address", macAddress).Str("network_id", networkID).Msg("failed to add FDB entry")
 		}
 	}
 	if err := rows.Err(); err != nil {
-		fmt.Printf("Failed to iterate FDB entry rows: %v\n", err)
+		log.Error().Err(err).Msg("failed to iterate FDB entry rows")
 	}
 }
 

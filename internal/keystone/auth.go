@@ -3,6 +3,7 @@ package keystone
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
@@ -208,6 +209,7 @@ type AuthResponse struct {
 
 // CatalogEntry represents a service in the catalog
 type CatalogEntry struct {
+	ID        string     `json:"id"`
 	Type      string     `json:"type"`
 	Name      string     `json:"name"`
 	Endpoints []Endpoint `json:"endpoints"`
@@ -215,10 +217,26 @@ type CatalogEntry struct {
 
 // Endpoint represents a service endpoint
 type Endpoint struct {
+	ID        string `json:"id"`
 	Interface string `json:"interface"`
 	RegionID  string `json:"region_id,omitempty"`
 	Region    string `json:"region,omitempty"` // backwards compat
 	URL       string `json:"url"`
+}
+
+// deterministicUUID generates a deterministic UUID v5 from the given parts.
+// It uses SHA-1 with version/variant bits set per RFC 4122.
+func deterministicUUID(parts ...string) string {
+	h := sha1.New()
+	for _, p := range parts {
+		h.Write([]byte(p))
+	}
+	sum := h.Sum(nil)
+	// Set version 5 bits (0101xxxx) in byte 6
+	sum[6] = (sum[6] & 0x0f) | 0x50
+	// Set variant bits (10xxxxxx) in byte 8
+	sum[8] = (sum[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", sum[0:4], sum[4:6], sum[6:8], sum[8:10], sum[10:16])
 }
 
 // AuthenticatePassword authenticates user with password
@@ -735,8 +753,18 @@ func (s *AuthService) AuthenticateApplicationCredential(ctx context.Context, req
 	}
 	if req.Auth.Scope != nil && !req.Auth.Scope.IsUnscoped && req.Auth.Scope.Project != nil {
 		requestedProjectID := req.Auth.Scope.Project.ID
+		// Resolve project name to ID if only name was provided
+		if requestedProjectID == "" && req.Auth.Scope.Project.Name != "" {
+			err := s.activeDB().QueryRow(ctx,
+				"SELECT id FROM projects WHERE name = $1 AND domain_id = $2",
+				req.Auth.Scope.Project.Name, user.DomainID,
+			).Scan(&requestedProjectID)
+			if err != nil {
+				return nil, "", false, common.NewUnauthorizedError("project not found for application credential scope")
+			}
+		}
 		if requestedProjectID != "" && requestedProjectID != scopeProjectID {
-			return nil, "", false, common.NewUnauthorizedError("application credential scope does not match requested project")
+			return nil, "", false, common.NewUnauthorizedError("application credential cannot be used with a different project scope")
 		}
 	}
 
@@ -1062,6 +1090,7 @@ func (s *AuthService) BuildServiceCatalog(projectID string, cacheInstance *cache
 		// Create service entry if not exists
 		if _, exists := serviceMap[serviceID]; !exists {
 			serviceMap[serviceID] = &CatalogEntry{
+				ID:        serviceID,
 				Type:      svcType,
 				Name:      svcName,
 				Endpoints: []Endpoint{},
@@ -1074,6 +1103,7 @@ func (s *AuthService) BuildServiceCatalog(projectID string, cacheInstance *cache
 			substitutedURL := substituteURLTemplates(*url, projectID)
 
 			endpoint := Endpoint{
+				ID:        *endpointID,
 				Interface: *iface,
 				URL:       substitutedURL,
 			}
@@ -1143,44 +1173,50 @@ func buildHardcodedCatalog(projectID string) []CatalogEntry {
 
 	// allInterfaces returns public/internal/admin endpoints for a URL.
 	// In O3K all interfaces point to the same binary, so all URLs are identical.
-	allInterfaces := func(url string) []Endpoint {
+	allInterfaces := func(svcName, url string) []Endpoint {
 		return []Endpoint{
-			{Interface: "public", RegionID: "RegionOne", Region: "RegionOne", URL: url},
-			{Interface: "internal", RegionID: "RegionOne", Region: "RegionOne", URL: url},
-			{Interface: "admin", RegionID: "RegionOne", Region: "RegionOne", URL: url},
+			{ID: deterministicUUID(svcName, "public", "RegionOne"), Interface: "public", RegionID: "RegionOne", Region: "RegionOne", URL: url},
+			{ID: deterministicUUID(svcName, "internal", "RegionOne"), Interface: "internal", RegionID: "RegionOne", Region: "RegionOne", URL: url},
+			{ID: deterministicUUID(svcName, "admin", "RegionOne"), Interface: "admin", RegionID: "RegionOne", Region: "RegionOne", URL: url},
 		}
 	}
 
 	return []CatalogEntry{
 		{
+			ID:        deterministicUUID("keystone"),
 			Type:      "identity",
 			Name:      "keystone",
-			Endpoints: allInterfaces(fmt.Sprintf("%s:35357/v3", baseURL)),
+			Endpoints: allInterfaces("keystone", fmt.Sprintf("%s:35357/v3", baseURL)),
 		},
 		{
+			ID:        deterministicUUID("nova"),
 			Type:      "compute",
 			Name:      "nova",
-			Endpoints: allInterfaces(fmt.Sprintf("%s:8774/v2.1/%s", baseURL, projectID)),
+			Endpoints: allInterfaces("nova", fmt.Sprintf("%s:8774/v2.1/%s", baseURL, projectID)),
 		},
 		{
+			ID:        deterministicUUID("placement"),
 			Type:      "placement",
 			Name:      "placement",
-			Endpoints: allInterfaces(fmt.Sprintf("%s:8778", baseURL)),
+			Endpoints: allInterfaces("placement", fmt.Sprintf("%s:8778", baseURL)),
 		},
 		{
+			ID:        deterministicUUID("neutron"),
 			Type:      "network",
 			Name:      "neutron",
-			Endpoints: allInterfaces(fmt.Sprintf("%s:9696", baseURL)),
+			Endpoints: allInterfaces("neutron", fmt.Sprintf("%s:9696", baseURL)),
 		},
 		{
+			ID:        deterministicUUID("cinderv3"),
 			Type:      "volumev3",
 			Name:      "cinderv3",
-			Endpoints: allInterfaces(fmt.Sprintf("%s:8776/v3/%s", baseURL, projectID)),
+			Endpoints: allInterfaces("cinderv3", fmt.Sprintf("%s:8776/v3/%s", baseURL, projectID)),
 		},
 		{
+			ID:        deterministicUUID("glance"),
 			Type:      "image",
 			Name:      "glance",
-			Endpoints: allInterfaces(fmt.Sprintf("%s:9292", baseURL)),
+			Endpoints: allInterfaces("glance", fmt.Sprintf("%s:9292", baseURL)),
 		},
 	}
 }

@@ -39,9 +39,8 @@ func HandleBindingError(c *gin.Context, err error) {
 	SendError(c, osErr)
 }
 
-// AbortWithError sets an error and aborts the request chain
+// AbortWithError sends the error response and aborts the request chain
 func AbortWithError(c *gin.Context, err *OpenStackError) {
-	_ = c.Error(err)
-	c.Abort()
 	SendError(c, err)
+	c.Abort()
 }

@@ -64,6 +64,9 @@ func (a *TracingAdapter) BeginTx(ctx context.Context, opts TxOptions) (Tx, error
 	return a.inner.BeginTx(ctx, opts)
 }
 
+// Unwrap returns the underlying DBIF, allowing callers to reach through the tracing layer.
+func (a *TracingAdapter) Unwrap() DBIF { return a.inner }
+
 // truncate caps a string at maxLen runes, appending "…" when trimmed.
 func truncate(s string, maxLen int) string {
 	runes := []rune(s)

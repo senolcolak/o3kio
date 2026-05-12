@@ -279,7 +279,7 @@ func (svc *Service) CreateFloatingIP(c *gin.Context) {
 			}
 			externalInterface := "qg-ext-" + rid
 			if err := svc.routerManager.AddFloatingIP(rID, floatingIP, *fixedIP, externalInterface); err != nil {
-				fmt.Printf("Warning: failed to configure floating IP NAT: %v\n", err)
+				log.Warn().Err(err).Str("router_id", rID).Str("floating_ip", floatingIP).Msg("failed to configure floating IP NAT")
 			}
 		}
 	}
@@ -625,33 +625,32 @@ func (svc *Service) DeleteFloatingIP(c *gin.Context) {
 	floatingIPID := c.Param("id")
 	projectID := c.GetString("project_id")
 
-	// Get floating IP details before deletion
-	var floatingIP, fixedIP, routerID sql.NullString
-	var portID sql.NullString
-	err := svc.activeDB().QueryRow(c.Request.Context(),
-		"SELECT floating_ip_address, fixed_ip_address, port_id, router_id FROM floating_ips WHERE id = $1 AND project_id = $2",
+	tx, err := svc.activeDB().BeginTx(c.Request.Context(), database.TxOptions{})
+	if err != nil {
+		common.SendError(c, common.NewInternalServerError("failed to begin transaction"))
+		return
+	}
+	defer tx.Rollback(c.Request.Context())
+
+	// Lock the floating IP row
+	var floatingIPAddr, fixedIPAddr, portID, routerID string
+	err = tx.QueryRow(c.Request.Context(),
+		"SELECT floating_ip_address, fixed_ip_address, COALESCE(port_id, ''), COALESCE(router_id, '') "+
+			"FROM floating_ips WHERE id = $1 AND project_id = $2 FOR UPDATE",
 		floatingIPID, projectID,
-	).Scan(&floatingIP, &fixedIP, &portID, &routerID)
+	).Scan(&floatingIPAddr, &fixedIPAddr, &portID, &routerID)
 
 	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("floating IP"))
 		return
 	}
-
-	// Remove NAT rules if associated
-	if portID.Valid && fixedIP.Valid && routerID.Valid {
-		rid := routerID.String
-		if len(rid) > 7 {
-			rid = rid[:7]
-		}
-		externalInterface := "qg-ext-" + rid
-		if err := svc.routerManager.RemoveFloatingIP(routerID.String, floatingIP.String, fixedIP.String, externalInterface); err != nil {
-			fmt.Printf("Warning: failed to remove floating IP NAT rules: %v\n", err)
-		}
+	if err != nil {
+		log.Error().Err(err).Str("operation", "delete_floatingip_lock").Str("floatingip_id", floatingIPID).Msg("database error")
+		common.SendError(c, common.NewInternalServerError("failed to delete floating IP"))
+		return
 	}
 
-	// Delete from database
-	_, err = svc.activeDB().Exec(c.Request.Context(),
+	_, err = tx.Exec(c.Request.Context(),
 		"DELETE FROM floating_ips WHERE id = $1 AND project_id = $2",
 		floatingIPID, projectID,
 	)
@@ -659,6 +658,24 @@ func (svc *Service) DeleteFloatingIP(c *gin.Context) {
 		log.Error().Err(err).Str("operation", "delete_floatingip").Str("floatingip_id", floatingIPID).Msg("database error")
 		common.SendError(c, common.NewInternalServerError("failed to delete floating IP"))
 		return
+	}
+
+	if err := tx.Commit(c.Request.Context()); err != nil {
+		log.Error().Err(err).Str("operation", "delete_floatingip_commit").Str("floatingip_id", floatingIPID).Msg("transaction commit failed")
+		common.SendError(c, common.NewInternalServerError("failed to commit floating IP deletion"))
+		return
+	}
+
+	// Remove NAT rules if associated — best-effort, outside transaction
+	if portID != "" && fixedIPAddr != "" && routerID != "" {
+		rid := routerID
+		if len(rid) > 7 {
+			rid = rid[:7]
+		}
+		externalInterface := "qg-ext-" + rid
+		if err := svc.routerManager.RemoveFloatingIP(routerID, floatingIPAddr, fixedIPAddr, externalInterface); err != nil {
+			log.Warn().Err(err).Str("router_id", routerID).Str("floating_ip", floatingIPAddr).Msg("failed to remove floating IP NAT rules")
+		}
 	}
 
 	c.Status(http.StatusNoContent)
