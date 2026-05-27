@@ -30,6 +30,13 @@ type ImageStore struct {
 	mu          sync.Mutex
 	stubImages  map[string]*stubImage // For stub mode
 	s3Client    *s3.Client
+
+	// Ceph connection state. Populated by initCephConnection (build tag: ceph).
+	// Untyped here so the package compiles without the ceph build tag.
+	//nolint:unused // used in image_store_rbd.go behind build tags
+	cephConn interface{}
+	//nolint:unused // used in image_store_rbd.go behind build tags
+	cephIoctx interface{}
 }
 
 // stubImage represents a simulated image
@@ -69,6 +76,15 @@ func NewImageStore(mode, cephPool, cephConf, s3Bucket, s3Region, s3Endpoint stri
 	// Initialize S3 client if needed
 	if mode == "s3" || containsMode(mode, "s3") {
 		_ = store.initS3Client()
+	}
+
+	// Initialize Ceph connection if RBD mode is requested.
+	// Real implementation lives in image_store_rbd.go behind the `ceph` build
+	// tag; the stub variant returns an error so we run in degraded mode.
+	if mode == "rbd" || containsMode(mode, "rbd") {
+		if err := store.initCephConnection(); err != nil {
+			fmt.Printf("Warning: failed to initialize Ceph connection for image store: %v\n", err)
+		}
 	}
 
 	return store
@@ -199,21 +215,8 @@ func (s *ImageStore) uploadImageLocal(ctx context.Context, imageID string, reade
 	return size, nil
 }
 
-// uploadImageRBD uploads image to RBD
-func (s *ImageStore) uploadImageRBD(ctx context.Context, imageID string, reader io.Reader) (int64, error) {
-	_, cancel := context.WithTimeout(ctx, s.timeout)
-	defer cancel()
-
-	imageName := "image-" + imageID
-
-	// TODO: Use go-ceph to write to RBD
-	// cmd := exec.CommandContext(ctx, "rbd", "import", "-", fmt.Sprintf("%s/%s", s.cephPool, imageName))
-	// cmd.Stdin = reader
-	// return cmd.Run()
-
-	_ = imageName
-	return 0, fmt.Errorf("Ceph cluster not configured (would upload to %s/%s)", s.cephPool, imageName)
-}
+// uploadImageRBD is implemented in image_store_rbd.go (build tag: ceph) and
+// image_store_rbd_stub.go (build tag: !ceph).
 
 // uploadImageS3 uploads image to S3
 func (s *ImageStore) uploadImageS3(ctx context.Context, imageID string, reader io.Reader) (int64, error) {
@@ -342,20 +345,7 @@ func (s *ImageStore) downloadImageLocal(ctx context.Context, imageID string, wri
 	return err
 }
 
-// downloadImageRBD downloads from RBD
-func (s *ImageStore) downloadImageRBD(ctx context.Context, imageID string, writer io.Writer) error {
-	ctx, cancel := context.WithTimeout(ctx, s.timeout) //nolint:ineffassign
-	defer cancel()
-
-	imageName := "image-" + imageID
-
-	// TODO: Use go-ceph
-	// cmd := exec.CommandContext(ctx, "rbd", "export", fmt.Sprintf("%s/%s", s.cephPool, imageName), "-")
-	// cmd.Stdout = writer
-	// return cmd.Run()
-
-	return fmt.Errorf("Ceph cluster not configured (would download from %s/%s)", s.cephPool, imageName)
-}
+// downloadImageRBD is implemented in image_store_rbd.go / image_store_rbd_stub.go
 
 // downloadImageS3 downloads from S3
 func (s *ImageStore) downloadImageS3(ctx context.Context, imageID string, writer io.Writer) error {
@@ -442,19 +432,7 @@ func (s *ImageStore) deleteImageLocal(ctx context.Context, imageID string) error
 	return err
 }
 
-// deleteImageRBD deletes from RBD
-func (s *ImageStore) deleteImageRBD(ctx context.Context, imageID string) error {
-	ctx, cancel := context.WithTimeout(ctx, s.timeout) //nolint:ineffassign
-	defer cancel()
-
-	imageName := "image-" + imageID
-
-	// TODO: Use go-ceph
-	// cmd := exec.CommandContext(ctx, "rbd", "rm", fmt.Sprintf("%s/%s", s.cephPool, imageName))
-	// return cmd.Run()
-
-	return fmt.Errorf("Ceph cluster not configured (would delete %s/%s)", s.cephPool, imageName)
-}
+// deleteImageRBD is implemented in image_store_rbd.go / image_store_rbd_stub.go
 
 // deleteImageS3 deletes from S3
 func (s *ImageStore) deleteImageS3(ctx context.Context, imageID string) error {
@@ -525,20 +503,7 @@ func (s *ImageStore) imageExistsLocal(imageID string) (bool, error) {
 	return false, err
 }
 
-// imageExistsRBD checks if image exists in RBD
-func (s *ImageStore) imageExistsRBD(ctx context.Context, imageID string) (bool, error) {
-	ctx, cancel := context.WithTimeout(ctx, s.timeout) //nolint:ineffassign
-	defer cancel()
-
-	imageName := "image-" + imageID
-
-	// TODO: Use go-ceph
-	// cmd := exec.CommandContext(ctx, "rbd", "info", fmt.Sprintf("%s/%s", s.cephPool, imageName))
-	// err := cmd.Run()
-	// return err == nil, nil
-
-	return false, fmt.Errorf("Ceph cluster not configured (would check %s/%s)", s.cephPool, imageName)
-}
+// imageExistsRBD is implemented in image_store_rbd.go / image_store_rbd_stub.go
 
 // imageExistsS3 checks if image exists in S3
 func (s *ImageStore) imageExistsS3(ctx context.Context, imageID string) (bool, error) {
@@ -591,9 +556,28 @@ func (s *ImageStore) GetImageSize(ctx context.Context, imageID string) (int64, e
 		return info.Size(), nil
 	case "s3":
 		return s.getImageSizeS3(ctx, imageID)
-	case "rbd", "local,rbd", "local,s3", "rbd,s3":
-		// For RBD, would parse rbd info output
-		return 0, fmt.Errorf("Ceph cluster not configured")
+	case "rbd":
+		return s.getImageSizeRBD(ctx, imageID)
+	case "local,rbd":
+		// Try local first (faster).
+		imagePath := filepath.Join(s.localPath, "image-"+imageID+".raw")
+		if info, err := os.Stat(imagePath); err == nil {
+			return info.Size(), nil
+		}
+		return s.getImageSizeRBD(ctx, imageID)
+	case "local,s3":
+		// Try local first (faster).
+		imagePath := filepath.Join(s.localPath, "image-"+imageID+".raw")
+		if info, err := os.Stat(imagePath); err == nil {
+			return info.Size(), nil
+		}
+		return s.getImageSizeS3(ctx, imageID)
+	case "rbd,s3":
+		// Try RBD first.
+		if size, err := s.getImageSizeRBD(ctx, imageID); err == nil {
+			return size, nil
+		}
+		return s.getImageSizeS3(ctx, imageID)
 	default:
 		return 0, fmt.Errorf("unsupported storage mode: %s", s.mode)
 	}
@@ -629,4 +613,11 @@ func (s *ImageStore) getImageSizeS3(ctx context.Context, imageID string) (int64,
 // GetRBDPath returns the RBD path for an image
 func (s *ImageStore) GetRBDPath(imageID string) string {
 	return fmt.Sprintf("rbd:%s/image-%s", s.cephPool, imageID)
+}
+
+// Close releases any resources held by the image store (notably the Ceph
+// RADOS connection when built with the `ceph` tag). Safe to call multiple
+// times and on stores that never opened a Ceph connection.
+func (s *ImageStore) Close() error {
+	return s.closeCephConnection()
 }
