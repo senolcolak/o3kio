@@ -223,17 +223,19 @@ func ValidateMigrations(migrationsPath string) error {
 		return fmt.Errorf("no migration files found in %s", migrationsPath)
 	}
 
-	// Check for paired up/down files
+	// Check for paired up/down files. Skip non-migration entries
+	// (subdirectories like sqlite/, helper files like embed.go) — the
+	// length guards prevent slice-out-of-bounds on names shorter than the
+	// suffix we're comparing.
 	upFiles := 0
 	downFiles := 0
 	for _, file := range files {
 		name := file.Name()
-		if len(name) > 3 {
-			if name[len(name)-6:] == "up.sql" {
-				upFiles++
-			} else if name[len(name)-8:] == "down.sql" {
-				downFiles++
-			}
+		switch {
+		case len(name) >= 8 && name[len(name)-8:] == "down.sql":
+			downFiles++
+		case len(name) >= 6 && name[len(name)-6:] == "up.sql":
+			upFiles++
 		}
 	}
 

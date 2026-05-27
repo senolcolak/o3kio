@@ -68,6 +68,7 @@ services:
       O3K_LOG_LEVEL: "info"
       O3K_LOG_FORMAT: "json"
       O3K_ENDPOINT_HOST: "localhost"  # Use localhost for service catalog URLs (accessible from host)
+      O3K_BIND_HOST: "0.0.0.0"  # Bind on all interfaces so docker-published ports are reachable from host
     networks:
       - o3k-network
     restart: unless-stopped

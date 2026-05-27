@@ -99,7 +99,8 @@ func (s *ImageStore) uploadImageRBD(ctx context.Context, imageID string, reader 
 	}
 
 	size := uint64(len(data))
-	if _, err := rbd.Create(ioctx, imageName, size, rbd.RbdFeatureLayering); err != nil {
+	// Create2: ioctx, name, size, features (uint64), order (int). order=0 = librbd default.
+	if _, err := rbd.Create2(ioctx, imageName, size, rbd.RbdFeatureLayering, 0); err != nil {
 		return 0, fmt.Errorf("failed to create RBD image %s/%s: %w", s.cephPool, imageName, err)
 	}
 

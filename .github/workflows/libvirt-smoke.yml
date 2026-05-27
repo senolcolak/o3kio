@@ -1,0 +1,66 @@
+name: Libvirt Smoke (self-hosted)
+
+# Boots a real VM through Nova (libvirt_mode: real) on a self-hosted runner
+# with /dev/kvm. This is best-effort and NOT in the required CI status checks
+# — the self-hosted runner is operator-provisioned hardware.
+#
+# Runner requirements: see docs/ci-self-hosted.md
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'cmd/o3k/**'
+      - 'internal/nova/**'
+      - 'pkg/hypervisor/**'
+      - 'test/libvirt_smoke_test.sh'
+      - '.github/workflows/libvirt-smoke.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'cmd/o3k/**'
+      - 'internal/nova/**'
+      - 'pkg/hypervisor/**'
+      - 'test/libvirt_smoke_test.sh'
+      - '.github/workflows/libvirt-smoke.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  libvirt-smoke:
+    name: Boot real VM via Nova
+    runs-on: [self-hosted, kvm]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+
+      - name: Verify KVM available
+        run: |
+          test -w /dev/kvm || { echo "::error::/dev/kvm not writable by $(whoami)"; exit 1; }
+          virsh -c qemu:///system version
+
+      - name: Build o3k binary
+        run: make build
+
+      - name: Run libvirt smoke test
+        env:
+          O3K_JWT_SECRET: ci-libvirt-smoke-jwt-secret-32chars-or-more-padded
+          O3K_ADMIN_PASSWORD: secret
+        run: sudo -E ./test/libvirt_smoke_test.sh
+
+      - name: Dump o3k log on failure
+        if: failure()
+        run: |
+          if [ -f test/tmp/libvirt-smoke/o3k.log ]; then
+            echo "=== o3k.log ==="
+            tail -200 test/tmp/libvirt-smoke/o3k.log
+          fi
+          virsh -c qemu:///system list --all || true

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -476,10 +477,21 @@ func runServer(args []string) {
 	authService := keystone.NewAuthService(cfg.Keystone.JWTSecret, cfg.Keystone.TokenTTL, cacheInstance)
 	keystoneService := keystone.NewService(authService, cacheInstance)
 
-	// Rate-limit token creation: 10 requests per minute per IP (brute-force protection).
-	keystoneService.SetAuthRateLimiter(
-		middleware.RateLimitMiddleware(middleware.NewRateLimiter(10, time.Minute)),
-	)
+	// Rate-limit token creation per IP. Default 600/min is brute-force-resistant
+	// (still gates ~10 attempts/sec per attacker IP) while permitting parallel
+	// contract/integration test suites and bursty CLI clients that re-auth per
+	// command. Tunable via O3K_AUTH_RATE_LIMIT (requests per minute, 0 disables).
+	authRate := 600
+	if v := os.Getenv("O3K_AUTH_RATE_LIMIT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			authRate = n
+		}
+	}
+	if authRate > 0 {
+		keystoneService.SetAuthRateLimiter(
+			middleware.RateLimitMiddleware(middleware.NewRateLimiter(authRate, time.Minute)),
+		)
+	}
 
 	// Load policy rules from DB (best-effort; table may not exist before migration 067)
 	if err := keystoneService.LoadPoliciesFromDB(ctx); err != nil {

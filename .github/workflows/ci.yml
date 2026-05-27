@@ -149,7 +149,7 @@ jobs:
           O3K_ADMIN_PASSWORD: secret
         run: |
           docker compose -f deployments/docker-compose.yml up -d
-          timeout 120 bash -c 'until curl -sf http://localhost:35357/v3 > /dev/null; do sleep 3; done'
+          timeout 300 bash -c 'until curl -sf http://localhost:35357/v3 > /dev/null; do sleep 3; done'
 
       - name: Run contract tests
         run: |
@@ -185,16 +185,136 @@ jobs:
 
       - name: Dump service logs on failure
         if: failure()
-        run: docker compose -f deployments/docker-compose.yml logs --tail=200
+        env:
+          POSTGRES_PASSWORD: ci-postgres-password-not-secret
+          O3K_JWT_SECRET: ci-jwt-secret-32chars-or-more-padded-out-here
+          O3K_ADMIN_PASSWORD: secret
+        run: docker compose -f deployments/docker-compose.yml logs --tail=2000
 
       - name: Cleanup
         if: always()
+        env:
+          POSTGRES_PASSWORD: ci-postgres-password-not-secret
+          O3K_JWT_SECRET: ci-jwt-secret-32chars-or-more-padded-out-here
+          O3K_ADMIN_PASSWORD: secret
         run: docker compose -f deployments/docker-compose.yml down -v
+
+  ebpf-smoke:
+    name: eBPF Compile + Load
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+
+      - name: Install eBPF toolchain
+        run: |
+          sudo apt-get update
+          # gcc-multilib provides gnu/stubs-32.h pulled in transitively by
+          # asm/types.h on ubuntu-noble. Without it, clang -target bpf fails
+          # to find the 32-bit stubs header even though we never link 32-bit.
+          sudo apt-get install -y clang llvm libbpf-dev gcc-multilib linux-headers-$(uname -r) || \
+            sudo apt-get install -y clang llvm libbpf-dev gcc-multilib linux-libc-dev
+
+      - name: Verify clang version
+        run: clang --version
+
+      - name: Compile eBPF program
+        run: make build-ebpf
+
+      - name: Verify object file exists
+        run: |
+          test -f pkg/networking/ebpf/secgroup.o
+          file pkg/networking/ebpf/secgroup.o | grep -q "ELF.*BPF"
+
+      - name: Run eBPF load smoke test
+        # Requires CAP_BPF / CAP_SYS_ADMIN to actually load into the kernel.
+        # GitHub Actions ubuntu runners support this via sudo.
+        run: |
+          cd pkg/networking/ebpf
+          sudo -E env "PATH=$PATH" "HOME=$HOME" \
+            $(which go) test -tags ebpf_integration -v -run TestEBPFLoad -count=1 .
+
+  glance-rbd:
+    name: Glance RBD (microceph)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+
+      - name: Install Ceph client headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y librados-dev librbd-dev libcephfs-dev pkg-config
+
+      - name: Bootstrap microceph
+        # microceph gives us a single-node Ceph in ~60s. Flake risk is
+        # accepted; if this is a recurring problem we move to a dedicated
+        # ceph runner.
+        run: |
+          sudo snap install microceph --channel=squid/stable
+          sudo microceph cluster bootstrap
+          sudo microceph disk add loop,2G,1
+          sudo microceph enable rgw || true
+          # Wait for the cluster to reach HEALTH_OK or HEALTH_WARN (single-OSD
+          # clusters often sit at WARN; both are fine for our test).
+          for i in $(seq 1 30); do
+            STATUS=$(sudo microceph.ceph -s 2>&1 || true)
+            if echo "$STATUS" | grep -qE "HEALTH_OK|HEALTH_WARN"; then
+              echo "Cluster ready:"
+              echo "$STATUS"
+              break
+            fi
+            sleep 2
+          done
+          sudo microceph.ceph osd pool create rbd 8 8
+          sudo microceph.ceph osd pool application enable rbd rbd
+          # Single-OSD cluster: drop replication from default size=3,
+          # min_size=2 down to size=1 so writes don't block waiting for
+          # replicas that don't exist. Ceph blocks size=1 by default
+          # (mon_allow_pool_size_one=false) — flip it on cluster-wide
+          # before touching any pool. Also lower the cluster default for
+          # any pool created later by tests.
+          sudo microceph.ceph config set global mon_allow_pool_size_one true
+          sudo microceph.ceph osd pool set rbd size 1 --yes-i-really-mean-it
+          sudo microceph.ceph osd pool set rbd min_size 1
+          sudo microceph.ceph config set global osd_pool_default_size 1
+          sudo microceph.ceph config set global osd_pool_default_min_size 1
+
+      - name: Expose Ceph config + keyring to test
+        run: |
+          sudo mkdir -p /etc/ceph
+          sudo cp /var/snap/microceph/current/conf/ceph.conf /etc/ceph/ceph.conf
+          sudo cp /var/snap/microceph/current/conf/ceph.keyring /etc/ceph/ceph.keyring
+          sudo chmod a+r /etc/ceph/ceph.conf /etc/ceph/ceph.keyring
+          cat /etc/ceph/ceph.conf
+
+      - name: Run RBD integration tests
+        env:
+          O3K_TEST_CEPH_POOL: rbd
+          O3K_TEST_CEPH_CONF: /etc/ceph/ceph.conf
+        run: |
+          go test -tags 'ceph rbd_integration' -v -count=1 -timeout 5m \
+            -run TestRBDIntegration ./pkg/storage/...
+
+      - name: Dump cluster state on failure
+        if: failure()
+        run: |
+          sudo microceph.ceph -s || true
+          sudo microceph.ceph osd tree || true
+          sudo microceph.ceph osd pool ls detail || true
 
   status:
     name: CI Status
     runs-on: ubuntu-latest
-    needs: [build, test, lint, vulncheck, compat-check, contract-tests]
+    needs: [build, test, lint, vulncheck, compat-check, contract-tests, ebpf-smoke, glance-rbd]
     if: always()
     steps:
       - name: Check results
@@ -204,8 +324,10 @@ jobs:
              [ "${{ needs.lint.result }}" != "success" ] || \
              [ "${{ needs.vulncheck.result }}" != "success" ] || \
              [ "${{ needs.contract-tests.result }}" != "success" ] || \
-             [ "${{ needs.compat-check.result }}" != "success" ]; then
-            echo "::error::Required checks failed (build, test, lint, vulncheck, contract-tests, or compat-check)"
+             [ "${{ needs.compat-check.result }}" != "success" ] || \
+             [ "${{ needs.ebpf-smoke.result }}" != "success" ] || \
+             [ "${{ needs.glance-rbd.result }}" != "success" ]; then
+            echo "::error::Required checks failed (build, test, lint, vulncheck, contract-tests, compat-check, ebpf-smoke, or glance-rbd)"
             exit 1
           fi
           echo "All required checks passed"

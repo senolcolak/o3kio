@@ -22,7 +22,7 @@ build:
 build-ebpf:
 	@echo "Building eBPF programs..."
 	@which clang > /dev/null || (echo "ERROR: clang not found. Install with: apt-get install clang llvm libbpf-dev" && exit 1)
-	clang -O2 -target bpf -c pkg/networking/ebpf/secgroup.c -o pkg/networking/ebpf/secgroup.o
+	clang -O2 -g -target bpf -D__TARGET_ARCH_x86 -I/usr/include/x86_64-linux-gnu -c pkg/networking/ebpf/secgroup.c -o pkg/networking/ebpf/secgroup.o
 	@echo "eBPF program compiled: pkg/networking/ebpf/secgroup.o"
 
 # Build compat-check tool

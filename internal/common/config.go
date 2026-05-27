@@ -225,6 +225,9 @@ func LoadConfig(path string) (*Config, error) {
 	if s3Endpoint := os.Getenv("O3K_S3_ENDPOINT"); s3Endpoint != "" {
 		cfg.Glance.S3Endpoint = s3Endpoint
 	}
+	if bindHost := os.Getenv("O3K_BIND_HOST"); bindHost != "" {
+		cfg.Server.BindHost = bindHost
+	}
 
 	// Refuse to start with default JWT secret in production.
 	// Skip the check when no secret is set at all — zero-config mode will
