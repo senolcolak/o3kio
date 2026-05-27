@@ -149,7 +149,7 @@ jobs:
           O3K_ADMIN_PASSWORD: secret
         run: |
           docker compose -f deployments/docker-compose.yml up -d
-          timeout 120 bash -c 'until curl -sf http://localhost:35357/v3 > /dev/null; do sleep 3; done'
+          timeout 300 bash -c 'until curl -sf http://localhost:35357/v3 > /dev/null; do sleep 3; done'
 
       - name: Run contract tests
         run: |
@@ -189,7 +189,7 @@ jobs:
           POSTGRES_PASSWORD: ci-postgres-password-not-secret
           O3K_JWT_SECRET: ci-jwt-secret-32chars-or-more-padded-out-here
           O3K_ADMIN_PASSWORD: secret
-        run: docker compose -f deployments/docker-compose.yml logs --tail=200
+        run: docker compose -f deployments/docker-compose.yml logs --tail=2000
 
       - name: Cleanup
         if: always()
