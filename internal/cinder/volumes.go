@@ -319,8 +319,10 @@ func (svc *Service) CreateVolume(c *gin.Context) {
 	if err := svc.cephClient.CreateVolume(c.Request.Context(), volumeID, req.Volume.Size); err != nil {
 		log.Error().Err(err).Str("operation", "create_volume_ceph").Msg("failed to create volume in Ceph")
 		// Best-effort cleanup of the committed DB row.
-		svc.activeDB().Exec(c.Request.Context(),
-			"DELETE FROM volumes WHERE id = $1", volumeID)
+		if _, cerr := svc.activeDB().Exec(c.Request.Context(),
+			"DELETE FROM volumes WHERE id = $1", volumeID); cerr != nil {
+			log.Error().Err(cerr).Str("operation", "create_volume_cleanup").Msg("failed to clean up DB row after Ceph failure")
+		}
 		common.SendError(c, common.NewServiceUnavailableError("failed to create volume in Ceph"))
 		return
 	}
@@ -1420,7 +1422,7 @@ func (svc *Service) CreateSnapshot(c *gin.Context) {
 		common.SendError(c, common.NewInternalServerError("failed to begin transaction"))
 		return
 	}
-	defer tx.Rollback(c.Request.Context())
+	defer tx.Rollback(c.Request.Context()) //nolint:errcheck
 
 	// Lock the volume row to prevent concurrent delete/extend
 	var volumeID, volStatus string

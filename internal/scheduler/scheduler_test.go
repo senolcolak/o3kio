@@ -112,9 +112,7 @@ func TestReconcilerCollectsThenUpdates(t *testing.T) {
 
 	// reconcileOnce is private; exercise it through Run with a 1 ms interval.
 	// Cancel after two ticks to keep the test short.
-	r := scheduler.NewReconciler(mock, 0) // 0 → default 30 s interval
-	// Swap to a 1 ms interval by creating with intervalSec=1.
-	r = scheduler.NewReconciler(mock, 1)
+	r := scheduler.NewReconciler(mock, 1)
 
 	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
 	defer cancel()

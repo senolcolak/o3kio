@@ -1140,13 +1140,13 @@ func (s *AuthService) BuildServiceCatalog(projectID string, cacheInstance *cache
 // substituteURLTemplates replaces template placeholders in endpoint URLs
 func substituteURLTemplates(url, projectID string) string {
 	// Replace {project_id} placeholder
-	url = strings.Replace(url, "{project_id}", projectID, -1)
+	url = strings.ReplaceAll(url, "{project_id}", projectID)
 	// Also handle $(project_id)s format (OpenStack convention)
-	url = strings.Replace(url, "$(project_id)s", projectID, -1)
+	url = strings.ReplaceAll(url, "$(project_id)s", projectID)
 	// Also handle %(project_id)s format (Python string formatting)
-	url = strings.Replace(url, "%(project_id)s", projectID, -1)
+	url = strings.ReplaceAll(url, "%(project_id)s", projectID)
 	// Also handle plain %s format (legacy)
-	url = strings.Replace(url, "%s", projectID, -1)
+	url = strings.ReplaceAll(url, "%s", projectID)
 
 	// Replace hostname based on O3K_ENDPOINT_HOST environment variable
 	// This allows using 'localhost' in CI and 'o3k' in docker-compose
@@ -1155,9 +1155,9 @@ func substituteURLTemplates(url, projectID string) string {
 		baseHost = "localhost"
 	}
 	// Replace http://o3k: with the configured host
-	url = strings.Replace(url, "http://o3k:", "http://"+baseHost+":", -1)
+	url = strings.ReplaceAll(url, "http://o3k:", "http://"+baseHost+":")
 	// Also handle https://o3k: for future SSL support
-	url = strings.Replace(url, "https://o3k:", "https://"+baseHost+":", -1)
+	url = strings.ReplaceAll(url, "https://o3k:", "https://"+baseHost+":")
 
 	return url
 }

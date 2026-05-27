@@ -246,7 +246,7 @@ var migrationVersionRegex = regexp.MustCompile(`^(\d+)_.+\.up\.sql$`)
 // migrations in a schema_migrations table and is idempotent.
 //
 // Use this in place of MigrateSQLite when the binary embeds migrations via
-// go:embed so that no migrations/ directory is required at runtime.
+// embed.FS so that no migrations/ directory is required at runtime.
 func MigrateSQLiteFS(fsys fs.FS) error {
 	adapter, ok := unwrapDB(DB).(*SQLiteAdapter)
 	if !ok {

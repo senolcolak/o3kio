@@ -10,6 +10,13 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
 		log.Fatal("DATABASE_URL environment variable is required")
@@ -17,8 +24,7 @@ func main() {
 
 	conn, err := pgx.Connect(context.Background(), dbURL)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Unable to connect to database: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("unable to connect to database: %w", err)
 	}
 	defer func() {
 		if err := conn.Close(context.Background()); err != nil {
@@ -93,11 +99,11 @@ CREATE INDEX IF NOT EXISTS idx_router_routes_router_id ON router_routes(router_i
 	fmt.Println("Applying L3 router migration...")
 	_, err = conn.Exec(context.Background(), migration)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Migration failed: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("migration failed: %w", err)
 	}
 
 	fmt.Println("✓ Migration applied successfully!")
 	fmt.Println("✓ Created tables: routers, router_interfaces, floating_ips, router_routes")
 	fmt.Println("✓ Created 8 indexes")
+	return nil
 }

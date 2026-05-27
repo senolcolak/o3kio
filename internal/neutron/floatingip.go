@@ -630,7 +630,7 @@ func (svc *Service) DeleteFloatingIP(c *gin.Context) {
 		common.SendError(c, common.NewInternalServerError("failed to begin transaction"))
 		return
 	}
-	defer tx.Rollback(c.Request.Context())
+	defer tx.Rollback(c.Request.Context()) //nolint:errcheck
 
 	// Lock the floating IP row
 	var floatingIPAddr, fixedIPAddr, portID, routerID string

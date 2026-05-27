@@ -67,9 +67,11 @@ func (svc *Service) SuspendInstance(c *gin.Context) {
 				// On failure, revert to ERROR state
 				dbCtx, dbCancel := context.WithTimeout(svc.ctx, 5*time.Second)
 				defer dbCancel()
-				svc.activeDB().Exec(dbCtx,
+				if _, derr := svc.activeDB().Exec(dbCtx,
 					"UPDATE instances SET status = $1, task_state = $2 WHERE id = $3",
-					"ERROR", "", instanceID)
+					"ERROR", "", instanceID); derr != nil {
+					log.Error().Err(derr).Str("operation", "suspend_vm_revert").Msg("failed to revert instance state after suspend failure")
+				}
 			}
 		}()
 	}
@@ -126,9 +128,11 @@ func (svc *Service) ResumeInstance(c *gin.Context) {
 				// On failure, revert to ERROR state
 				dbCtx, dbCancel := context.WithTimeout(svc.ctx, 5*time.Second)
 				defer dbCancel()
-				svc.activeDB().Exec(dbCtx,
+				if _, derr := svc.activeDB().Exec(dbCtx,
 					"UPDATE instances SET status = $1, task_state = $2 WHERE id = $3",
-					"ERROR", "", instanceID)
+					"ERROR", "", instanceID); derr != nil {
+					log.Error().Err(derr).Str("operation", "resume_vm_revert").Msg("failed to revert instance state after resume failure")
+				}
 			}
 		}()
 	}
@@ -378,9 +382,11 @@ func (svc *Service) resizeInstance(c *gin.Context, instanceID, projectID, flavor
 			}
 			ctx, cancel := context.WithTimeout(svc.ctx, 5*time.Second)
 			defer cancel()
-			svc.activeDB().Exec(ctx,
+			if _, derr := svc.activeDB().Exec(ctx,
 				"UPDATE instances SET status = $1, task_state = $2 WHERE id = $3",
-				"ACTIVE", "", instanceID)
+				"ACTIVE", "", instanceID); derr != nil {
+				log.Error().Err(derr).Str("operation", "live_migrate_complete").Msg("failed to update instance state after live migrate")
+			}
 		})
 	}
 
@@ -412,10 +418,12 @@ func (svc *Service) ConfirmResizeInstance(c *gin.Context) {
 	}
 
 	// Clean up old flavor metadata
-	svc.activeDB().Exec(c.Request.Context(),
+	if _, err := svc.activeDB().Exec(c.Request.Context(),
 		"DELETE FROM instance_metadata WHERE instance_id = $1 AND meta_key = '_old_flavor_id'",
 		instanceID,
-	)
+	); err != nil {
+		log.Error().Err(err).Str("operation", "resize_confirm_cleanup").Msg("failed to delete old flavor metadata")
+	}
 
 	c.Status(http.StatusNoContent)
 }
@@ -590,15 +598,19 @@ func (svc *Service) MigrateInstance(c *gin.Context) {
 		defer cancel()
 
 		// Clear task_state and mark migration as complete
-		svc.activeDB().Exec(ctx, `
+		if _, err := svc.activeDB().Exec(ctx, `
 			UPDATE instances SET task_state = NULL, updated_at = $1
 			WHERE id = $2
-		`, time.Now(), instanceID)
+		`, time.Now(), instanceID); err != nil {
+			log.Error().Err(err).Str("operation", "migration_clear_task").Msg("failed to clear instance task_state after migration")
+		}
 
-		svc.activeDB().Exec(ctx, `
+		if _, err := svc.activeDB().Exec(ctx, `
 			UPDATE server_migrations SET status = 'completed', updated_at = $1
 			WHERE id = $2
-		`, time.Now(), migrationID)
+		`, time.Now(), migrationID); err != nil {
+			log.Error().Err(err).Str("operation", "migration_mark_complete").Msg("failed to mark migration completed")
+		}
 	}()
 
 	c.Status(http.StatusAccepted)
@@ -1007,9 +1019,11 @@ func (svc *Service) CreateBackupAction(c *gin.Context) {
 	}
 
 	// Add tags to identify this as a backup
-	svc.activeDB().Exec(c.Request.Context(), `
+	if _, err := svc.activeDB().Exec(c.Request.Context(), `
 		INSERT INTO image_tags (image_id, tag) VALUES ($1, 'backup'), ($1, $2), ($1, $3)
-	`, backupImageID, fmt.Sprintf("backup_type:%s", backupType), fmt.Sprintf("source_server:%s", instanceID))
+	`, backupImageID, fmt.Sprintf("backup_type:%s", backupType), fmt.Sprintf("source_server:%s", instanceID)); err != nil {
+		log.Error().Err(err).Str("operation", "backup_image_tags").Msg("failed to insert backup image tags")
+	}
 
 	// Implement rotation: delete old backups of same type for this server
 	// Query all backup images for this server with same backup_type
@@ -1043,7 +1057,9 @@ func (svc *Service) CreateBackupAction(c *gin.Context) {
 		if len(backupIDs) > int(rotation) {
 			oldBackups := backupIDs[int(rotation):]
 			for _, oldID := range oldBackups {
-				svc.activeDB().Exec(c.Request.Context(), "DELETE FROM images WHERE id = $1", oldID)
+				if _, err := svc.activeDB().Exec(c.Request.Context(), "DELETE FROM images WHERE id = $1", oldID); err != nil {
+					log.Error().Err(err).Str("operation", "backup_rotation_delete").Str("image_id", oldID).Msg("failed to delete old backup image")
+				}
 			}
 		}
 	}

@@ -347,27 +347,27 @@ func (svc *Service) GetQuota(c *gin.Context) {
 		projectID,
 	).Scan(&networksUsed)
 
-	svc.activeDB().QueryRow(c.Request.Context(),
+	_ = svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT COUNT(*) FROM subnets WHERE project_id = $1",
 		projectID,
 	).Scan(&subnetsUsed)
 
-	svc.activeDB().QueryRow(c.Request.Context(),
+	_ = svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT COUNT(*) FROM ports WHERE project_id = $1",
 		projectID,
 	).Scan(&portsUsed)
 
-	svc.activeDB().QueryRow(c.Request.Context(),
+	_ = svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT COUNT(*) FROM routers WHERE project_id = $1",
 		projectID,
 	).Scan(&routersUsed)
 
-	svc.activeDB().QueryRow(c.Request.Context(),
+	_ = svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT COUNT(*) FROM floating_ips WHERE project_id = $1",
 		projectID,
 	).Scan(&floatingIPsUsed)
 
-	svc.activeDB().QueryRow(c.Request.Context(),
+	_ = svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT COUNT(*) FROM security_groups WHERE project_id = $1",
 		projectID,
 	).Scan(&securityGroupsUsed)
@@ -393,32 +393,32 @@ func (svc *Service) GetQuotaDetails(c *gin.Context) {
 	// Query current usage
 	var networksUsed, subnetsUsed, portsUsed, routersUsed, floatingIPsUsed, securityGroupsUsed int
 
-	svc.activeDB().QueryRow(c.Request.Context(),
+	_ = svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT COUNT(*) FROM networks WHERE project_id = $1",
 		projectID,
 	).Scan(&networksUsed)
 
-	svc.activeDB().QueryRow(c.Request.Context(),
+	_ = svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT COUNT(*) FROM subnets WHERE project_id = $1",
 		projectID,
 	).Scan(&subnetsUsed)
 
-	svc.activeDB().QueryRow(c.Request.Context(),
+	_ = svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT COUNT(*) FROM ports WHERE project_id = $1",
 		projectID,
 	).Scan(&portsUsed)
 
-	svc.activeDB().QueryRow(c.Request.Context(),
+	_ = svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT COUNT(*) FROM routers WHERE project_id = $1",
 		projectID,
 	).Scan(&routersUsed)
 
-	svc.activeDB().QueryRow(c.Request.Context(),
+	_ = svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT COUNT(*) FROM floating_ips WHERE project_id = $1",
 		projectID,
 	).Scan(&floatingIPsUsed)
 
-	svc.activeDB().QueryRow(c.Request.Context(),
+	_ = svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT COUNT(*) FROM security_groups WHERE project_id = $1",
 		projectID,
 	).Scan(&securityGroupsUsed)

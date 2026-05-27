@@ -1,11 +1,65 @@
 run:
   timeout: 5m
+  go: "1.26"
+
+linters:
+  # Declare an explicit set so CI failures stay predictable across upgrades.
+  disable-all: true
+  enable:
+    # Default-on linters kept:
+    - errcheck      # Unhandled errors — critical for fail-fast services.
+    - govet         # Standard suspicious-construct checks.
+    - ineffassign   # Assignments whose value is never used.
+    - staticcheck   # Bug-finder + simplifications (subsumes gosimple in v1.64+).
+    - unused        # Unused functions/vars/types.
+
+    # Additional linters now blocking:
+    - bodyclose     # Unclosed HTTP response bodies (resource leaks).
+    - unconvert     # Redundant type conversions.
+    - gocritic      # Opinionated diagnostics + performance checks.
+    - revive        # Configurable replacement for golint.
+    # Note: misspell intentionally NOT enabled. The codebase mixes British
+    # English comments ("behaviour", "cancelled") with US-English API surface
+    # ("flavor", "color" — required for OpenStack compatibility) and neither
+    # locale-flag for misspell can express that. Spelling drift is best caught
+    # in code review.
 
 issues:
+  # See every violation; default of 3-per-linter hides regressions.
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
   exclude-rules:
+    # Tests and integration test helpers may legitimately ignore errors.
     - path: _test\.go
       linters:
         - errcheck
+        - gocritic
+        - revive
+        - bodyclose
     - path: test/
       linters:
         - errcheck
+        - gocritic
+        - revive
+        - bodyclose
+
+linters-settings:
+  gocritic:
+    disabled-checks:
+      - ifElseChain        # Long if/else chains are intentional in some action handlers.
+      - singleCaseSwitch
+      - commentFormatting
+      - exitAfterDefer     # CLI entrypoints rely on os.Exit; deferred work is best-effort.
+  revive:
+    rules:
+      - name: var-naming
+        disabled: true
+      - name: package-comments
+        disabled: true
+      - name: exported
+        disabled: true
+      - name: unused-parameter
+        disabled: true
+      - name: empty-block
+        disabled: true

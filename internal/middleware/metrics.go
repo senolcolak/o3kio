@@ -93,7 +93,9 @@ func metricsHandler(c *gin.Context) {
 	}
 
 	fmt.Fprintln(w, "# o3k latency distribution (upper_bound_ms count)")
-	bounds := append(store.latencyBuckets, -1) // -1 represents +Inf
+	bounds := make([]int64, 0, len(store.latencyBuckets)+1)
+	bounds = append(bounds, store.latencyBuckets...)
+	bounds = append(bounds, -1) // -1 represents +Inf
 	for i, bound := range bounds {
 		label := fmt.Sprintf("%d", bound)
 		if bound == -1 {

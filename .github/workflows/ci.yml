@@ -74,7 +74,6 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -185,12 +184,10 @@ jobs:
         run: |
           if [ "${{ needs.build.result }}" != "success" ] || \
              [ "${{ needs.test.result }}" != "success" ] || \
+             [ "${{ needs.lint.result }}" != "success" ] || \
              [ "${{ needs.contract-tests.result }}" != "success" ] || \
              [ "${{ needs.compat-check.result }}" != "success" ]; then
-            echo "::error::Required checks failed (build, test, contract-tests, or compat-check)"
+            echo "::error::Required checks failed (build, test, lint, contract-tests, or compat-check)"
             exit 1
           fi
           echo "All required checks passed"
-          if [ "${{ needs.lint.result }}" != "success" ]; then
-            echo "::warning::Lint has issues (non-blocking)"
-          fi

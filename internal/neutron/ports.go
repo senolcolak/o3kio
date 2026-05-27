@@ -196,7 +196,7 @@ func (svc *Service) CreatePort(c *gin.Context) {
 
 		if err != nil || !exists {
 			// Clean up port and TAP on failure
-			svc.activeDB().Exec(c.Request.Context(), "DELETE FROM ports WHERE id = $1", portID)
+			_, _ = svc.activeDB().Exec(c.Request.Context(), "DELETE FROM ports WHERE id = $1", portID)
 			cleanupTAP()
 			common.SendError(c, common.NewNotFoundError(fmt.Sprintf("security group %s", sgID)))
 			return
@@ -208,7 +208,7 @@ func (svc *Service) CreatePort(c *gin.Context) {
 		)
 		if err != nil {
 			// Clean up port and TAP on failure
-			svc.activeDB().Exec(c.Request.Context(), "DELETE FROM ports WHERE id = $1", portID)
+			_, _ = svc.activeDB().Exec(c.Request.Context(), "DELETE FROM ports WHERE id = $1", portID)
 			cleanupTAP()
 			log.Error().Err(err).Str("operation", "associate_security_group").Str("sg_id", sgID).Msg("failed to associate security group")
 			common.SendError(c, common.NewInternalServerError("failed to associate security group"))
@@ -573,7 +573,7 @@ func (svc *Service) DeletePort(c *gin.Context) {
 
 		// Remove port from eBPF maps (need MAC address)
 		var macAddress string
-		svc.activeDB().QueryRow(c.Request.Context(),
+		_ = svc.activeDB().QueryRow(c.Request.Context(),
 			"SELECT mac_address FROM ports WHERE id = $1",
 			portID,
 		).Scan(&macAddress)
@@ -904,12 +904,12 @@ func (svc *Service) CreateSecurityGroup(c *gin.Context) {
 	egressRuleIPv4ID := uuid.New().String()
 	egressRuleIPv6ID := uuid.New().String()
 
-	svc.activeDB().Exec(c.Request.Context(), `
+	_, _ = svc.activeDB().Exec(c.Request.Context(), `
 		INSERT INTO security_group_rules (id, security_group_id, direction, ethertype, protocol, port_range_min, port_range_max, remote_ip_prefix, remote_group_id, created_at)
 		VALUES ($1, $2, 'egress', 'IPv4', NULL, NULL, NULL, NULL, NULL, $3)
 	`, egressRuleIPv4ID, sgID, now)
 
-	svc.activeDB().Exec(c.Request.Context(), `
+	_, _ = svc.activeDB().Exec(c.Request.Context(), `
 		INSERT INTO security_group_rules (id, security_group_id, direction, ethertype, protocol, port_range_min, port_range_max, remote_ip_prefix, remote_group_id, created_at)
 		VALUES ($1, $2, 'egress', 'IPv6', NULL, NULL, NULL, NULL, NULL, $3)
 	`, egressRuleIPv6ID, sgID, now)

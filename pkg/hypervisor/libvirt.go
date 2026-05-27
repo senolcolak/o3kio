@@ -394,7 +394,7 @@ func (m *VMManager) getVMStateReal(ctx context.Context, vmUUID string) (string, 
 	}
 
 	// Convert libvirt state to OpenStack state
-	stateStr := libvirtStateToString(int32(state))
+	stateStr := libvirtStateToString(state)
 	return stateStr, int(state), nil
 }
 

@@ -43,8 +43,6 @@ type Service struct {
 	// (host:port) used when emitting libvirt XML for RBD-backed disks.
 	// Empty falls back to 127.0.0.1:6789 inside the XML template.
 	cephMonitors []string
-	// quotaMu serialises quota check + INSERT per project to prevent TOCTOU races.
-	quotaMu sync.Map // map[projectID]*sync.Mutex
 }
 
 const (
@@ -89,13 +87,6 @@ func (svc *Service) activeDB() database.DBIF {
 		return svc.db
 	}
 	return database.DB
-}
-
-// projectQuotaMu returns (or lazily creates) the per-project mutex used to
-// serialise quota check + resource INSERT and prevent TOCTOU races.
-func (svc *Service) projectQuotaMu(projectID string) *sync.Mutex {
-	v, _ := svc.quotaMu.LoadOrStore(projectID, &sync.Mutex{})
-	return v.(*sync.Mutex)
 }
 
 // Shutdown signals all background goroutines to stop and waits for them.
@@ -462,7 +453,9 @@ func (svc *Service) CreateServer(c *gin.Context) {
 		if err != nil {
 			log.Error().Err(err).Str("task_id", taskID).Msg("Failed to insert task")
 		} else {
-			svc.activeDB().Exec(c.Request.Context(), "SELECT pg_notify('new_task', $1)", taskID)
+			if _, nerr := svc.activeDB().Exec(c.Request.Context(), "SELECT pg_notify('new_task', $1)", taskID); nerr != nil {
+				log.Debug().Err(nerr).Str("task_id", taskID).Msg("pg_notify failed (non-fatal)")
+			}
 		}
 		// Skip the sync VM creation goroutine — worker handles it
 	} else if svc.vmManager != nil {
@@ -474,9 +467,11 @@ func (svc *Service) CreateServer(c *gin.Context) {
 			defer func() {
 				if r := recover(); r != nil {
 					log.Error().Interface("panic", r).Str("instance_id", instanceID).Msg("PANIC in VM creation goroutine")
-					svc.activeDB().Exec(context.Background(),
+					if _, derr := svc.activeDB().Exec(context.Background(),
 						"UPDATE instances SET status = $1, updated_at = $2 WHERE id = $3",
-						"ERROR", time.Now(), instanceID)
+						"ERROR", time.Now(), instanceID); derr != nil {
+						log.Error().Err(derr).Str("instance_id", instanceID).Msg("failed to mark instance ERROR after panic")
+					}
 				}
 			}()
 
@@ -499,10 +494,12 @@ func (svc *Service) CreateServer(c *gin.Context) {
 							Str("network_id", network.UUID).
 							Msg("Failed to allocate port from Neutron")
 						// Fail VM creation: a VM without network is unusable
-						svc.activeDB().Exec(ctx,
+						if _, derr := svc.activeDB().Exec(ctx,
 							"UPDATE instances SET status = 'ERROR', fault_message = $1, updated_at = NOW() WHERE id = $2",
 							fmt.Sprintf("Failed to allocate port for network %s: %v", network.UUID, err), instanceID,
-						)
+						); derr != nil {
+							log.Error().Err(derr).Str("instance_id", instanceID).Msg("failed to mark instance ERROR after port allocation failure")
+						}
 						return
 					}
 
@@ -588,9 +585,11 @@ func (svc *Service) CreateServer(c *gin.Context) {
 				// Update instance status to ERROR
 				dbCtx, dbCancel := context.WithTimeout(svc.ctx, 5*time.Second)
 				defer dbCancel()
-				svc.activeDB().Exec(dbCtx,
+				if _, derr := svc.activeDB().Exec(dbCtx,
 					"UPDATE instances SET status = $1, updated_at = $2 WHERE id = $3",
-					"ERROR", time.Now(), instanceID)
+					"ERROR", time.Now(), instanceID); derr != nil {
+					log.Error().Err(derr).Str("instance_id", instanceID).Msg("failed to mark instance ERROR after libvirt failure")
+				}
 				return
 			}
 
@@ -605,21 +604,25 @@ func (svc *Service) CreateServer(c *gin.Context) {
 			// Update instance with libvirt UUID
 			dbCtx, dbCancel := context.WithTimeout(svc.ctx, 5*time.Second)
 			defer dbCancel()
-			svc.activeDB().Exec(dbCtx, `
+			if _, derr := svc.activeDB().Exec(dbCtx, `
 				UPDATE instances
 				SET status = $1, power_state = $2, libvirt_domain_id = $3, launched_at = $4, updated_at = $5
 				WHERE id = $6
-			`, "ACTIVE", 1, libvirtUUID, time.Now(), time.Now(), instanceID)
+			`, "ACTIVE", 1, libvirtUUID, time.Now(), time.Now(), instanceID); derr != nil {
+				log.Error().Err(derr).Str("instance_id", instanceID).Msg("failed to update instance to ACTIVE after VM creation")
+			}
 		}()
 	} else {
 		logger.Debug().Msg("Stub mode: skipping libvirt VM creation")
 		// In pure stub mode, auto-transition to ACTIVE after a brief delay
 		go func() {
 			time.Sleep(100 * time.Millisecond)
-			svc.activeDB().Exec(context.Background(),
+			if _, derr := svc.activeDB().Exec(context.Background(),
 				"UPDATE instances SET status = 'ACTIVE', power_state = 1, task_state = '', updated_at = $1 WHERE id = $2 AND status = 'BUILD'",
 				time.Now(), instanceID,
-			)
+			); derr != nil {
+				log.Error().Err(derr).Str("instance_id", instanceID).Msg("failed to transition stub instance to ACTIVE")
+			}
 		}()
 	}
 
@@ -1525,9 +1528,11 @@ func (svc *Service) DeleteServer(c *gin.Context) {
 	}
 
 	// Delete orphaned ports for this instance
-	svc.activeDB().Exec(c.Request.Context(),
+	if _, derr := svc.activeDB().Exec(c.Request.Context(),
 		"DELETE FROM ports WHERE device_id = $1 AND project_id = $2",
-		instanceID, projectID)
+		instanceID, projectID); derr != nil {
+		log.Warn().Err(derr).Str("instance_id", instanceID).Msg("failed to delete orphaned ports during instance deletion")
+	}
 
 	// Delete from database (support lookup by ID or name)
 	queryStart = time.Now()
@@ -1711,9 +1716,11 @@ func (svc *Service) ServerAction(c *gin.Context) {
 		// Handle actions in stub mode by updating database only
 		if _, ok := req["reboot"]; ok {
 			// Just mark as rebooting then active
-			svc.activeDB().Exec(c.Request.Context(),
+			if _, derr := svc.activeDB().Exec(c.Request.Context(),
 				"UPDATE instances SET status = $1, updated_at = $2 WHERE (id::text = $3 OR name = $3) AND project_id = $4",
-				"REBOOT", time.Now(), instanceID, projectID)
+				"REBOOT", time.Now(), instanceID, projectID); derr != nil {
+				log.Warn().Err(derr).Str("instance_id", instanceID).Msg("failed to set instance to REBOOT (stub)")
+			}
 			svc.wg.Add(1)
 			go func() {
 				defer svc.wg.Done()
@@ -1724,9 +1731,11 @@ func (svc *Service) ServerAction(c *gin.Context) {
 				}
 				ctx, cancel := context.WithTimeout(svc.ctx, 5*time.Second)
 				defer cancel()
-				svc.activeDB().Exec(ctx,
+				if _, derr := svc.activeDB().Exec(ctx,
 					"UPDATE instances SET status = $1, updated_at = $2 WHERE (id::text = $3 OR name = $3) AND project_id = $4",
-					"ACTIVE", time.Now(), instanceID, projectID)
+					"ACTIVE", time.Now(), instanceID, projectID); derr != nil {
+					log.Warn().Err(derr).Str("instance_id", instanceID).Msg("failed to restore instance to ACTIVE after reboot (stub)")
+				}
 			}()
 		} else if _, ok := req["os-stop"]; ok {
 			if instanceStatus != "ACTIVE" {
@@ -1738,9 +1747,11 @@ func (svc *Service) ServerAction(c *gin.Context) {
 				})
 				return
 			}
-			svc.activeDB().Exec(c.Request.Context(),
+			if _, derr := svc.activeDB().Exec(c.Request.Context(),
 				"UPDATE instances SET status = $1, power_state = $2, updated_at = $3 WHERE (id::text = $4 OR name = $4) AND project_id = $5",
-				"SHUTOFF", 4, time.Now(), instanceID, projectID)
+				"SHUTOFF", 4, time.Now(), instanceID, projectID); derr != nil {
+				log.Warn().Err(derr).Str("instance_id", instanceID).Msg("failed to set instance SHUTOFF (stub)")
+			}
 		} else if _, ok := req["os-start"]; ok {
 			if instanceStatus != "SHUTOFF" {
 				c.JSON(http.StatusConflict, gin.H{
@@ -1751,9 +1762,11 @@ func (svc *Service) ServerAction(c *gin.Context) {
 				})
 				return
 			}
-			svc.activeDB().Exec(c.Request.Context(),
+			if _, derr := svc.activeDB().Exec(c.Request.Context(),
 				"UPDATE instances SET status = $1, power_state = $2, updated_at = $3 WHERE (id::text = $4 OR name = $4) AND project_id = $5",
-				"ACTIVE", 1, time.Now(), instanceID, projectID)
+				"ACTIVE", 1, time.Now(), instanceID, projectID); derr != nil {
+				log.Warn().Err(derr).Str("instance_id", instanceID).Msg("failed to set instance ACTIVE (stub)")
+			}
 		} else {
 			common.SendError(c, common.NewBadRequestError("unknown action"))
 			return
@@ -1859,7 +1872,6 @@ func (svc *Service) ListFlavors(c *gin.Context) {
 		if v, err := strconv.Atoi(limitStr); err == nil && v > 0 {
 			query += fmt.Sprintf(" LIMIT $%d", argIdx)
 			args = append(args, v)
-			argIdx++
 		}
 	}
 
@@ -2128,9 +2140,11 @@ func (svc *Service) ListHypervisorsDetail(c *gin.Context) {
 func (svc *Service) GetHypervisorStatistics(c *gin.Context) {
 	// Count running instances
 	var runningVMs int
-	svc.activeDB().QueryRow(c.Request.Context(),
+	if err := svc.activeDB().QueryRow(c.Request.Context(),
 		"SELECT COUNT(*) FROM instances WHERE power_state = 1",
-	).Scan(&runningVMs)
+	).Scan(&runningVMs); err != nil {
+		log.Debug().Err(err).Str("operation", "hypervisor_stats_running").Msg("failed to count running VMs")
+	}
 
 	// Return aggregated stats
 	c.JSON(200, gin.H{
@@ -2587,9 +2601,11 @@ func (svc *Service) RebuildInstanceAction(c *gin.Context, rebuildData interface{
 			}
 			ctx, cancel := context.WithTimeout(svc.ctx, 5*time.Second)
 			defer cancel()
-			svc.activeDB().Exec(ctx,
+			if _, derr := svc.activeDB().Exec(ctx,
 				"UPDATE instances SET status = $1, updated_at = $2 WHERE id = $3 AND project_id = $4",
-				"ACTIVE", time.Now(), instanceID, projectID)
+				"ACTIVE", time.Now(), instanceID, projectID); derr != nil {
+				log.Warn().Err(derr).Str("instance_id", instanceID).Msg("failed to restore instance to ACTIVE after rebuild (stub)")
+			}
 		}()
 	}
 
@@ -2696,10 +2712,12 @@ func (svc *Service) CreateImageAction(c *gin.Context, createImageData interface{
 
 	// Store metadata if provided
 	for key, value := range metadata {
-		svc.activeDB().Exec(c.Request.Context(), `
+		if _, derr := svc.activeDB().Exec(c.Request.Context(), `
 			INSERT INTO image_properties (image_id, name, value)
 			VALUES ($1, $2, $3)
-		`, imageID, key, value)
+		`, imageID, key, value); derr != nil {
+			log.Warn().Err(derr).Str("image_id", imageID).Str("property", key).Msg("failed to insert image property")
+		}
 	}
 
 	// Return Location header with image URL
