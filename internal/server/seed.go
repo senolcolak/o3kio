@@ -30,6 +30,12 @@ func SeedDefaults(ctx context.Context, db database.DBIF, adminPassword string) e
 		projectID    = "00000000-0000-0000-0000-000000000002"
 		adminRoleID  = "00000000-0000-0000-0000-000000000003"
 		memberRoleID = "00000000-0000-0000-0000-000000000004"
+		// defaultDomainID matches the row seeded by migration
+		// 009_seed_default_domain.up.sql. Keystone auth filters user and
+		// project lookups by domain_id, so the seeded admin user and
+		// default project must belong to this domain or "openstack token
+		// issue" returns 401 invalid credentials.
+		defaultDomainID = "00000000-0000-0000-0000-000000000100"
 	)
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(adminPassword), bcrypt.DefaultCost)
@@ -43,17 +49,18 @@ func SeedDefaults(ctx context.Context, db database.DBIF, adminPassword string) e
 	}
 
 	stmts := []stmt{
-		// Default project
+		// Default project — must belong to the Default domain so Keystone
+		// auth's project lookup (filtered by domain_id) finds it.
 		{
-			`INSERT INTO projects (id, name, description, enabled)
-			 VALUES ($1, $2, $3, $4) ON CONFLICT (name) DO NOTHING`,
-			[]any{projectID, "default", "Default project", true},
+			`INSERT INTO projects (id, name, description, enabled, domain_id)
+			 VALUES ($1, $2, $3, $4, $5) ON CONFLICT (name) DO NOTHING`,
+			[]any{projectID, "default", "Default project", true, defaultDomainID},
 		},
-		// Admin user
+		// Admin user — must belong to the Default domain for the same reason.
 		{
-			`INSERT INTO users (id, name, password_hash, enabled)
-			 VALUES ($1, $2, $3, $4) ON CONFLICT (name) DO NOTHING`,
-			[]any{adminUserID, "admin", string(hash), true},
+			`INSERT INTO users (id, name, password_hash, enabled, domain_id)
+			 VALUES ($1, $2, $3, $4, $5) ON CONFLICT (name) DO NOTHING`,
+			[]any{adminUserID, "admin", string(hash), true, defaultDomainID},
 		},
 		// Roles
 		{
