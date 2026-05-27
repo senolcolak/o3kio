@@ -1,12 +1,22 @@
 # O3K — Lightweight OpenStack in a Single Binary
 
-O3K replaces the entire OpenStack control plane with one Go binary. Like K3s did for Kubernetes — same API surface, dramatically less complexity.
+O3K is a single Go binary that exposes the OpenStack control-plane HTTP
+APIs (Keystone, Nova, Neutron, Cinder, Glance, Placement, Metadata).
+The goal is K3s-style packaging for OpenStack: one process, no message
+queue, no separate scheduler / conductor daemons, SQLite by default.
 
 ```
 Single binary → 7 services → 342 endpoint routes → SQLite default (PostgreSQL optional)
 ```
 
-> **Status: Alpha.** Basic CRUD works for all services. Query filters, response schema completeness, state machine validation, and production safety features are still in progress. See [Project Status](#project-status) for honest details.
+> **Status: Alpha. Not production-ready.** Basic CRUD works for all
+> services and the binary boots zero-config. API fidelity against real
+> OpenStack clients is roughly 70-80% per service: query filters,
+> response-schema fields, and state-machine validation are all
+> incomplete. Real-mode hypervisor, networking, and storage code paths
+> exist and have been exercised on developer machines but have not been
+> hardened or audited. See [Project Status](#project-status) for the
+> honest gap list and [SECURITY.md](SECURITY.md) for the threat model.
 
 ## Quick Start
 
@@ -16,12 +26,14 @@ Single binary → 7 services → 342 endpoint routes → SQLite default (Postgre
 # Download and run — no config required
 ./o3k
 
-# Starts with:
-# - SQLite database (~/.local/share/o3k/db/state.db)
-# - All services in stub mode
-# - Auto-generated JWT secret + agent token
-# - TLS on gRPC tunnel
-# - Health/metrics/tracing enabled
+# On first start, O3K:
+# - creates a SQLite database at ~/.local/share/o3k/db/state.db
+# - runs all 74 migrations (embedded in the binary)
+# - starts every service in stub mode
+# - generates a JWT secret and an admin password, and prints the
+#   admin password ONCE to stderr (capture it now or set
+#   O3K_ADMIN_PASSWORD beforehand)
+# - exposes /healthz, /readyz, and /metrics on each service
 ```
 
 ### With PostgreSQL
@@ -58,12 +70,15 @@ To migrate from SQLite to PostgreSQL:
 cd deployments/
 docker compose -f docker-compose-horizon.yml up -d
 
-# Access Horizon: http://localhost/dashboard
-# Credentials: admin / secret (domain: Default)
+# Horizon: http://localhost/dashboard
+# The first time O3K starts it generates a random admin password and
+# prints it to the container's stderr. Grab it with:
+#   docker compose -f docker-compose-horizon.yml logs o3k | grep -A1 'admin password'
+# To pin a password instead, set O3K_ADMIN_PASSWORD in the environment.
 
-# Or use the CLI:
+# CLI usage (after recovering the printed password):
 export OS_AUTH_URL=http://localhost:35357/v3
-export OS_USERNAME=admin OS_PASSWORD=secret
+export OS_USERNAME=admin OS_PASSWORD='<the printed password>'
 export OS_PROJECT_NAME=default OS_USER_DOMAIN_NAME=Default OS_PROJECT_DOMAIN_NAME=Default
 openstack token issue
 openstack server create --flavor m1.small --image cirros --network my-net test-vm
@@ -91,16 +106,21 @@ No RabbitMQ. No Conductor. No Scheduler daemons. One process, one database.
 
 ### Operating Modes
 
-| Component | Development | Production |
-|-----------|------------|------------|
-| Compute | `stub` (fake VMs) | `real` (libvirt/KVM) |
-| Networking | `stub` (no netns) | `iptables` or `ebpf` |
-| Storage | `stub` or `local` | `rbd` (Ceph), `s3` (MinIO/AWS) |
-| Overlay | disabled | VXLAN (multi-node) |
+| Component | Stub (default) | Real |
+|-----------|----------------|------|
+| Compute | fake VMs in-process | libvirt/KVM (Linux only, exercised on developer machines, not production-hardened) |
+| Networking | no namespaces or iptables | iptables or eBPF (Linux + `CAP_NET_ADMIN`) |
+| Storage | in-memory or local files | RBD (Ceph) or S3 (MinIO/AWS); hybrid modes supported |
+| Overlay | disabled | VXLAN multi-node (experimental) |
 
 ## Project Status
 
-**Overall: 6/10** (up from 3.5/10 at v0.6.0 review start)
+External readiness audits have scored O3K around 4.5/10 (45%) against
+production OpenStack workloads. Phase 1 trust-cleanup work has lifted
+that toward roughly 6/10 for evaluation use, but production targets
+(stable real-mode operation under load, full RBAC, contract-test
+parity with Devstack) remain ahead. We track concrete gaps below
+rather than picking a single number.
 
 ### What Works Today
 
@@ -135,7 +155,8 @@ No RabbitMQ. No Conductor. No Scheduler daemons. One process, one database.
 
 ### API Surface
 
-342 endpoint routes registered. Fidelity after v0.7.1 production readiness work:
+342 endpoint routes registered. Estimated fidelity per service against
+real OpenStack clients:
 
 | Service | Routes | Estimated Fidelity | Notes |
 |---------|--------|-------------------|-------|
@@ -145,7 +166,10 @@ No RabbitMQ. No Conductor. No Scheduler daemons. One process, one database.
 | Cinder (Block Storage) | 73 | ~72% | AZs added; race conditions fixed |
 | Glance (Image) | 38 | ~70% | Core workflow solid; metadefs advanced missing |
 
-"Fidelity" means: would a real OpenStack client (gophercloud, Terraform, Horizon) get correct behavior without workarounds?
+"Fidelity" here means: what fraction of real-OpenStack behaviour does
+a given client (gophercloud, Terraform, Horizon) get correct without
+workarounds? These numbers are internal estimates, not measured pass
+rates against an upstream conformance suite.
 
 ### Client Compatibility
 
@@ -159,9 +183,10 @@ No RabbitMQ. No Conductor. No Scheduler daemons. One process, one database.
 ### Contract Tests
 
 ```
-Unit tests: 16/16 packages passing
-Contract tests: Require running server (not CI-integrated yet)
+Unit tests: blocking in CI
+Contract tests: blocking in CI (require Docker Compose stack; pass-rate gate at 85%)
 Integration tests: 20+ bash scripts (manual)
+Vulnerability scan: govulncheck blocking in CI
 ```
 
 ## Configuration
@@ -238,14 +263,22 @@ docs/                 Documentation
 
 ## Default Credentials
 
-| Field | Value |
-|-------|-------|
-| User | `admin` |
-| Password | `secret` |
-| Project | `default` |
-| Domain | `Default` |
+The seed migration creates an `admin` user in the `default` project /
+`Default` domain. The password is **not** hard-coded:
 
-**Change `jwt_secret` and `admin_password` in any non-local deployment.**
+| Source | Behaviour |
+|--------|-----------|
+| Zero-config (`./o3k`) | Bootstrap generates a random password and prints it once to stderr |
+| `O3K_ADMIN_PASSWORD` env var set | That value is used verbatim |
+| Neither | A random password is generated and printed once to stderr; capture it before it scrolls |
+
+In any deployment beyond local development you must:
+
+- set a strong `O3K_ADMIN_PASSWORD` (or rotate the generated one
+  immediately via `openstack user set`)
+- set `O3K_JWT_SECRET` to a unique value of at least 32 bytes
+- terminate TLS in front of O3K
+- review [SECURITY.md](SECURITY.md) for the full threat model
 
 ## Roadmap
 
