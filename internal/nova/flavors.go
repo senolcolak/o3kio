@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/cobaltcore-dev/o3k/internal/common"
+	"github.com/cobaltcore-dev/o3k/pkg/scs"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -64,6 +65,16 @@ func (svc *Service) CreateFlavor(c *gin.Context) {
 		return
 	}
 
+	// SCS-0100-v3: validate flavor names that claim to be SCS-shaped. Names
+	// that don't start with `SCS-` pass through unchanged. The parsed name
+	// is reused below to mirror scs:* extra-specs into flavor_extra_specs,
+	// matching the shape produced by the SCS-0103 seed migration.
+	parsedSCS, scsErr := scs.ParseFlavorNameOrPassthrough(req.Flavor.Name)
+	if scsErr != nil {
+		common.SendError(c, common.NewBadRequestError("invalid SCS-0100 flavor name: "+scsErr.Error()))
+		return
+	}
+
 	flavorID := uuid.New().String()
 	ctx := c.Request.Context()
 
@@ -87,6 +98,24 @@ func (svc *Service) CreateFlavor(c *gin.Context) {
 		log.Error().Err(err).Str("operation", "create_flavor").Msg("database error")
 		common.SendError(c, common.NewInternalServerError("failed to create flavor"))
 		return
+	}
+
+	// Mirror SCS-0100 components into flavor_extra_specs so an SCS-aware
+	// client sees `scs:cpu-type` etc. regardless of how the flavor was
+	// created. Best-effort: a failure here doesn't unwind the flavor row,
+	// but is logged so an operator can spot it.
+	if parsedSCS != nil {
+		for k, v := range parsedSCS.ExtraSpecs() {
+			if _, specErr := svc.activeDB().Exec(ctx,
+				`INSERT INTO flavor_extra_specs (flavor_id, key, value)
+				 VALUES ($1, $2, $3)
+				 ON CONFLICT (flavor_id, key) DO UPDATE SET value = EXCLUDED.value`,
+				flavorID, k, v,
+			); specErr != nil {
+				log.Warn().Err(specErr).Str("flavor_id", flavorID).Str("key", k).
+					Msg("failed to insert SCS extra-spec")
+			}
+		}
 	}
 
 	// Invalidate flavors list cache

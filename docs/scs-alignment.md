@@ -23,7 +23,7 @@ Behaviour parity is incremental and tracked per spec below.
 
 | SCS standard | Domain | O3K status |
 |--------------|--------|------------|
-| [SCS-0100-v3](https://docs.scs.community/standards/scs-0100-v3-flavor-naming) — Flavor Naming | Compute | 🟡 names land via SCS-0103 seed; parser/validator not yet shipped |
+| [SCS-0100-v3](https://docs.scs.community/standards/scs-0100-v3-flavor-naming) — Flavor Naming | Compute | ✅ parser/validator shipped (`pkg/scs`); SCS-* names validated at create time, mirrored into `scs:*` extra-specs |
 | [SCS-0103-v1](https://docs.scs.community/standards/scs-0103-v1-standard-flavors) — Mandatory & Recommended Flavors | Compute | ✅ 15 mandatory flavors seeded (migration 075) |
 | [SCS-0102](https://docs.scs.community/standards/scs-0102-v1-image-metadata) — Image Metadata | Glance | ⬜ Phase 3 follow-up |
 | [SCS-0104](https://docs.scs.community/standards/scs-0104-v1-standard-images) — Standard Images | Glance | ⬜ Phase 3 follow-up |
@@ -50,10 +50,35 @@ GiB → MB by multiplying by 1024. Flavors with no pre-attached root disk are
 seeded with `disk_gb = 0`; clients are expected to attach a Cinder volume at
 server-create time.
 
-A separate validator/parser library is **not** yet shipped — names are
-treated as opaque strings. This is fine for SCS-0103 conformance but blocks
-generic SCS-0100 conformance for non-mandatory flavors. Tracked in the
-audit doc.
+A separate validator/parser library lives in `pkg/scs`. Nova's
+`CreateFlavor` handler runs every flavor name through it: names that don't
+start with `SCS-` pass through unchanged (operators are free to define
+their own naming scheme), and names that do are parsed against the
+SCS-0100-v3 grammar — anything malformed is rejected with HTTP 400 so a
+typo doesn't silently land as a non-conformant flavor. On a successful
+parse, the parsed components (`scs:cpu-type`, and `scs:disk0-type` when a
+root disk is present) are mirrored into `flavor_extra_specs`, matching
+the shape produced by the SCS-0103 seed migration so an SCS-aware client
+sees the same keys regardless of how the flavor was created.
+
+The parser covers the full SCS-0100-v3 mandatory prefix (vCPU count and
+type letter `C`/`T`/`V`/`L` with optional `i` insecure suffix, RAM with
+optional `u` no-ECC and `o` oversubscribed suffixes in that order, and
+the optional disk segment with `M×N` multiplier and `n`/`h`/`s`/`p`
+type letter) plus the hypervisor extension (`_kvm`, `_xen`, `_chy`,
+`_vmw`, `_hyv`, `_bms`). CPU-arch, GPU, and infiniband extensions parse
+without error but their components aren't surfaced yet.
+
+### Conformance check
+
+```bash
+openstack flavor create --ram 4096 --vcpus 2 --disk 20 SCS-2V-4-20s
+openstack flavor show SCS-2V-4-20s -f json | jq '.properties'
+# Expected: {"scs:cpu-type": "shared-core", "scs:disk0-type": "ssd"}
+
+openstack flavor create --ram 4096 --vcpus 2 --disk 0 SCS-bogus
+# Expected: HTTP 400 — invalid SCS-0100 flavor name: ...
+```
 
 ## SCS-0103-v1 — Mandatory & Recommended Flavors
 

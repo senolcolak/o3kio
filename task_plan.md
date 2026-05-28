@@ -175,4 +175,55 @@ Close the gaps identified in the kimi readiness audit to bring O3K from 45% to 6
 - (none yet)
 
 ## Status
-**Currently in Phase 0** — Plan created, awaiting branch creation and Phase 1 implementation
+**Currently in Phase 3 — SCS Alignment**
+
+Slice progress:
+- ✅ Slice 1: SCS-0103 mandatory flavors (PR #24, merged at 109160c)
+- ✅ Slice 2: SCS-0102 image metadata (PR #25, open)
+- ✅ Slice 3: SCS-0100-v3 flavor name validator/parser (this PR)
+- ⬜ Slice 4: SCS-0104 standard images
+- ⬜ Slice 5: SCS-0110 volume types
+- ⬜ Slice 6: Audit logging middleware
+- ⬜ Slice 7: SPEC-002 federated identity
+
+---
+
+## Slice 3 — SCS-0100-v3 flavor name validator/parser
+
+### Goal
+Ship a parser/validator for SCS-0100-v3 flavor names so any flavor whose name
+starts with `SCS-` is checked against the standard at create time, and the
+parsed components are available as extra-specs for SCS-aware clients.
+
+### Scope
+- New package `pkg/scs` with:
+  - `ParseFlavorName(name) (FlavorName, error)` — parse the mandatory prefix
+    `SCS-<vCPUs><cpu-type>-<RAM_GiB>[-<disk_GB><disk-type>]` plus optional
+    extension fields (hypervisor, accelerator, CPU brand, etc.).
+  - `Validate(name) error` — wrapper that returns nil for non-SCS names and
+    a descriptive error for malformed `SCS-*` names.
+- Wire into Nova's `CreateFlavor` handler: if `name` starts with `SCS-`,
+  validate; on success, mirror parsed components into `flavor_extra_specs`
+  rows (`scs:cpu-type`, `scs:disk0-type`, etc.) so behaviour matches the
+  Slice 1 seed.
+- Update `docs/scs-alignment.md`: flip SCS-0100 row from 🟡 to ✅, document
+  the validator behaviour and conformance check.
+
+### Out of scope
+- Cross-checking that vCPUs/RAM in the name match the numeric `vcpus`/`ram_mb`
+  fields (separate slice; the spec allows operators to define their own
+  flavor sizing).
+- Extension field semantics beyond parsing (e.g. validating that an
+  accelerator suffix corresponds to a real PCI device).
+
+### Acceptance
+- `openstack flavor create SCS-2V-4` succeeds; `flavor show` reflects
+  `scs:cpu-type=shared-core` in extra specs.
+- `openstack flavor create SCS-bogus` returns 400 with a parser error.
+- Non-SCS names (e.g. `m1.tiny`) are unaffected.
+- Unit tests cover happy path, every cpu-type letter, every disk-type
+  letter, datasets from SCS-0103, and a representative set of malformed
+  inputs.
+
+## Errors Encountered (Slice 3)
+- (None yet.)
