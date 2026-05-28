@@ -26,7 +26,7 @@ Behaviour parity is incremental and tracked per spec below.
 | [SCS-0100-v3](https://docs.scs.community/standards/scs-0100-v3-flavor-naming) — Flavor Naming | Compute | 🟡 names land via SCS-0103 seed; parser/validator not yet shipped |
 | [SCS-0103-v1](https://docs.scs.community/standards/scs-0103-v1-standard-flavors) — Mandatory & Recommended Flavors | Compute | ✅ 15 mandatory flavors seeded (migration 075) |
 | [SCS-0102](https://docs.scs.community/standards/scs-0102-v1-image-metadata) — Image Metadata | Glance | ⬜ Phase 3 follow-up |
-| [SCS-0104](https://docs.scs.community/standards/scs-0104-v1-standard-images) — Standard Images | Glance | ⬜ Phase 3 follow-up |
+| [SCS-0104](https://docs.scs.community/standards/scs-0104-v1-standard-images) — Standard Images | Glance | ✅ manifest embedded; image-source validator gates Glance create |
 | SCS-0110 — Volume Types | Cinder | ⬜ Phase 3 follow-up |
 | SPEC-002 — Federated Identity (OIDC/OAuth2/LDAP) | Keystone | ⬜ Phase 3 follow-up |
 | SCS audit logging | Keystone/all | ⬜ Phase 3 follow-up |
@@ -98,6 +98,64 @@ The legacy `m1.*` flavors (`m1.tiny` through `m1.xlarge`) remain seeded for
 backwards compatibility with existing tests and tutorials. They are not part
 of the SCS standard and operators may safely disable them by deleting the
 rows after first boot.
+
+## SCS-0104-v1 — Standard Images
+
+SCS-0104 is a *framework* spec, not a hard "you must ship these images" list.
+It declares a manifest of image names (or name regexes) plus the upstream URL
+prefixes those images must come from, and a status (mandatory / recommended /
+optional). The conformance question is twofold:
+
+1. **Source check** — every image present in the cloud whose name matches
+   an SCS-0104 entry must have its `image_source` property starting with one
+   of the declared upstream prefixes.
+2. **Mandatory check** — mandatory entries must be present.
+
+O3K does not seed these images itself. Multi-GB downloads are not appropriate
+for an alpha control plane, and the standard does not require the cloud to
+ship images — only that, *if* an operator publishes an image under a known
+SCS name, it has to come from a known upstream. That's the part we enforce.
+
+### Embedded manifest
+
+The canonical SCS-0104 manifest lives at `pkg/scs/scs_0104_images.yaml`,
+mirrored from upstream
+[`Tests/iaas/scs-0104-v1-images.yaml`](https://github.com/SovereignCloudStack/standards/blob/main/Tests/iaas/scs-0104-v1-images.yaml).
+It is embedded into the binary via `//go:embed` so the validator works
+without any out-of-band file.
+
+### Image-create gate
+
+`scs.ValidateImageSource(name, imageSource)` is wired into Glance's
+`CreateImage` handler:
+
+- Unknown image names pass through unchanged — operators stay free to
+  publish their own images under their own names.
+- A name that matches an SCS-0104 entry (exact `name` or `name_scheme`
+  regex) requires a non-empty `image_source` starting with one of the
+  declared prefixes.
+- On failure, the API returns 400 with an error that lists the allowed
+  prefixes, so the operator gets actionable feedback.
+
+```bash
+# Rejected: known SCS name, wrong source
+openstack image create "Ubuntu 22.04" \
+  --property image_source=https://example.org/my-cooked-ubuntu.img
+# 400 — image "Ubuntu 22.04" has image_source ... which does not match any
+# SCS-0104 prefix; allowed prefixes: [https://cloud-images.ubuntu.com/releases/jammy/ ...]
+
+# Accepted: known SCS name, jammy-prefixed source
+openstack image create "Ubuntu 22.04" \
+  --property image_source=https://cloud-images.ubuntu.com/releases/jammy/jammy-server-cloudimg-amd64.img
+```
+
+### Catalog conformance check
+
+`scs.ImageSpecs().CheckCatalog(catalog)` produces an operator-facing report
+over a Glance catalog snapshot: which mandatory entries are missing and
+which present entries have non-conformant sources. This is the building
+block for an `o3k scs check images` command (not yet shipped) and for
+matching the upstream `compute_scs_0104_*` conformance tests.
 
 ## Forward roadmap
 
