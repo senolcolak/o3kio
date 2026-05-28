@@ -25,7 +25,7 @@ Behaviour parity is incremental and tracked per spec below.
 |--------------|--------|------------|
 | [SCS-0100-v3](https://docs.scs.community/standards/scs-0100-v3-flavor-naming) — Flavor Naming | Compute | 🟡 names land via SCS-0103 seed; parser/validator not yet shipped |
 | [SCS-0103-v1](https://docs.scs.community/standards/scs-0103-v1-standard-flavors) — Mandatory & Recommended Flavors | Compute | ✅ 15 mandatory flavors seeded (migration 075) |
-| [SCS-0102](https://docs.scs.community/standards/scs-0102-v1-image-metadata) — Image Metadata | Glance | ⬜ Phase 3 follow-up |
+| [SCS-0102](https://docs.scs.community/standards/scs-0102-v1-image-metadata) — Image Metadata | Glance | ✅ properties accepted, validated, and round-tripped |
 | [SCS-0104](https://docs.scs.community/standards/scs-0104-v1-standard-images) — Standard Images | Glance | ⬜ Phase 3 follow-up |
 | SCS-0110 — Volume Types | Cinder | ⬜ Phase 3 follow-up |
 | SPEC-002 — Federated Identity (OIDC/OAuth2/LDAP) | Keystone | ⬜ Phase 3 follow-up |
@@ -84,6 +84,92 @@ These are seeded both by the SQL migration (PostgreSQL & SQLite) and by the
 in-code seed in `internal/server/seed.go` so that zero-config installs
 (`./o3k`) and docker-compose installs see the same flavor set.
 
+## SCS-0102-v1 — Image Metadata
+
+SCS-0102 defines a vocabulary of properties that an image carries so a
+client can decide *what* the image is, *how stale* it is, and *what
+hardware* it expects without booting it. O3K accepts these on `image
+create` / `image set` and round-trips them through `image show`.
+
+Properties land as **top-level fields** in the v2 wire format (matching
+how OpenStack Glance surfaces image properties — they are merged into the
+top-level resource, not nested under a `properties` key). Internally
+they live in the `images.properties` JSON column (JSONB on PostgreSQL,
+TEXT on SQLite).
+
+### Property coverage
+
+| Property | Type | Validation |
+|----------|------|-----------|
+| `architecture` | string | free-text (e.g. `x86_64`, `aarch64`) |
+| `hw_disk_bus` | string | free-text (`scsi`, `virtio`, `ide`, …) |
+| `hw_rng_model` | string | free-text |
+| `hw_scsi_model` | string | free-text |
+| `hw_video_ram` | number | numeric |
+| `hw_mem_encryption` | bool | `true`/`false` |
+| `hw_pmu` | bool | `true`/`false` |
+| `hw_vif_multiqueue_enabled` | bool | `true`/`false` |
+| `hypervisor_type` | string | free-text |
+| `os_distro` | string | free-text |
+| `os_version` | string | free-text |
+| `os_purpose` | enum | `generic` \| `minimal` \| `k8snode` \| `gpu` \| `network` \| `custom` |
+| `os_secure_boot` | bool | `true`/`false` |
+| `os_hash_algo` | enum | `sha256` \| `sha512` |
+| `os_hash_value` | string | free-text |
+| `image_build_date` | date | `YYYY-MM-DD` or `YYYY-MM-DD hh:mm[:ss]` |
+| `image_source` | string | free-text URL |
+| `image_description` | string | free-text URL |
+| `image_original_user` | string | free-text |
+| `patchlevel` | string | free-text |
+| `replace_frequency` | enum | `yearly` \| `quarterly` \| `monthly` \| `weekly` \| `daily` \| `critical_bug` \| `never` |
+| `provided_until` | date | `YYYY-MM-DD` \| `none` \| `notice` |
+| `maintained_until` | date | `YYYY-MM-DD` \| `none` \| `notice` |
+| `uuid_validity` | string | `YYYY-MM-DD` \| `last-N` \| `forever` \| `none` \| `notice` |
+| `hotfix_hours` | number | numeric |
+| `license_included` | bool | mutually exclusive with `license_required = true` |
+| `license_required` | bool | mutually exclusive with `license_included = true` |
+| `subscription_included` | bool | `true`/`false` |
+| `subscription_required` | bool | `true`/`false` |
+
+Unknown property names are accepted and stored verbatim — Glance is a
+metadata bag and SCS-aware clients may ship custom keys. Validation runs
+on create and on every `image set` patch; an invalid value rejects the
+whole request with `400 Bad Request`.
+
+### Conformance check
+
+```bash
+# Set SCS properties on create
+openstack image create my-ubuntu \
+    --disk-format qcow2 --container-format bare \
+    --property os_distro=ubuntu \
+    --property os_version=24.04 \
+    --property architecture=x86_64 \
+    --property hw_disk_bus=scsi \
+    --property replace_frequency=monthly \
+    --property provided_until=2029-04-30 \
+    --property uuid_validity=last-2
+
+# They surface as top-level fields, not nested under "properties"
+openstack image show my-ubuntu -f json | jq '{os_distro, replace_frequency, provided_until}'
+# Expected: {"os_distro":"ubuntu","replace_frequency":"monthly","provided_until":"2029-04-30"}
+
+# Patch is JSON Patch over /<key> (not /properties/<key>)
+openstack image set --property os_version=24.04.1 my-ubuntu
+openstack image show my-ubuntu -f value -c os_version
+# Expected: 24.04.1
+
+# Invalid enum value is rejected
+openstack image create bad --disk-format qcow2 --container-format bare \
+    --property replace_frequency=annually
+# Expected: 400 — replace_frequency must be one of yearly|quarterly|monthly|...
+```
+
+The mandatory-property *presence* check is deliberately not enforced at
+the API layer — federation policy decides which images may omit which
+properties. The validator only rejects values that violate the standard
+when supplied.
+
 ### Conformance check
 
 ```bash
@@ -104,11 +190,6 @@ rows after first boot.
 The following are queued in [`docs/kimi-analyse-for-completion.md`](kimi-analyse-for-completion.md)
 under Phase 3:
 
-- **SCS-0102 image metadata** — extend Glance to enforce the SCS image
-  metadata properties (`os_distro`, `os_version`, `architecture`,
-  `hw_disk_bus`, `hw_rng_model`, `hw_scsi_model`, `hypervisor_type`,
-  `image_build_date`, `image_original_user`, `image_source`,
-  `patchlevel`, `provided_until`, `replace_frequency`).
 - **SCS-0110 volume types** — define and seed default Cinder volume types
   with SCS extra-specs (`scs:availability-zone`, `scs:replication`).
 - **SPEC-002 federated identity** — wire Keystone to OIDC/OAuth2/LDAP

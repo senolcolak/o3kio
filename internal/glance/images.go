@@ -5,6 +5,7 @@ import (
 	"crypto/sha512"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -134,16 +135,58 @@ func (svc *Service) RegisterRoutes(r *gin.RouterGroup) {
 	r.DELETE("/cache/images/:id", svc.DeleteCachedImage)
 }
 
-// CreateImageRequest represents an image creation request
+// CreateImageRequest represents an image creation request.
+//
+// Glance v2 surfaces SCS-0102 image-metadata properties as top-level fields
+// in both requests and responses. The JSON binding here ignores any unknown
+// top-level keys; the SCS bag is collected separately by extractSCSProperties
+// from the raw request body.
 type CreateImageRequest struct {
-	Name            string   `json:"name"`
-	DiskFormat      string   `json:"disk_format"`
-	ContainerFormat string   `json:"container_format"`
-	Visibility      string   `json:"visibility"`
-	MinDisk         int      `json:"min_disk"`
-	MinRAM          int      `json:"min_ram"`
-	Protected       bool     `json:"protected"`
-	Tags            []string `json:"tags"`
+	Name            string         `json:"name"`
+	DiskFormat      string         `json:"disk_format"`
+	ContainerFormat string         `json:"container_format"`
+	Visibility      string         `json:"visibility"`
+	MinDisk         int            `json:"min_disk"`
+	MinRAM          int            `json:"min_ram"`
+	Protected       bool           `json:"protected"`
+	Tags            []string       `json:"tags"`
+	Properties      map[string]any `json:"-"`
+}
+
+// fixedImageFields is the set of top-level keys that Glance v2 treats as
+// first-class image attributes. Anything else in a create request body is
+// considered a property (SCS-0102 or otherwise) and goes into the
+// `properties` JSONB column verbatim.
+var fixedImageFields = map[string]struct{}{
+	"name": {}, "disk_format": {}, "container_format": {},
+	"visibility": {}, "min_disk": {}, "min_ram": {},
+	"protected": {}, "tags": {},
+	// Server-controlled fields a client may echo back.
+	"id": {}, "status": {}, "size": {}, "checksum": {},
+	"os_hash_algo": {}, "os_hash_value": {},
+	"created_at": {}, "updated_at": {},
+	"self": {}, "file": {}, "schema": {},
+	"owner": {}, "locations": {}, "virtual_size": {},
+}
+
+// extractSCSProperties returns the subset of body keys that are not in
+// fixedImageFields. This lets SCS-0102 properties (and any other custom
+// metadata) ride alongside the fixed Glance fields in the same request.
+func extractSCSProperties(body map[string]any) map[string]any {
+	if len(body) == 0 {
+		return nil
+	}
+	props := make(map[string]any, len(body))
+	for k, v := range body {
+		if _, fixed := fixedImageFields[k]; fixed {
+			continue
+		}
+		props[k] = v
+	}
+	if len(props) == 0 {
+		return nil
+	}
+	return props
 }
 
 // GetVersions returns all available API versions
@@ -188,6 +231,29 @@ func checksumOrEmpty(s sql.NullString) string {
 	return ""
 }
 
+// parseImageTime tolerates the variety of timestamp formats SQLite and
+// Postgres return for created_at/updated_at. SQLite stores TIMESTAMP as TEXT
+// using whichever layout the writer supplied (RFC3339 from time.Time, or the
+// "YYYY-MM-DD HH:MM:SS" form CURRENT_TIMESTAMP defaults to), and modernc.org's
+// driver does not auto-parse on read. Returns zero time on unparseable input.
+func parseImageTime(raw string) time.Time {
+	if raw == "" {
+		return time.Time{}
+	}
+	for _, layout := range []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02 15:04:05.999999999 -0700 MST",
+		"2006-01-02 15:04:05",
+		"2006-01-02T15:04:05",
+	} {
+		if t, err := time.Parse(layout, raw); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
+}
+
 // nullStringOrEmpty returns the string value or "" for a NullString.
 func nullStringOrEmpty(s sql.NullString) string {
 	if s.Valid {
@@ -198,11 +264,33 @@ func nullStringOrEmpty(s sql.NullString) string {
 
 // CreateImage creates a new image
 func (svc *Service) CreateImage(c *gin.Context) {
-	var req CreateImageRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	// Read the body once so we can extract both the fixed CreateImageRequest
+	// fields and the open-ended SCS property bag from the same payload.
+	bodyBytes, err := io.ReadAll(c.Request.Body)
+	if err != nil {
 		common.SendError(c, common.NewBadRequestError("invalid request body"))
 		return
 	}
+
+	var req CreateImageRequest
+	if err := json.Unmarshal(bodyBytes, &req); err != nil {
+		common.SendError(c, common.NewBadRequestError("invalid request body"))
+		return
+	}
+
+	var raw map[string]any
+	if len(bodyBytes) > 0 {
+		if err := json.Unmarshal(bodyBytes, &raw); err != nil {
+			common.SendError(c, common.NewBadRequestError("invalid request body"))
+			return
+		}
+	}
+	props := extractSCSProperties(raw)
+	if err := validateSCSProperties(props); err != nil {
+		common.SendError(c, common.NewBadRequestError(err.Error()))
+		return
+	}
+	req.Properties = props
 
 	projectID := c.GetString("project_id")
 	imageID := uuid.New().String()
@@ -223,12 +311,24 @@ func (svc *Service) CreateImage(c *gin.Context) {
 		containerFormat = req.ContainerFormat
 	}
 
+	// Serialise properties to JSON for the JSONB / TEXT column. Empty bag
+	// becomes "{}" so the column never holds NULL — keeps GIN index happy
+	// on Postgres and JSON parsing trivial on SQLite.
+	propsJSON := []byte("{}")
+	if len(req.Properties) > 0 {
+		propsJSON, err = json.Marshal(req.Properties)
+		if err != nil {
+			common.SendError(c, common.NewInternalServerError("failed to encode properties"))
+			return
+		}
+	}
+
 	// Insert into database
 	now := time.Now()
-	_, err := svc.activeDB().Exec(c.Request.Context(), `
-		INSERT INTO images (id, name, project_id, status, visibility, disk_format, container_format, min_disk_gb, min_ram_mb, protected, rbd_pool, rbd_image, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-	`, imageID, req.Name, sql.NullString{String: projectID, Valid: visibility == "private"}, "queued", visibility, diskFormat, containerFormat, req.MinDisk, req.MinRAM, req.Protected, svc.cephPool, "image-"+imageID, now, now)
+	_, err = svc.activeDB().Exec(c.Request.Context(), `
+		INSERT INTO images (id, name, project_id, status, visibility, disk_format, container_format, min_disk_gb, min_ram_mb, protected, rbd_pool, rbd_image, properties, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+	`, imageID, req.Name, sql.NullString{String: projectID, Valid: visibility == "private"}, "queued", visibility, diskFormat, containerFormat, req.MinDisk, req.MinRAM, req.Protected, svc.cephPool, "image-"+imageID, string(propsJSON), now, now)
 
 	if err != nil {
 		log.Error().Err(err).Str("operation", "create_image").Msg("failed to insert image into database")
@@ -244,7 +344,7 @@ func (svc *Service) CreateImage(c *gin.Context) {
 			imageID, tag)
 	}
 
-	c.JSON(http.StatusCreated, gin.H{
+	resp := gin.H{
 		"id":               imageID,
 		"name":             req.Name,
 		"status":           "queued",
@@ -260,7 +360,13 @@ func (svc *Service) CreateImage(c *gin.Context) {
 		"self":             fmt.Sprintf("/v2/images/%s", imageID),
 		"file":             fmt.Sprintf("/v2/images/%s/file", imageID),
 		"schema":           "/v2/schemas/image",
-	})
+	}
+	// SCS-0102 properties are surfaced as top-level fields, not nested under
+	// "properties" — that's how Glance v2 actually presents them.
+	for k, v := range req.Properties {
+		resp[k] = v
+	}
+	c.JSON(http.StatusCreated, resp)
 }
 
 // joinConditions joins SQL conditions with AND.
@@ -490,21 +596,32 @@ func (svc *Service) GetImage(c *gin.Context) {
 	var sizeBytes sql.NullInt64
 	var minDisk, minRAM int
 	var protected bool
-	var createdAt, updatedAt time.Time
+	// SQLite stores TIMESTAMP columns as TEXT and modernc.org/sqlite does not
+	// auto-parse them on read, so we scan into strings and convert below.
+	var createdAtRaw, updatedAtRaw string
 	var imageOwner string
+	var propertiesRaw sql.NullString
 
 	// Try by UUID first, then by name if UUID parsing fails
-	// Use CAST to handle non-UUID strings gracefully
+	// Use CAST to handle non-UUID strings gracefully.
+	// properties is JSONB on Postgres and TEXT on SQLite — both scan into a
+	// NullString once we strip the `::text` cast (pgx returns JSONB bytes
+	// that decode to a JSON string).
+	// Each $N appears exactly once: the SQLite adapter rewrites $N -> ? naively
+	// (no positional reuse), so we pass imageID and projectID twice rather than
+	// reuse $1 and $2.
 	err := svc.activeDB().QueryRow(ctx, `
-		SELECT id, name, status, visibility, size_bytes, disk_format, container_format, min_disk_gb, min_ram_mb, COALESCE(protected, false), checksum, os_hash_algo, os_hash_value, created_at, updated_at, COALESCE(project_id, '')
+		SELECT id, name, status, visibility, size_bytes, disk_format, container_format, min_disk_gb, min_ram_mb, COALESCE(protected, false), checksum, os_hash_algo, os_hash_value, properties, created_at, updated_at, COALESCE(project_id, '')
 		FROM images
-		WHERE (id::text = $1 OR name = $1) AND (
+		WHERE (id::text = $1 OR name = $2) AND (
 			visibility IN ('public', 'community') OR
-			project_id = $2 OR
-			EXISTS (SELECT 1 FROM image_members WHERE image_id = images.id AND member_id = $2 AND status = 'accepted')
+			project_id = $3 OR
+			EXISTS (SELECT 1 FROM image_members WHERE image_id = images.id AND member_id = $4 AND status = 'accepted')
 		)
 		LIMIT 1
-	`, imageID, projectID).Scan(&id, &name, &status, &visibility, &sizeBytes, &diskFormat, &containerFormat, &minDisk, &minRAM, &protected, &checksum, &osHashAlgo, &osHashValue, &createdAt, &updatedAt, &imageOwner)
+	`, imageID, imageID, projectID, projectID).Scan(&id, &name, &status, &visibility, &sizeBytes, &diskFormat, &containerFormat, &minDisk, &minRAM, &protected, &checksum, &osHashAlgo, &osHashValue, &propertiesRaw, &createdAtRaw, &updatedAtRaw, &imageOwner)
+	createdAt := parseImageTime(createdAtRaw)
+	updatedAt := parseImageTime(updatedAtRaw)
 
 	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("image"))
@@ -549,6 +666,22 @@ func (svc *Service) GetImage(c *gin.Context) {
 	} else {
 		image["os_hash_algo"] = nil
 		image["os_hash_value"] = nil
+	}
+
+	// Surface SCS-0102 (and other) properties as top-level fields.
+	// Glance v2 doesn't nest custom metadata under a "properties" key on the
+	// wire — it merges them into the image object alongside name/status/etc.
+	if propertiesRaw.Valid && propertiesRaw.String != "" && propertiesRaw.String != "{}" {
+		var props map[string]any
+		if err := json.Unmarshal([]byte(propertiesRaw.String), &props); err == nil {
+			for k, v := range props {
+				if _, fixed := fixedImageFields[k]; fixed {
+					// Don't let stored properties shadow fixed image attributes.
+					continue
+				}
+				image[k] = v
+			}
+		}
 	}
 
 	// Load tags
@@ -662,12 +795,15 @@ func (svc *Service) UpdateImage(c *gin.Context) {
 		return
 	}
 
-	// Check if image is protected
+	// Load current row: protected flag + properties bag. We need the bag in
+	// memory to apply patch ops on SCS-0102 properties; the column is JSONB
+	// on Postgres and TEXT on SQLite, but in both cases we treat it as JSON.
 	var protected bool
+	var propertiesRaw sql.NullString
 	err := svc.activeDB().QueryRow(c.Request.Context(),
-		"SELECT COALESCE(protected, false) FROM images WHERE id = $1 AND project_id = $2",
+		"SELECT COALESCE(protected, false), properties FROM images WHERE id = $1 AND project_id = $2",
 		imageID, projectID,
-	).Scan(&protected)
+	).Scan(&protected, &propertiesRaw)
 	if errors.Is(err, database.ErrNoRows) {
 		common.SendError(c, common.NewNotFoundError("image"))
 		return
@@ -676,6 +812,12 @@ func (svc *Service) UpdateImage(c *gin.Context) {
 		common.SendError(c, common.NewInternalServerError("failed to query image"))
 		return
 	}
+
+	props := map[string]any{}
+	if propertiesRaw.Valid && propertiesRaw.String != "" {
+		_ = json.Unmarshal([]byte(propertiesRaw.String), &props)
+	}
+
 	if protected {
 		// Only allow unprotecting the image (single replace of /protected to false)
 		allowUnprotect := len(updates) == 1 &&
@@ -688,7 +830,7 @@ func (svc *Service) UpdateImage(c *gin.Context) {
 		}
 	}
 
-	// Apply updates (simplified - only handles replace operations)
+	propsTouched := false
 	for _, update := range updates {
 		op, ok1 := update["op"].(string)
 		path, ok2 := update["path"].(string)
@@ -697,19 +839,66 @@ func (svc *Service) UpdateImage(c *gin.Context) {
 		}
 		value := update["value"]
 
-		if op == "replace" {
-			field, ok := allowedImageUpdateField(path)
-			if !ok {
+		// First-class column path (e.g. /name, /visibility): use the allowlist.
+		if field, ok := allowedImageUpdateField(path); ok {
+			if op != "replace" {
 				continue
 			}
-			// field is now a validated column name from the allowlist
 			query := fmt.Sprintf("UPDATE images SET %s = $1, updated_at = $2 WHERE id = $3 AND project_id = $4", field)
 			if _, err := svc.activeDB().Exec(c.Request.Context(), query, value, time.Now(), imageID, projectID); err != nil {
 				log.Error().Err(err).Str("field", field).Str("image_id", imageID).Msg("failed to update image field")
 				common.SendError(c, common.NewInternalServerError("failed to update image"))
 				return
 			}
+			continue
 		}
+
+		// Property path: anything else with a single leading slash and no
+		// further slashes is treated as a custom/SCS property mutation on
+		// the JSON bag. The Glance v2 wire format surfaces these as
+		// top-level fields, so the JSON Patch path is /<key>.
+		if len(path) < 2 || path[0] != '/' {
+			continue
+		}
+		key := path[1:]
+		if _, fixed := fixedImageFields[key]; fixed {
+			// Reserved keys can't be mutated as properties.
+			continue
+		}
+		switch op {
+		case "add", "replace":
+			props[key] = value
+			propsTouched = true
+		case "remove":
+			delete(props, key)
+			propsTouched = true
+		}
+	}
+
+	if propsTouched {
+		if err := validateSCSProperties(props); err != nil {
+			common.SendError(c, common.NewBadRequestError(err.Error()))
+			return
+		}
+		blob, err := json.Marshal(props)
+		if err != nil {
+			common.SendError(c, common.NewInternalServerError("failed to encode properties"))
+			return
+		}
+		if _, err := svc.activeDB().Exec(c.Request.Context(),
+			"UPDATE images SET properties = $1, updated_at = $2 WHERE id = $3 AND project_id = $4",
+			string(blob), time.Now(), imageID, projectID,
+		); err != nil {
+			log.Error().Err(err).Str("image_id", imageID).Msg("failed to update image properties")
+			common.SendError(c, common.NewInternalServerError("failed to update image properties"))
+			return
+		}
+	}
+
+	// Invalidate cache so GetImage re-reads the row we just mutated.
+	if svc.cache != nil {
+		_ = svc.cache.Delete(c.Request.Context(), "image:"+projectID+":"+imageID)
+		_ = svc.cache.DeletePattern(c.Request.Context(), "images:*")
 	}
 
 	// Return updated image
