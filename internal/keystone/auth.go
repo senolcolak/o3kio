@@ -50,6 +50,7 @@ type AuthService struct {
 	cache         *cache.Cache
 	db            database.DBIF
 	revokedTokens sync.Map // token hash -> expiry time
+	federation    *FederationRegistry
 }
 
 // NewAuthService creates a new auth service
@@ -187,6 +188,12 @@ type AuthRequest struct {
 				ID     string `json:"id"`
 				Secret string `json:"secret"`
 			} `json:"application_credential,omitempty"`
+			// Federated carries an SCS-0300 federated credential (an OIDC ID
+			// token or an OAuth2 access token) plus the provider/protocol
+			// the caller is authenticating against. See FederationAuthRequest
+			// in federation.go for field semantics. Populated when
+			// `methods` includes "openid" or "mapped".
+			Federated *FederationAuthRequest `json:"federated,omitempty"`
 		} `json:"identity"`
 		Scope *ScopeField `json:"scope,omitempty"`
 	} `json:"auth"`

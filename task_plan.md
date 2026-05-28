@@ -175,11 +175,56 @@ Close the gaps identified in the kimi readiness audit to bring O3K from 45% to 6
 - (none yet)
 
 ## Status
-**Phase 3 Slice 6 — CADF audit logging shipped.** Slices 1–6 of Phase 3:
+**Phase 3 Slice 7 — SPEC-002 federated identity (OIDC/OAuth2/LDAP).**
+
+Slice 6 (CADF audit logging) merged as PR #29 — middleware mounted across all 6 auth-bearing services, 7 tests passing, `docs/scs-alignment.md` audit row flipped ⬜→✅.
+
+### Slice 7 phases
+- [x] Phase 0: Merge Slice 6 PR #29
+- [x] Phase 1: Understand SCS-0300 — read SCS federated identity spec, scan existing keystone auth code (`internal/keystone/`, `/v3/auth/tokens` handler), identify integration surface (login flow, token issuance, user/project provisioning)
+- [x] Phase 2: Plan approach — pick provider abstraction (OIDC first via `coreos/go-oidc/v3`), config schema, JIT user provisioning policy, mapping from IdP claims to O3K roles
+- [x] Phase 3: Implement — provider interface + OIDC adapter, federated `/v3/auth/tokens` flow with `identity.methods=["openid"]`, JIT user/project create, config wiring, tests
+- [ ] Phase 4: Verify and deliver — unit tests, integration test against a stub IdP (or `go-oidc` mock), docs (`docs/scs-alignment.md` row + new federation section), PR
+
+### Phase 1 findings (2026-05-28)
+**Spec ID correction:** the actual spec is **SCS-0300-v1** "Requirements for SSO identity federation" (Effective track, IAM). The "SPEC-002" label used internally and in `docs/scs-alignment.md` row 32 is wrong — needs renaming. SCS-0301 (naming, Draft) and SCS-0302 (Domain Manager, Effective) are sibling IAM-track standards but out of scope for this slice.
+
+**SCS-0300-v1 conformance surface:** the published v1 contains design considerations (Keycloak vs Zitadel) but **no formal conformance tests** — the "Conformance Tests" section is OPTIONAL and empty. Minimum viable surface is therefore an implementer's judgment call, not a spec mandate. The IAM-federation drafts (`github.com/SovereignCloudStack/standards/tree/main/Drafts/IAM-federation`, especially `keystone-keycloak-federation.md`) document the API surface to mirror.
+
+**Federation API surface to expose** (mirrored from Keystone+Keycloak reference):
+- `/v3/auth/OS-FEDERATION/identity_providers/<idp>/protocols/openid/websso` — browser flow, Authorization Code grant
+- `/v3/OS-FEDERATION/identity_providers/<idp>/protocols/mapped/auth` — CLI flow, OAuth2 bearer + JWKS verification
+- `kc_idp_hint` URL parameter for identity brokering
+- `v3oidcpassword` flow env-var contract (`OS_AUTH_TYPE`, `OS_IDENTITY_PROVIDER`, `OS_DISCOVERY_ENDPOINT`, …) for OpenStack CLI compatibility
+
+**Existing Keystone auth integration points:**
+- `internal/keystone/handlers.go:224` — `AuthenticateToken` handler dispatches on `req.Auth.Identity.{Token,ApplicationCredential,Password}`. Federated branch slots in as a fourth `else if`.
+- `internal/keystone/handlers.go:74` — `RegisterRoutes` is where new `/v3/OS-FEDERATION/...` route group hangs off.
+- `internal/keystone/auth.go:170` — `AuthRequest` struct needs a new `Federated *struct{...}` field on `Auth.Identity`.
+- `internal/keystone/auth.go:243` — `AuthenticatePassword` is the implementation template for `AuthenticateFederated` (domain lookup → user lookup → scope check → role fetch → HS256 JWT signing). Roughly 200 lines, mostly reusable; the verify step swaps from bcrypt to OIDC ID-token verification.
+- `internal/keystone/auth.go:229` — `deterministicUUID(parts...)` is the right primitive for JIT provisioning to map `(issuer, subject)` → stable O3K user UUID.
+
+### Phase 1 decisions
+
+1. **Minimum surface for v1 = OIDC only.** SCS-0300 doesn't mandate protocol coverage, OIDC is the modern default, Keycloak/Zitadel/Auth0/Okta all support it natively, and a single library (`coreos/go-oidc/v3`) covers the verification path. LDAP and OAuth2-direct become follow-up slices.
+2. **JIT auto-provisioning on first federated login.** Matches Zitadel's reference pattern, lowest operator friction. Admin pre-provisioning becomes a config knob (`auto_provision: false` per provider) for ops that want stricter control.
+3. **Claim-to-role mapping in a new DB table.** Queryable, auditable, manageable via existing role-assignment APIs. Static-config alternative would be invisible at runtime and force restarts to change. Schema sketch: `(provider_id, claim_name, claim_value, role_id, project_id?)`.
+4. **Federated session → normal O3K JWT (HS256).** `Methods` field on the issued token reads `["openid"]` (browser) or `["mapped"]` (CLI). Existing `AuthMiddleware` works unchanged because the JWT is structurally identical to a password-issued one.
+5. **Hook-in plan:**
+   - Add `Federated *struct{...}` field to `AuthRequest.Auth.Identity` in `auth.go:170`
+   - Add fourth dispatch branch in `AuthenticateToken` at `handlers.go:242`
+   - New `internal/keystone/federation.go` for `FederationProvider` interface + OIDC adapter + JIT provisioning
+   - New route group registered in `RegisterRoutes` at `handlers.go:74`
+   - New migration for `federation_providers` and `federation_role_mappings` tables
+   - Library: `github.com/coreos/go-oidc/v3` (mature, JWKS rotation, ID-token verification)
+
+### Phase 3 status
 - Slice 1 (SCS-0103 mandatory flavors) — merged PR #24
-- Slice 2 (SCS-0102 image metadata) — PR #25 open
-- Slice 3 (SCS-0100-v3 flavor name validator) — PR #26 open
-- Slice 4 (SCS-0104 standard images) — PR #27 open
+- Slice 2 (SCS-0102 image metadata) — open PR #25
+- Slice 3 (SCS-0100-v3 flavor name validator) — open PR #26
+- Slice 4 (SCS-0104 standard images) — open PR #27
 - Slice 5 (SCS-0114 volume types) — merged PR #28
-- Slice 6 (CADF audit logging) — middleware mounted across all 6 auth-bearing services, 7 tests passing, scs-alignment.md updated, PR pending
-Next: open Slice 6 PR, then start Slice 7 (SPEC-002 federated identity — OIDC/OAuth2/LDAP).
+- Slice 6 (CADF audit logging) — merged PR #29
+- Slice 7 (SPEC-002 federated identity) — **in progress, this branch**
+
+**Phases 1–3 complete.** Phase 4 in progress — federation unit tests added (`internal/keystone/federation_test.go`, 11 cases covering YAML defaults, registry lookup, validation paths, verify-failure mapping, happy-path token issuance, domain-scope rejection), docs updated (`docs/scs-alignment.md` row + new SCS-0300-v1 section), branch `slice-7-federation`. Next: open PR off main.

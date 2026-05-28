@@ -29,7 +29,7 @@ Behaviour parity is incremental and tracked per spec below.
 | [SCS-0104](https://docs.scs.community/standards/scs-0104-v1-standard-images) — Standard Images | Glance | ⬜ Phase 3 follow-up |
 | SCS-0110 — Volume Types | Cinder | ✅ 3 reference volume types seeded (migration 076) — covered by [SCS-0114-v1](https://docs.scs.community/standards/scs-0114-v1-volume-type-standard/) |
 | [SCS-0114-v1](https://docs.scs.community/standards/scs-0114-v1-volume-type-standard/) — Volume Type Standard | Cinder | ✅ description tags + queryable `scs:*` extra-specs (migration 076) |
-| SPEC-002 — Federated Identity (OIDC/OAuth2/LDAP) | Keystone | ⬜ Phase 3 follow-up |
+| [SCS-0300-v1](https://docs.scs.community/standards/scs-0300-v1-requirements-for-sso-identity-federation) — SSO Identity Federation | Keystone | 🟡 OIDC verification + JIT provisioning shipped (`internal/keystone/federation*.go`); LDAP/OAuth2-direct deferred |
 | SCS audit logging | Keystone/all | ✅ CADF events emitted on every authenticated mutation (`internal/middleware/audit.go`) |
 
 ## SCS-0100-v3 — Flavor Naming
@@ -204,6 +204,82 @@ The audit trail is the log stream itself — there is no `audit_events` DB
 table, matching O3K's broader "no message queue, synchronous ops" stance.
 A persisted table can follow if pilots demand searchable history.
 
+## SCS-0300-v1 — SSO Identity Federation
+
+O3K's Keystone trusts an external IdP (Keycloak, Zitadel, Auth0, …) and
+exchanges verified IdP credentials for a normal O3K JWT. The token is
+**structurally identical** to a password-issued token — existing
+`AuthMiddleware` works unchanged — only the `methods` claim differs
+(`["openid"]` for federated logins, `["password"]` for local).
+
+**v1 protocol coverage**: OIDC only. SCS-0300-v1 itself does not mandate
+a protocol set ("Conformance Tests" is empty in the published v1), so
+LDAP and OAuth2-direct are tracked as follow-up slices.
+
+### Configuration
+
+Federation is opt-in via `keystone.federation.enabled`. Per-provider
+configs live under `keystone.federation.providers`:
+
+```yaml
+keystone:
+  federation:
+    enabled: true
+    providers:
+      - name: keycloak-prod
+        protocol: openid
+        issuer: https://keycloak.example.com/realms/scs
+        client_id: o3k
+        client_secret: ${KEYCLOAK_CLIENT_SECRET}
+        auto_provision: true
+        username_claim: preferred_username
+        groups_claim: groups
+        default_project: default
+        default_role: member
+```
+
+`client_secret` is deliberately **not** stored in the database — it stays
+in YAML or env so a DB dump never leaks IdP credentials.
+
+### Flow
+
+1. Caller obtains an OIDC ID token from the IdP (browser SSO or
+   device-code flow — out of O3K's scope).
+2. Caller POSTs to `/v3/auth/tokens` with `identity.methods=["openid"]`
+   and the ID token in `identity.federated.credential`.
+3. Keystone verifies the token signature against the IdP's JWKS
+   (auto-rotating, fetched at discovery time) and validates `iss`, `aud`,
+   `exp`.
+4. JIT provisioning: a deterministic UUID v5 is derived from
+   `(issuer, subject)` so re-logins always resolve to the same O3K user.
+   When `auto_provision: true`, an unknown subject creates a new user
+   row with `password_hash="!federated"` (an invalid bcrypt sentinel —
+   federated users can never fall back to password auth).
+5. Default-role assignment lands the new user on the configured
+   `default_project` with `default_role`.
+6. Keystone returns a normal O3K JWT; downstream services (Nova,
+   Neutron, …) need no changes.
+
+### Files
+
+- `internal/keystone/federation.go` — provider interface, config types,
+  registry
+- `internal/keystone/federation_oidc.go` — `OIDCProvider` (discovery +
+  JWKS-rotating verifier via `github.com/coreos/go-oidc/v3`)
+- `internal/keystone/federation_auth.go` — `AuthenticateFederated`,
+  JIT provisioning, scope resolution
+- `migrations/00XX_federation.sql` — `federation_providers` and
+  `federation_role_mappings` tables (claim-to-role mapping is staged in
+  the schema; only default-role logic ships in this slice)
+
+### Out of scope for this slice
+
+- LDAP and OAuth2-direct adapters
+- Browser-side `/v3/auth/OS-FEDERATION/.../websso` redirect flow (CLI
+  flow via direct ID-token POST is the v1 surface)
+- Claim-to-role mapping using `federation_role_mappings` (table exists,
+  lookup logic is a follow-up)
+
 ## Forward roadmap
 
 The following are queued in [`docs/kimi-analyse-for-completion.md`](kimi-analyse-for-completion.md)
@@ -214,9 +290,10 @@ under Phase 3:
   `hw_disk_bus`, `hw_rng_model`, `hw_scsi_model`, `hypervisor_type`,
   `image_build_date`, `image_original_user`, `image_source`,
   `patchlevel`, `provided_until`, `replace_frequency`).
-- **SPEC-002 federated identity** — wire Keystone to OIDC/OAuth2/LDAP
-  identity providers so federated SCS users can authenticate against an
-  external IdP.
+- **SCS-0300-v1 LDAP / OAuth2-direct adapters** — extend the federation
+  surface beyond OIDC. The provider interface and JIT path are already
+  in place (see "SCS-0300-v1 — SSO Identity Federation" above); each
+  protocol lands as its own adapter implementing `FederationProvider`.
 
 Each of these is its own slice; this document is the index they will hang
 off as they land.

@@ -253,8 +253,15 @@ func (svc *Service) AuthenticateToken(c *gin.Context) {
 	} else if req.Auth.Identity.Password != nil {
 		// Password-based authentication
 		resp, tokenString, err = svc.authService.AuthenticatePassword(c.Request.Context(), &req)
+	} else if req.Auth.Identity.Federated != nil {
+		// SCS-0300-v1 federated identity (OIDC). Verifies the IdP-issued
+		// credential and issues a normal O3K JWT with methods=["openid"].
+		resp, tokenString, err = svc.authService.AuthenticateFederated(c.Request.Context(), &req)
+		if err == nil {
+			c.Set("auth_method", "federated")
+		}
 	} else {
-		common.SendError(c, common.NewBadRequestError("password, token, or application_credential authentication required"))
+		common.SendError(c, common.NewBadRequestError("password, token, application_credential, or federated authentication required"))
 		return
 	}
 

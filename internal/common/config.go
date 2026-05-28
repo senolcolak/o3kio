@@ -61,11 +61,36 @@ type ComputeConfig struct {
 }
 
 type KeystoneConfig struct {
-	Port          int           `yaml:"port"`
-	JWTSecret     string        `yaml:"jwt_secret"`
-	TokenTTL      time.Duration `yaml:"token_ttl"`
-	AdminUser     string        `yaml:"admin_user"`
-	AdminPassword string        `yaml:"admin_password"`
+	Port          int                    `yaml:"port"`
+	JWTSecret     string                 `yaml:"jwt_secret"`
+	TokenTTL      time.Duration          `yaml:"token_ttl"`
+	AdminUser     string                 `yaml:"admin_user"`
+	AdminPassword string                 `yaml:"admin_password"`
+	Federation    KeystoneFederationYAML `yaml:"federation"`
+}
+
+// KeystoneFederationYAML mirrors keystone.FederationConfig for YAML
+// loading. Defined here (not in the keystone package) to avoid an import
+// cycle — common is imported by keystone, not the other way around. The
+// keystone package converts this to its own typed shape at startup.
+type KeystoneFederationYAML struct {
+	Enabled   bool                           `yaml:"enabled"`
+	Providers []KeystoneFederationProviderYAML `yaml:"providers"`
+}
+
+// KeystoneFederationProviderYAML mirrors keystone.FederationProviderConfig
+// for YAML loading. See keystone/federation.go for field semantics.
+type KeystoneFederationProviderYAML struct {
+	Name           string `yaml:"name"`
+	Protocol       string `yaml:"protocol"`
+	Issuer         string `yaml:"issuer"`
+	ClientID       string `yaml:"client_id"`
+	ClientSecret   string `yaml:"client_secret"`
+	AutoProvision  bool   `yaml:"auto_provision"`
+	UsernameClaim  string `yaml:"username_claim"`
+	GroupsClaim    string `yaml:"groups_claim"`
+	DefaultProject string `yaml:"default_project"`
+	DefaultRole    string `yaml:"default_role"`
 }
 
 type NovaConfig struct {

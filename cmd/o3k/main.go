@@ -477,6 +477,38 @@ func runServer(args []string) {
 	authService := keystone.NewAuthService(cfg.Keystone.JWTSecret, cfg.Keystone.TokenTTL, cacheInstance)
 	keystoneService := keystone.NewService(authService, cacheInstance)
 
+	// SCS-0300-v1 federation: build the provider registry from YAML config
+	// when enabled. Disabled-by-default keeps zero-config installs free of
+	// IdP dependencies. Phase 3 wires the registry into AuthService for the
+	// federated auth dispatch branch.
+	if cfg.Keystone.Federation.Enabled {
+		fedConfigs := make([]keystone.FederationProviderConfig, 0, len(cfg.Keystone.Federation.Providers))
+		for _, p := range cfg.Keystone.Federation.Providers {
+			fedConfigs = append(fedConfigs, keystone.FederationProviderConfig{
+				Name:           p.Name,
+				Protocol:       p.Protocol,
+				Issuer:         p.Issuer,
+				ClientID:       p.ClientID,
+				ClientSecret:   p.ClientSecret,
+				AutoProvision:  p.AutoProvision,
+				UsernameClaim:  p.UsernameClaim,
+				GroupsClaim:    p.GroupsClaim,
+				DefaultProject: p.DefaultProject,
+				DefaultRole:    p.DefaultRole,
+			})
+		}
+		fedConfigs = keystone.FederationConfigFromYAML(fedConfigs)
+		reg, err := keystone.NewFederationRegistry(ctx, fedConfigs)
+		if err != nil {
+			log.Printf("WARNING: federation enabled but registry construction failed: %v", err)
+		} else {
+			authService.SetFederationRegistry(reg)
+			if len(fedConfigs) > 0 {
+				log.Printf("Federation enabled with %d provider(s)", len(fedConfigs))
+			}
+		}
+	}
+
 	// Rate-limit token creation per IP. Default 600/min is brute-force-resistant
 	// (still gates ~10 attempts/sec per attacker IP) while permitting parallel
 	// contract/integration test suites and bursty CLI clients that re-auth per
