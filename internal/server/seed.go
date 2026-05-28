@@ -107,6 +107,55 @@ func SeedDefaults(ctx context.Context, db database.DBIF, adminPassword string) e
 		},
 	}
 
+	// SCS-0103-v1 mandatory standard flavors. Mirrors migration 075 so
+	// zero-config (in-code seed) installs match docker-compose installs.
+	// See: https://docs.scs.community/standards/scs-0103-v1-standard-flavors/
+	type scsFlavor struct {
+		id      string
+		name    string
+		vcpus   int
+		ramMB   int
+		diskGB  int
+		cpuType string // "shared-core" or "crowded-core"
+		ssdDisk bool   // disk0-type = ssd when true
+	}
+	scsFlavors := []scsFlavor{
+		{"00000000-0000-0000-0000-0000000005c1", "SCS-1L-1", 1, 1024, 0, "crowded-core", false},
+		{"00000000-0000-0000-0000-0000000005c2", "SCS-1V-2", 1, 2048, 0, "shared-core", false},
+		{"00000000-0000-0000-0000-0000000005c3", "SCS-1V-4", 1, 4096, 0, "shared-core", false},
+		{"00000000-0000-0000-0000-0000000005c4", "SCS-1V-8", 1, 8192, 0, "shared-core", false},
+		{"00000000-0000-0000-0000-0000000005c5", "SCS-2V-4", 2, 4096, 0, "shared-core", false},
+		{"00000000-0000-0000-0000-0000000005c6", "SCS-2V-4-20s", 2, 4096, 20, "shared-core", true},
+		{"00000000-0000-0000-0000-0000000005c7", "SCS-2V-8", 2, 8192, 0, "shared-core", false},
+		{"00000000-0000-0000-0000-0000000005c8", "SCS-2V-16", 2, 16384, 0, "shared-core", false},
+		{"00000000-0000-0000-0000-0000000005c9", "SCS-4V-8", 4, 8192, 0, "shared-core", false},
+		{"00000000-0000-0000-0000-0000000005ca", "SCS-4V-16", 4, 16384, 0, "shared-core", false},
+		{"00000000-0000-0000-0000-0000000005cb", "SCS-4V-16-100s", 4, 16384, 100, "shared-core", true},
+		{"00000000-0000-0000-0000-0000000005cc", "SCS-4V-32", 4, 32768, 0, "shared-core", false},
+		{"00000000-0000-0000-0000-0000000005cd", "SCS-8V-16", 8, 16384, 0, "shared-core", false},
+		{"00000000-0000-0000-0000-0000000005ce", "SCS-8V-32", 8, 32768, 0, "shared-core", false},
+		{"00000000-0000-0000-0000-0000000005cf", "SCS-16V-32", 16, 32768, 0, "shared-core", false},
+	}
+	for _, f := range scsFlavors {
+		stmts = append(stmts, stmt{
+			`INSERT INTO flavors (id, name, vcpus, ram_mb, disk_gb, is_public)
+			 VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (name) DO NOTHING`,
+			[]any{f.id, f.name, f.vcpus, f.ramMB, f.diskGB, true},
+		})
+		stmts = append(stmts, stmt{
+			`INSERT INTO flavor_extra_specs (flavor_id, key, value)
+			 VALUES ($1, $2, $3) ON CONFLICT (flavor_id, key) DO NOTHING`,
+			[]any{f.id, "scs:cpu-type", f.cpuType},
+		})
+		if f.ssdDisk {
+			stmts = append(stmts, stmt{
+				`INSERT INTO flavor_extra_specs (flavor_id, key, value)
+				 VALUES ($1, $2, $3) ON CONFLICT (flavor_id, key) DO NOTHING`,
+				[]any{f.id, "scs:disk0-type", "ssd"},
+			})
+		}
+	}
+
 	for _, s := range stmts {
 		if _, err := db.Exec(ctx, s.sql, s.args...); err != nil {
 			return fmt.Errorf("seed: %w", err)
