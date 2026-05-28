@@ -15,6 +15,7 @@ import (
 	"github.com/cobaltcore-dev/o3k/internal/common"
 	"github.com/cobaltcore-dev/o3k/internal/database"
 	"github.com/cobaltcore-dev/o3k/pkg/cache"
+	"github.com/cobaltcore-dev/o3k/pkg/scs"
 	"github.com/cobaltcore-dev/o3k/pkg/storage"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -144,6 +145,13 @@ type CreateImageRequest struct {
 	MinRAM          int      `json:"min_ram"`
 	Protected       bool     `json:"protected"`
 	Tags            []string `json:"tags"`
+
+	// ImageSource is the SCS-0102 / SCS-0104 image_source property — an
+	// upstream URL the image was built from. When set together with a Name
+	// that matches an SCS-0104 manifest entry, the source must start with
+	// one of the manifest's declared prefixes. Operators can still publish
+	// arbitrary images; this fires only on SCS-known names.
+	ImageSource string `json:"image_source"`
 }
 
 // GetVersions returns all available API versions
@@ -201,6 +209,14 @@ func (svc *Service) CreateImage(c *gin.Context) {
 	var req CreateImageRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		common.SendError(c, common.NewBadRequestError("invalid request body"))
+		return
+	}
+
+	// SCS-0104 conformance gate: if the image name matches an SCS-0104
+	// manifest entry, the image_source must start with one of the declared
+	// upstream prefixes. Unknown names pass through unchanged.
+	if err := scs.ValidateImageSource(req.Name, req.ImageSource); err != nil {
+		common.SendError(c, common.NewBadRequestError(err.Error()))
 		return
 	}
 

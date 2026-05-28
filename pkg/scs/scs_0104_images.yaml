@@ -1,0 +1,47 @@
+# SCS-0104-v1 Standard Images manifest.
+#
+# Mirrored from upstream:
+#   https://github.com/SovereignCloudStack/standards/blob/main/Tests/iaas/scs-0104-v1-images.yaml
+#
+# Each entry declares either a single image (by `name`) or an image class (by
+# `name_scheme`, a regex). The optional `status` field is one of
+# `mandatory`/`recommended`/`optional` — entries without an explicit status are
+# treated as `optional` per the spec. The `source` list is the set of URL
+# prefixes that the image's `image_source` property MUST start with for
+# SCS-0104 conformance.
+#
+# Conformance is operator-driven: O3K does not seed these images itself
+# (multi-GB downloads aren't appropriate for an alpha control plane). Instead,
+# we validate at image-create time that any image whose `name` matches one of
+# these specs has an `image_source` property with one of the declared
+# prefixes — so an operator who wants to claim SCS-0104 conformance can't
+# accidentally land a mis-sourced image under a known SCS name.
+images:
+- name: "Ubuntu 22.04"
+  source:
+  - https://cloud-images.ubuntu.com/releases/jammy/
+  - https://cloud-images.ubuntu.com/jammy/
+  status: mandatory
+- name: "ubuntu-capi-image"
+  name_scheme: "ubuntu-capi-image v[0-9]\\.[0-9]+(\\.[0-9]+)?"
+  source:
+  - https://nbg1.your-objectstorage.com/osism/openstack-k8s-capi-images/
+  - https://swift.services.a.regiocloud.tech/swift/v1/AUTH_b182637428444b9aa302bb8d5a5a418c/openstack-k8s-capi-images/ubuntu-2404-kube
+  - https://swift.services.a.regiocloud.tech/swift/v1/AUTH_b182637428444b9aa302bb8d5a5a418c/openstack-k8s-capi-images/ubuntu-2204-kube
+  status: recommended
+- name: "Ubuntu 20.04"
+  source:
+  - https://cloud-images.ubuntu.com/releases/focal/
+  - https://cloud-images.ubuntu.com/focal/
+- name: "Debian 12"
+  source:
+  - https://cloud.debian.org/images/cloud/bookworm/
+  - https://cdimage.debian.org/cdimage/cloud/bookworm/
+- name: "Debian 11"
+  source:
+  - https://cloud.debian.org/images/cloud/bullseye/
+  - https://cdimage.debian.org/cdimage/cloud/bullseye/
+- name: "Debian 10"
+  source:
+  - https://cloud.debian.org/images/cloud/buster/
+  - https://cdimage.debian.org/cdimage/cloud/buster/
