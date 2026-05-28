@@ -220,6 +220,25 @@ func NewNodeRegistryWithIDPath(nodeID, tunnelIP string, heartbeatInterval time.D
 	}, nil
 }
 
+// NewNodeRegistryForTest constructs a NodeRegistry with explicit hostname and
+// injected DB. Multi-node tests need to simulate distinct hosts on a single
+// machine, which the production constructor (which calls os.Hostname) cannot
+// support. Production code paths must not use this — the lack of UUID
+// persistence and tunnel-IP autodetection is intentional.
+func NewNodeRegistryForTest(nodeID, hostname, tunnelIP string, heartbeatInterval time.Duration, db database.DBIF) *NodeRegistry {
+	if heartbeatInterval == 0 {
+		heartbeatInterval = 30 * time.Second
+	}
+	return &NodeRegistry{
+		nodeID:            nodeID,
+		hostname:          hostname,
+		tunnelIP:          tunnelIP,
+		heartbeatInterval: heartbeatInterval,
+		stopChan:          make(chan struct{}),
+		db:                db,
+	}
+}
+
 // ComputeNode represents a compute node
 type ComputeNode struct {
 	ID            string

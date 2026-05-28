@@ -311,10 +311,47 @@ jobs:
           sudo microceph.ceph osd tree || true
           sudo microceph.ceph osd pool ls detail || true
 
+  vxlan-multinode:
+    name: VXLAN Multi-Node Integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: o3k
+          POSTGRES_PASSWORD: ci-postgres-password-not-secret
+          POSTGRES_DB: o3k_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U o3k"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+
+      - name: Run VXLAN multi-node integration tests
+        # Stub-mode VXLANManager + NamespaceManager mean no netlink/root
+        # is needed; the subject under test is the database coordination
+        # layer (node registry, VNI allocation, FDB sync). Migrations are
+        # reset and re-applied per test, so the postgres service starts
+        # empty.
+        env:
+          O3K_TEST_DB_URL: "postgres://o3k:ci-postgres-password-not-secret@localhost:5432/o3k_test?sslmode=disable"
+        run: |
+          go test -tags vxlan_integration -v -count=1 -timeout 5m \
+            ./internal/neutron/...
+
   status:
     name: CI Status
     runs-on: ubuntu-latest
-    needs: [build, test, lint, vulncheck, compat-check, contract-tests, ebpf-smoke, glance-rbd]
+    needs: [build, test, lint, vulncheck, compat-check, contract-tests, ebpf-smoke, glance-rbd, vxlan-multinode]
     if: always()
     steps:
       - name: Check results
@@ -326,8 +363,9 @@ jobs:
              [ "${{ needs.contract-tests.result }}" != "success" ] || \
              [ "${{ needs.compat-check.result }}" != "success" ] || \
              [ "${{ needs.ebpf-smoke.result }}" != "success" ] || \
-             [ "${{ needs.glance-rbd.result }}" != "success" ]; then
-            echo "::error::Required checks failed (build, test, lint, vulncheck, contract-tests, compat-check, ebpf-smoke, or glance-rbd)"
+             [ "${{ needs.glance-rbd.result }}" != "success" ] || \
+             [ "${{ needs.vxlan-multinode.result }}" != "success" ]; then
+            echo "::error::Required checks failed (build, test, lint, vulncheck, contract-tests, compat-check, ebpf-smoke, glance-rbd, or vxlan-multinode)"
             exit 1
           fi
           echo "All required checks passed"
