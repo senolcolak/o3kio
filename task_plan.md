@@ -139,6 +139,11 @@ Close the gaps identified in the kimi readiness audit to bring O3K from 45% to 6
 ### 4.1 Operations: Backup/restore tooling and docs
 - **Action:** Add `o3k backup` / `o3k restore` commands or scripts. Document DB backup (SQLite + PostgreSQL), image storage backup, version upgrade runbook.
 - **File:** `docs/backup-restore-upgrade.md` (new)
+- **Status:** ✅ Done.
+  - `scripts/o3k-backup.sh` — SQLite via `VACUUM INTO` (online-consistent, non-blocking) or PostgreSQL via `pg_dump --format=custom`. Captures secrets (`jwt-secret`, `initial-password`, `agent-token`), local images, local volumes. Emits `tar.gz` + `.sha256` sidecar with manifest.
+  - `scripts/o3k-restore.sh` — verifies sha256, refuses live `o3k` process without `--force`, restores DB + secrets + storage with `0600` perms on secrets. Supports both SQLite and PostgreSQL.
+  - `docs/backup-restore-upgrade.md` — what gets backed up (and what doesn't: Ceph RBD, S3, libvirt domains), backup/restore procedures for SQLite + PostgreSQL, scheduling via cron, upgrade contract (patch/minor/major), disaster-recovery checklist, known limitations.
+  - End-to-end smoke test passes locally: backup → restore → SQLite row preserved, secrets identical, images and volumes match.
 
 ### 4.2 Supply chain: SBOMs + signed releases
 - **Action:** Generate SBOMs with `syft` in release workflow. Sign artifacts with cosign/sigstore. Publish checksums.
