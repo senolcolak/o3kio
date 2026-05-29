@@ -155,9 +155,10 @@ Close the gaps identified in the kimi readiness audit to bring O3K from 45% to 6
   - JWT-secret strength gate refuses default `change-me-in-production` unless `O3K_ENV=development|test` (`internal/common/config.go:260-267`); strength check (≥32 chars) lives in `cmd/o3k/main.go:300-303`.
   - Production stub-mode guard added in `ValidateConfig()` — `O3K_ENV=production` refuses `nova.libvirt_mode=stub`, `neutron.networking_mode=stub`, `cinder.storage_mode=stub`, `glance.storage_mode=stub`. Tests in `internal/common/config_test.go::TestValidateConfigProductionStubGuard`.
 
-### 4.5 Community: Issue/PR templates + CoC
-- **Files:** `.github/ISSUE_TEMPLATE/bug_report.md`, `.github/ISSUE_TEMPLATE/feature_request.md`, `CODE_OF_CONDUCT.md`
-- **Action:** Add standard OS templates.
+### 4.5 Community: Issue/PR templates
+- **Files:** `.github/ISSUE_TEMPLATE/bug_report.md`, `.github/ISSUE_TEMPLATE/feature_request.md`, `.github/ISSUE_TEMPLATE/config.yml`, `.github/PULL_REQUEST_TEMPLATE.md`
+- **Action:** Add standard issue/PR templates. CoC + CONTRIBUTING deferred (out of scope for this slice).
+- **Status:** ✅ Done — bug/feature/config issue templates and PR template added; security reports routed to GitHub Security Advisories via `config.yml`.
 
 ### 4.6 Docs: Production readiness guide
 - **File:** `docs/production-readiness.md` (new)
