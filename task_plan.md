@@ -162,6 +162,10 @@ Close the gaps identified in the kimi readiness audit to bring O3K from 45% to 6
 ### 4.6 Docs: Production readiness guide
 - **File:** `docs/production-readiness.md` (new)
 - **Action:** Honest assessment of what is safe today. Pre-flight checklist (change password, enable TLS, configure Ceph, etc.).
+- **Status:** ✅ Done.
+  - `docs/production-readiness.md` — production-ready rubric (4 criteria), per-area grading table (Evaluation only / Lab only / Production-shaped / Not ready), 7-section pre-flight checklist (identity & secrets, transport security, database, real-mode dependencies, observability, operations, what-you-must-accept), explicit list of un-shipped capabilities, fit/no-fit deployment guidance, single-screen summary card.
+  - Cross-links to `SECURITY.md`, `docs/tls-configuration.md`, `docs/backup-restore-upgrade.md`.
+  - Calls out remaining Phase 4 work (4.2 SBOMs, 4.3 Grafana) so operators know what is still missing.
 
 ---
 
